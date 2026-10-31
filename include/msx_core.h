@@ -22,7 +22,8 @@
  *   - A member that returns a status returns int32_t, one of MSX_STATUS_*.
  *     After a failure, msx_core_last_error_text gives the UTF-8 message.
  *   - Integer arguments are int32_t, so -1 can mean "none" where a member
- *     says so. Booleans are int32_t 0 or 1.
+ *     says so. Booleans are int32_t 0 or 1; a setter returns
+ *     MSX_STATUS_BAD_ARGUMENT for any other value.
  *   - Lists with a fixed limit are written to a caller array, and the
  *     function returns the count.
  */
@@ -80,6 +81,8 @@ extern "C" {
 #define MSX_TRACE_EVENT_HANG_HALT_DI 11
 #define MSX_TRACE_HISTORY_SIZE 64
 #define MSX_TRACE_CAPACITY 65536
+#define MSX_AUDIO_SAMPLE_RATE 44100
+#define MSX_OUTPUT_HEIGHT 212
 
 /* -- Media ids -------------------------------------------------------------- */
 #define MSX_MEDIA_SLOT1_SRAM 0
@@ -99,6 +102,9 @@ extern "C" {
 #define MSX_MEDIA_DRIVE_C 14
 #define MSX_MEDIA_DRIVE_D 15
 #define MSX_MEDIA_COUNT 16
+#define MSX_FMPAC_SRAM_SIZE 8192
+#define MSX_RTC_CMOS_SIZE 26
+#define MSX_HALNOTE_SRAM_SIZE 16384
 
 /* -- Machine properties ----------------------------------------------------- */
 #define MSX_VIDEO_NTSC 0
@@ -107,6 +113,43 @@ extern "C" {
 #define MSX_KEYBOARD_JAPANESE 1
 #define MSX_VDP_KIND_TMS9918A 0
 #define MSX_VDP_KIND_V9938 1
+
+/* -- Slot description (msx_slot_info) -------------------------------------- */
+#define MSX_SLOT_CONTENT_EMPTY 0
+#define MSX_SLOT_CONTENT_MAIN_ROM 1
+#define MSX_SLOT_CONTENT_SUB_ROM 2
+#define MSX_SLOT_CONTENT_CARTRIDGE 3
+#define MSX_SLOT_CONTENT_CARTRIDGE_EMPTY 4
+#define MSX_SLOT_CONTENT_RAM 5
+#define MSX_SLOT_CONTENT_RAM_MAPPER 6
+#define MSX_SLOT_CONTENT_FDC 7
+#define MSX_BANK_NONE 0
+#define MSX_BANK_WINDOW_16K 1
+#define MSX_BANK_WINDOWS_8K 2
+#define MSX_BANK_SEGMENT 3
+#define MSX_BANK_SRAM_PAGE 4
+#define MSX_WINDOW_NONE 0
+#define MSX_WINDOW_PAGE 1
+#define MSX_WINDOW_SRAM 2
+#define MSX_WINDOW_OPEN 3
+#define MSX_MAPPER_FLAT 0
+#define MSX_MAPPER_FIXED_PAGE 1
+#define MSX_MAPPER_ASCII8 2
+#define MSX_MAPPER_ASCII16 3
+#define MSX_MAPPER_ASCII8_SRAM2 4
+#define MSX_MAPPER_ASCII8_SRAM8 5
+#define MSX_MAPPER_KOEI_SRAM32 6
+#define MSX_MAPPER_GAME_MASTER2 7
+#define MSX_MAPPER_ASCII16_SRAM2 8
+#define MSX_MAPPER_ASCII16_SRAM8 9
+#define MSX_MAPPER_R_TYPE 10
+#define MSX_MAPPER_KONAMI 11
+#define MSX_MAPPER_MAJUTSUSHI 12
+#define MSX_MAPPER_KONAMI_SCC 13
+#define MSX_MAPPER_SCC_I_CART 14
+#define MSX_MAPPER_HALNOTE 15
+#define MSX_MAPPER_FMPAC 16
+#define MSX_MAPPER_RAM_MAPPER 17
 
 /* -- Values ----------------------------------------------------------------- */
 
@@ -155,16 +198,15 @@ typedef struct msx_machine_config {
     size_t media_count;
     const msx_disk_mount *disks;
     size_t disk_count;
-    int32_t has_rtc_initial_time; /* 0: the RTC starts at 2000-01-01 00:00:00 */
-    msx_rtc_time rtc_initial_time;
+    msx_rtc_time rtc_initial_time; /* always given; Python's default is 2000-01-01 */
 } msx_machine_config;
 
 typedef struct msx_input_frame {
     uint8_t key_matrix[11]; /* active-low rows 0-10 */
     int32_t joy1;           /* active-low, the core uses bits 0-5 */
     int32_t joy2;
-    int16_t mouse_dx;       /* MSX counts */
-    int16_t mouse_dy;
+    int32_t mouse_dx;       /* MSX counts; the core clamps to -32768..32767 */
+    int32_t mouse_dy;
     int32_t mouse_buttons;  /* MSX_MOUSE_LEFT | MSX_MOUSE_RIGHT */
 } msx_input_frame;
 
@@ -225,9 +267,15 @@ typedef struct msx_slot_layout {
 } msx_slot_layout;
 
 typedef struct msx_slot_info {
-    msx_bytes content; /* UTF-8 */
-    msx_bytes bank;    /* UTF-8; "-" when the page has no bank */
-    int32_t size_kb;   /* 0 when no size applies; -1 for a rejected value */
+    int32_t content;          /* MSX_SLOT_CONTENT_*; -1 for a rejected value */
+    int32_t mapper;           /* MSX_MAPPER_* for a cartridge, else -1 */
+    int32_t size_kb;          /* 0 when no size applies; -1 for a rejected value */
+    int32_t bank;             /* MSX_BANK_* */
+    int32_t window_kind[2];   /* MSX_WINDOW_* */
+    int32_t window_value[2];  /* page index or SRAM offset */
+    int32_t sub_bank_count;   /* 0 or 2 */
+    int32_t sub_bank[2];
+    int32_t sub_offset[2];    /* ROM offset of each sub-bank */
 } msx_slot_info;
 
 typedef struct msx_trace_event {
@@ -242,11 +290,14 @@ typedef struct msx_trace_event {
 
 int32_t msx_core_abi_version(void);
 
-/* MSX_STATUS_OK with *out_core set, or MSX_STATUS_BAD_CONFIG with *out_core
- * NULL and the UTF-8 message in *error_text (valid until the next
- * msx_core_create). */
+/* MSX_STATUS_OK with *out_core set and *error_len 0, or MSX_STATUS_BAD_CONFIG
+ * with *out_core NULL. The UTF-8 message goes to the caller's buffer: at most
+ * error_cap bytes, no NUL, and *error_len is its full length, so a caller can
+ * retry with a larger buffer. The core keeps no state outside an msx_core.
+ * Every rejection is a status: a device size a device does not accept, and
+ * an RTC start time outside year 0-9999 or not a real date and time. */
 int32_t msx_core_create(const msx_machine_config *config, msx_core **out_core,
-                        msx_bytes *error_text);
+                        char *error_text, size_t error_cap, size_t *error_len);
 void msx_core_destroy(msx_core *core);
 
 /* -- Machine properties ----------------------------------------------------- */
@@ -267,8 +318,11 @@ int32_t msx_core_reset(msx_core *core);
 /* -- Media -------------------------------------------------------------------- */
 
 int32_t msx_core_dirty_media(msx_core *core, int32_t out_ids[MSX_MEDIA_COUNT]);
+/* media_id may be any integer: an id the machine does not have gives empty
+ * bytes / MSX_STATUS_NO_MEDIUM. */
 msx_bytes msx_core_read_media(msx_core *core, int32_t media_id); /* empty when absent */
 int32_t msx_core_mark_persisted(msx_core *core, int32_t media_id);
+/* write_protected 0 or 1, else MSX_STATUS_BAD_ARGUMENT and no change. */
 int32_t msx_core_mount_disk(msx_core *core, int32_t drive, const uint8_t *data,
                             size_t len, int32_t write_protected);
 int32_t msx_core_eject_disk(msx_core *core, int32_t drive);
@@ -293,7 +347,7 @@ int32_t msx_core_set_watchpoints(msx_core *core, const msx_watchpoint *entries,
                                  size_t count);
 int32_t msx_core_set_temp_breakpoint(msx_core *core, int32_t addr);   /* -1 clears */
 int32_t msx_core_set_step_out(msx_core *core, int32_t sp);
-int32_t msx_core_set_frame_breakpoint(msx_core *core, int32_t frame); /* -1 clears */
+int32_t msx_core_set_frame_breakpoint(msx_core *core, int64_t frame); /* -1 clears */
 int32_t msx_core_set_break_halt_di(msx_core *core, int32_t enabled);
 int32_t msx_core_set_sprites_hidden(msx_core *core, int32_t hidden);
 int32_t msx_core_set_trace_kinds(msx_core *core, int32_t kinds);
@@ -307,10 +361,13 @@ void msx_core_last_stop(msx_core *core, msx_stop_info *out);
 /* -- Inspection queries ------------------------------------------------------- */
 
 void msx_core_cpu_registers(msx_core *core, msx_cpu_registers *out);
+/* length 0-0x10000, else empty bytes and an error text; addr wraps at 0xFFFF. */
 msx_bytes msx_core_read_memory(msx_core *core, int32_t addr, int32_t length);
 int32_t msx_core_write_memory(msx_core *core, int32_t addr, const uint8_t *data,
                               size_t len);
 int32_t msx_core_vram_size(msx_core *core);
+/* length 0 to vram_size, else empty bytes and an error text; addr wraps by
+ * addr & (vram_size - 1). */
 msx_bytes msx_core_read_vram(msx_core *core, int32_t addr, int32_t length);
 void msx_core_vdp_info(msx_core *core, msx_vdp_info *out);
 int64_t msx_core_frame_number(msx_core *core);

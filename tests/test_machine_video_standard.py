@@ -17,13 +17,15 @@ from host.machine_config import (
     load_device_registry,
     load_machine_spec,
 )
+from msx.boundary import VideoStandard
 from msx.machine import Machine
 from msx.machine_spec import MachineLoadError, MachineSpec
 from msx.vdp._geometry import (
     CYCLES_PER_LINE,
     NTSC_LINES_PER_FRAME,
     PAL_LINES_PER_FRAME,
-    VideoStandard,
+    cycles_per_frame,
+    lines_per_frame,
 )
 from tests.factories import make_machine, make_machine_msx2
 
@@ -34,8 +36,8 @@ def test_timing_constants_keep_the_hardware_values() -> None:
     assert CYCLES_PER_LINE == 228
     assert CYCLES_PER_LINE * NTSC_LINES_PER_FRAME == 59_736
     assert CYCLES_PER_LINE * PAL_LINES_PER_FRAME == 71_364
-    assert VideoStandard.NTSC.cycles_per_frame == 59_736
-    assert VideoStandard.NTSC.lines_per_frame == 262
+    assert cycles_per_frame(VideoStandard.NTSC) == 59_736
+    assert lines_per_frame(VideoStandard.NTSC) == 262
 
 
 def test_video_standard_spellings_are_the_yaml_spellings() -> None:
@@ -67,7 +69,7 @@ def test_machine_spec_defaults_to_ntsc() -> None:
     [(VideoStandard.NTSC, 59_736, 262), (VideoStandard.PAL, 71_364, 313)],
 )
 def test_timing_derives_from_the_video_standard(standard, cycles, lines) -> None:
-    assert (standard.cycles_per_frame, standard.lines_per_frame) == (cycles, lines)
+    assert (cycles_per_frame(standard), lines_per_frame(standard)) == (cycles, lines)
     parts = make_machine(b"\x00" * 0x8000)
     machine = Machine(
         cpu=parts.cpu, vdp=parts.vdp, memory=parts.memory, io=parts.io, psg=parts.psg,
@@ -100,8 +102,8 @@ def test_loader_derives_timing_from_video_standard(
     registry = load_device_registry(_ROOT / "config")
     spec = load_machine_spec(machine_id, _ROOT / "config", registry, _ROOT)
     assert spec.video_standard is standard
-    assert spec.lines_per_frame == lines
-    assert spec.cycles_per_frame == CYCLES_PER_LINE * lines
+    assert lines_per_frame(spec.video_standard) == lines
+    assert cycles_per_frame(spec.video_standard) == CYCLES_PER_LINE * lines
 
 
 def test_loader_rejects_an_unknown_video_standard(tmp_path: Path) -> None:

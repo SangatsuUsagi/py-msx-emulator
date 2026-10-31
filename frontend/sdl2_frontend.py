@@ -28,14 +28,19 @@ from frontend.sdl2_keyboard import (
 from host.app_config import AppConfig
 from host.debugger.stop import handle_stop, sigint_requests_break
 from host.input_state import InputState
+from host.key_names import KEY_NAME_TO_CELL
 from host.media import DiskFiles, swap_disk
 from host.screenshot import save_screenshot
 from host.state_files import load_state, resume_state, save_state
-from msx.boundary import STOP_NONE, RgbFrame
+from msx.boundary import (
+    AUDIO_SAMPLE_RATE,
+    OUTPUT_HEIGHT,
+    STOP_NONE,
+    KeyboardLayout,
+    RgbFrame,
+    VideoStandard,
+)
 from msx.core_api import CoreApi
-from msx.input import KEY_NAME_TO_CELL
-from msx.psg import SAMPLE_RATE
-from msx.vdp._geometry import OUTPUT_H
 
 if TYPE_CHECKING:
     from host.debugger.prompt import Debugger
@@ -46,11 +51,12 @@ _SCREEN_WIDTH = 256
 # Every rendered frame is padded to a constant output height (see
 # msx/vdp/_geometry.py), so the window/texture height is fixed regardless of R#9
 # LN (192↔212). Only the width still varies (256, or 512 for SCREEN 6/7).
-_SCREEN_HEIGHT = OUTPUT_H
+_SCREEN_HEIGHT = OUTPUT_HEIGHT
 _MAX_FRAME_SKIP: int = 4
 
-# Audio output format: the core's mix rate (msx.psg.SAMPLE_RATE), mono S16LE.
-# Machine.run_frame() mixes each frame; the frontend only queues it.
+# Audio output format: the core's mix rate (AUDIO_SAMPLE_RATE), mono S16LE.
+# step_frame() mixes each frame's audio (FrameOutput.audio); the frontend
+# only filters and queues it.
 _AUDIO_CHANNELS: int = 1
 _AUDIO_BUFFER_SAMPLES: int = 1024
 
@@ -60,8 +66,9 @@ _FRAME_OVERRUN_RATIO: float = 1.05
 
 def _target_fps_for(machine: CoreApi) -> float:
     """Real-time pacing target for this machine: 60 fps NTSC, 50 fps PAL
-    (VideoStandard.target_fps, an int; the frame timer paces in float)."""
-    return float(machine.video_standard.target_fps)
+    (VideoStandard.target_fps of the core's int, which the frame timer
+    paces in float)."""
+    return float(VideoStandard(machine.video_standard).target_fps)
 
 
 class _InitSdlApi(Protocol):
@@ -177,7 +184,7 @@ def _init_sdl(
     # Open SDL2 audio device (mono, 44100 Hz, signed 16-bit LE).
     # Fall back gracefully if unavailable — video and input remain functional.
     desired = sdl2.SDL_AudioSpec(
-        SAMPLE_RATE, sdl2.AUDIO_S16LSB, _AUDIO_CHANNELS, _AUDIO_BUFFER_SAMPLES
+        AUDIO_SAMPLE_RATE, sdl2.AUDIO_S16LSB, _AUDIO_CHANNELS, _AUDIO_BUFFER_SAMPLES
     )
     audio_dev = sdl2.SDL_OpenAudioDevice(None, 0, desired, None, 0)
     if audio_dev == 0:
@@ -565,6 +572,10 @@ def _handle_hotkey_keydown(
     ESC is deliberately not claimed here: it has its own MSX matrix cell
     (row 7, column 2) and reaches it through the plain key_down fallback,
     like any other ordinary key.
+
+    With `debugger` None, Ctrl-C is no debugger break and falls through to
+    the MSX key. With `disk_files` None, F8 writes no dirty disk back before
+    the save.
     """
     # PORT-NOTE: `mod & sdl2.KMOD_CTRL` relies on Python's implicit
     #   int-to-bool truthiness (0 is falsy, any nonzero bit pattern truthy).
@@ -692,11 +703,12 @@ def _handle_events(
                 sdl2, sym, event.key.repeat, machine, keyboard, window, ctrl_combo, hotkeys
             ):
                 continue
+            debugger, disk_files = (
+                (hotkeys.debugger, hotkeys.disks.files) if hotkeys is not None else (None, None)
+            )
             consumed, running = _handle_hotkey_keydown(
                 sdl2, sym, event.key.keysym.mod, machine,
-                game_title, rgb_buf, tex_w, tex_h, running,
-                hotkeys.debugger if hotkeys is not None else None,
-                hotkeys.disks.files if hotkeys is not None else None,
+                game_title, rgb_buf, tex_w, tex_h, running, debugger, disk_files,
             )
             if not consumed and not _handle_ctrl_combo_keydown(
                 sdl2, sym, ctrl_combo, ctrl_fkey_cells, keyboard
@@ -950,7 +962,7 @@ class _LoopState:
     last_present: float = 0.0
 
 
-def _is_paused(hotkeys: _HotkeyState, rpc_server: "DebugServer | None") -> bool:
+def _is_paused(hotkeys: _HotkeyState, rpc_server: DebugServer | None) -> bool:
     return hotkeys.user_paused or (rpc_server is not None and rpc_server.pause_state.paused)
 
 
@@ -965,7 +977,7 @@ def _run_frame(
     state: _LoopState, joy_manager: JoystickManager, ctrl_combo: _CtrlComboState,
     ctrl_fkey_cells: dict[int, tuple[int, int]], game_title: str,
     mouse: _HostMouse | None, event: _EventLike,
-    rpc_server: "DebugServer | None", frame_timer: FrameTimer,
+    rpc_server: DebugServer | None, frame_timer: FrameTimer,
     frame_skip: str, audio_dev: int, scale: int,
     hotkeys: _HotkeyState,
 ) -> None:
@@ -1024,9 +1036,10 @@ def _run_frame(
     if out.stop_reason != STOP_NONE:
         # A break: the frame continues on the next step_frame, after the REPL
         # returns or the RPC client resumes. Keep the last picture on screen.
+        # A stopped call returns no audio, so there is nothing to queue.
         handle_stop(machine, out.stop_reason, hotkeys.debugger, rpc_server)
         return
-    if out.video_width:
+    if out.video_width > 0:  # 0: no video this frame (not rendered)
         state.rgb_buf = out.video_pixels
         # The output height is constant (192-line frames are padded to
         # 212); only the width can change at runtime (SCREEN 6/7 is
@@ -1077,7 +1090,7 @@ def run(
     game_title: str = "py-msx-emulator",
     resume: str | None = None,
     frame_skip: str = "auto",
-    rpc_server: "DebugServer | None" = None,
+    rpc_server: DebugServer | None = None,
     gamepad_map: "tuple[dict[int, int], dict[int, int]] | None" = None,
     turbo_period: int | None = None,
     mouse_port: int | None = None,
@@ -1107,7 +1120,7 @@ def run(
         mouse_port: 0 (Joy1) or 1 (Joy2) to attach an MSX mouse driven by the
             host mouse (relative-mouse mode); None disables mouse emulation.
         fdd1_images: drive A disk list stepped through by F6 / Shift+F6; the
-            first entry is the one build_machine already mounted.
+            first entry is the one create_machine already mounted.
         hotkey_bindings: (SDL keycode, Shift held) -> action table resolved
             from py_emulator.yaml (`resolve_hotkeys(AppConfig.hotkey_bindings())`); None uses the
             built-in table.
@@ -1172,7 +1185,7 @@ def run(
 
     keyboard = SdlKeyboard(
         frame_input, resolve_keyboard_joy_map(keyboard_joystick or {}),
-        keyboard_layout=machine.keyboard_layout,
+        keyboard_layout=KeyboardLayout(machine.keyboard_layout),
     )
 
     mouse: _HostMouse | None = None
@@ -1246,10 +1259,9 @@ def run(
                     )
 
                 except KeyboardInterrupt:
-                    if debugger is None:
-                        state.running = False
-                    else:
-                        debugger.enter()
+                    # Only without a debugger and an RPC server: otherwise
+                    # sigint_requests_break turns Ctrl-C into a break request.
+                    state.running = False
 
     finally:
         joy_manager.close_all()

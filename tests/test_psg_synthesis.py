@@ -1,6 +1,5 @@
 """Tests for AY-3-8910 PSG synthesiser: tone, noise, envelope, mixer, generate_samples."""
 import struct
-from types import SimpleNamespace
 
 from msx.psg import _VOL_TABLE, PSG, SAMPLES_PER_FRAME
 
@@ -408,15 +407,14 @@ def test_subframe_volume_writes_reproduced() -> None:
     """Volume writes at distinct cycles within a frame appear at the matching
     sample positions (PCM not collapsed to the last value)."""
     psg = PSG()
-    machine_stub = SimpleNamespace(cycle_count=0)
-    psg._machine = machine_stub
+    clock = psg._clock
     n, fs, fe = 100, 0, 1000
-    machine_stub.cycle_count = 0
+    clock.cycle = 0
     _write(psg, 7, 0x09)   # ch0: tone+noise disabled -> constant DC = volume(reg8)
     _write(psg, 8, 15)     # sample 0: full volume
-    machine_stub.cycle_count = 250
+    clock.cycle = 250
     _write(psg, 8, 0)      # sample 25: silence
-    machine_stub.cycle_count = 750
+    clock.cycle = 750
     _write(psg, 8, 15)     # sample 75: full volume
     s = struct.unpack("<%dh" % n, bytes(psg.generate_samples(n, fs, fe)))
     assert s[10] != 0      # first quarter: full
@@ -426,13 +424,12 @@ def test_subframe_volume_writes_reproduced() -> None:
 
 def test_single_midframe_write_takes_effect_near_half() -> None:
     psg = PSG()
-    machine_stub = SimpleNamespace(cycle_count=0)
-    psg._machine = machine_stub
+    clock = psg._clock
     n, fs, fe = 100, 0, 1000
-    machine_stub.cycle_count = 0
+    clock.cycle = 0
     _write(psg, 7, 0x09)
     _write(psg, 8, 15)     # loud from start
-    machine_stub.cycle_count = 500           # midpoint -> sample 50
+    clock.cycle = 500           # midpoint -> sample 50
     _write(psg, 8, 0)      # silence from half
     s = struct.unpack("<%dh" % n, bytes(psg.generate_samples(n, fs, fe)))
     assert s[10] != 0 and s[40] != 0     # first half loud
@@ -453,10 +450,9 @@ def test_fast_path_when_no_frame_window() -> None:
 def test_event_buffer_is_bounded_without_generate() -> None:
     from msx.psg import _MAX_EVENTS
     psg = PSG()
-    machine_stub = SimpleNamespace(cycle_count=0)
-    psg._machine = machine_stub
+    clock = psg._clock
     for i in range(_MAX_EVENTS + 500):
-        machine_stub.cycle_count = i
+        clock.cycle = i
         _write(psg, 8, i & 0x0F)
     assert len(psg._events) <= _MAX_EVENTS
 
@@ -473,13 +469,12 @@ def test_generator_continuity_across_segment_boundary() -> None:
     # Same registers, but reg 8 (re-)written mid-frame to the SAME value via the
     # sub-frame path: output must be identical (write is a no-op change).
     sub = PSG()
-    machine_stub = SimpleNamespace(cycle_count=0)
-    sub._machine = machine_stub
+    clock = sub._clock
     sub.regs[7] = 0x38
     _set_tone_period(sub, 0, 300)
-    machine_stub.cycle_count = 0
+    clock.cycle = 0
     _write(sub, 8, 15)          # at sample 0
-    machine_stub.cycle_count = 500
+    clock.cycle = 500
     _write(sub, 8, 15)          # same value mid-frame -> boundary but no change
     sub_out = sub.generate_samples(200, 0, 1000)
     assert sub_out == ref_out

@@ -17,7 +17,7 @@ import pytest
 
 from host.debugger.stop import handle_stop
 from host.rpc_server import DebugServer
-from tests.factories import make_machine
+from tests.factories import make_machine, make_machine_msx2
 
 
 class _Client:
@@ -218,6 +218,37 @@ def test_read_vram(rig) -> None:
     assert len(r["data"].split()) == 4
 
 
+@pytest.mark.parametrize(("method", "length"), [
+    ("memory.read", -1), ("memory.read", 0x10001),
+    ("memory.read_vram", -1), ("memory.read_vram", 0x4001),
+])
+def test_a_length_outside_the_range_is_an_error(rig, method: str, length: int) -> None:
+    # remote-socket-rpc "A length outside the range is an error" (16 KB VRAM).
+    _machine, _srv, client = rig
+    resp = client.call(method, {"address": "0x0000", "length": length})
+    assert resp["error"]["code"] == -32602
+    assert "result" not in resp
+
+
+def test_vram_above_64_kb_is_readable(sock_dir) -> None:
+    # remote-socket-rpc "VRAM above 64 KB is readable".
+    from host.rpc_server import _h_memory_read_vram
+
+    machine = make_machine_msx2(rom=bytes(32768), extrom=bytes(16384))
+    machine.vdp.vram[0x1C000] = 0x5A
+    srv = DebugServer(machine, sock_path=str(sock_dir / "v.sock"))
+    r = _h_memory_read_vram(srv, {"address": "0x1C000", "length": 1})
+    assert r == {"address": "0x1C000", "data": "5A"}
+
+
+def test_a_vram_address_wraps_at_the_vram_size(rig) -> None:
+    # remote-socket-rpc "A VRAM address wraps at the VRAM size" (MSX1, 16 KB).
+    machine, _srv, client = rig
+    machine.vdp.vram[0x0000] = 0xA5
+    r = client.result("memory.read_vram", {"address": "0x4000", "length": 1})
+    assert r == {"address": "0x0000", "data": "A5"}
+
+
 def test_invalid_address(rig) -> None:
     _machine, _srv, client = rig
     resp = client.call("memory.read", {"address": "ZZZZ", "length": 1})
@@ -310,3 +341,61 @@ def test_screen_capture_scaled(rig) -> None:
     scaled = client.result("screen.capture", {"scale": 2})
     assert scaled["width"] == native["width"] * 2
     assert scaled["height"] == native["height"] * 2
+
+
+class _ThreadRecorder:
+    """A core wrapper that records the thread of every core API call."""
+
+    def __init__(self, core) -> None:
+        self._core = core
+        self.threads: set[threading.Thread] = set()
+
+    def __getattr__(self, name: str):
+        value = getattr(self._core, name)
+        if not callable(value):
+            return value
+
+        def call(*args, **kwargs):
+            self.threads.add(threading.current_thread())
+            return value(*args, **kwargs)
+
+        return call
+
+
+def test_continue_sync_reads_no_register_on_the_socket_thread(sock_dir) -> None:
+    # remote-socket-rpc "Continue-sync reads no register on the socket thread".
+    machine = make_machine(rom=bytes(32768))  # all NOP
+    core = _ThreadRecorder(machine)
+    srv = DebugServer(core, sock_path=str(sock_dir / "t.sock"))
+    srv.start()
+    stop = threading.Event()
+
+    def loop() -> None:
+        while not stop.is_set():
+            srv.drain()
+            if not srv.pause_state.paused:
+                out = core.step_frame(srv.input_target.take_frame(), render_video=False)
+                handle_stop(core, out.stop_reason, None, srv)
+            else:
+                time.sleep(0.001)
+
+    thread = threading.Thread(target=loop, daemon=True)
+    thread.start()
+    client = _Client(str(srv._sock_path))
+    client._readframe()
+    try:
+        _pause(client)
+        client.result("debug.set_breakpoint", {"address": "0x0100"})
+        r = client.result("cpu.continue_sync", {"timeout_ms": 3000})
+        assert r["paused"] is True and r["reason"] == "breakpoint"
+        while not client.notifications:
+            client.notifications.append(client._readframe())
+        push = client.notifications[-1]
+        assert push["notification"] == "paused"
+        assert (r["pc"], r["registers"]) == (push["pc"], push["registers"])
+        assert core.threads == {thread}
+    finally:
+        client.close()
+        stop.set()
+        thread.join(timeout=1.0)
+        srv.stop()

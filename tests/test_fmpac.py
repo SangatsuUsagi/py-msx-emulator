@@ -14,10 +14,10 @@ from host.machine_config import (
     load_machine_config,
     sram_paths,
 )
-from msx.boundary import MediaId
-from msx.fmpac import SRAM_SIZE, FmPac
+from msx.boundary import FMPAC_SRAM_SIZE, MediaId
+from msx.fmpac import FmPac
 from msx.machine_loader import build_machine
-from msx.machine_spec import ExtensionOverlay, MachineLoadError, MachineSpec, _RomEntry
+from msx.machine_spec import ExtensionOverlay, MachineLoadError, MachineSpec, RomEntry
 from msx.opll import Opll
 from msx.snapshot_schema import SchemaError
 
@@ -274,7 +274,7 @@ def test_sram_save_and_load_round_trip(tmp_path: Path) -> None:
     src.write(0x4000, 0xAB)
     assert src.sram_image.dirty is True
     data = src.sram_image.data()
-    assert len(data) == SRAM_SIZE
+    assert len(data) == FMPAC_SRAM_SIZE
 
     dst = FmPac(rom=_bank_rom(), opll=Opll(), sram=bytearray(data))
     dst.write(0x5FFE, 0x4D)
@@ -285,7 +285,7 @@ def test_sram_save_and_load_round_trip(tmp_path: Path) -> None:
 def test_wrong_size_sram_starts_blank() -> None:
     # The constructor replaces a wrong-size SRAM image with a fresh blank one.
     fmpac = FmPac(rom=_bank_rom(), opll=Opll(), sram=bytearray(b"\x00" * 100))
-    assert fmpac.sram_image.data() == bytearray(SRAM_SIZE)
+    assert fmpac.sram_image.data() == bytearray(FMPAC_SRAM_SIZE)
 
 
 def test_restore_with_missing_key_does_not_partially_mutate() -> None:
@@ -455,7 +455,7 @@ def _make_fmpac_overlay(tmp_path: Path) -> ExtensionOverlay:
     return ExtensionOverlay(
         device="fmpac",
         rom_base_dir=tmp_path,
-        rom_entry=_RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
+        rom_entry=RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
         sram_save_path=tmp_path / "fmpac.sram",
     )
 
@@ -466,7 +466,7 @@ def _msx1_spec(tmp_path: Path) -> MachineSpec:
         name="test_msx1",
         generation="msx1",
         rom_base_dir=tmp_path,
-        main_rom_entry=_RomEntry(file="main.rom", size_kb=32, pages=[0, 1]),
+        main_rom_entry=RomEntry(file="main.rom", size_kb=32, pages=[0, 1]),
         logo_rom_entry=None,
         sub_rom_entry=None,
         has_ram_mapper=False,
@@ -528,7 +528,7 @@ def test_machine_io_ports_gated_by_enable(tmp_path: Path) -> None:
 
 def test_build_machine_loads_existing_fmpac_sram(tmp_path: Path) -> None:
     overlay = _make_fmpac_overlay(tmp_path)
-    saved = bytearray(SRAM_SIZE)
+    saved = bytearray(FMPAC_SRAM_SIZE)
     saved[0] = 0xEE
     overlay.sram_save_path.write_bytes(bytes(saved))
 
@@ -543,7 +543,7 @@ def test_missing_fmpac_rom_raises(tmp_path: Path) -> None:
     overlay = ExtensionOverlay(
         device="fmpac",
         rom_base_dir=tmp_path,
-        rom_entry=_RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
+        rom_entry=RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
         sram_save_path=tmp_path / "fmpac.sram",
     )
     with pytest.raises(MachineLoadError, match="fmpac.rom"):

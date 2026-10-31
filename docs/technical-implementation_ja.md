@@ -44,7 +44,7 @@ CB、DD、ED、FD のプレフィックス表も同じ方式。メインの振�
 2. `iff1` と `int_pending` がどちらも true で、`ei_pending` がセットされていなければ、割り込みを受け付ける。モード 1 は PC をプッシュして 0x0038 にジャンプし、13 T ステート。モード 2 は PC をプッシュし、`I<<8 | data_bus` からベクタを読んでハンドラにジャンプし、19 T ステート。
 3. `ei_pending` がセットされていれば、クリアする。EI が割り込みを有効にするのは、その次の命令の後から。手順 2 が `ei_pending` を見て、この手順がクリアするので、手順 2 で受け付けるはずの割り込みはちょうど 1 ステップ待つ。
 4. `halted` がセットされていれば、オペコードを読まずに `4 + m1_wait_states` T ステート進める。純粋な Z80 コアなら 4 で、MSX の M1 ウェイトもここで加わる。
-5. それ以外は、`instruction_pc` に現在の PC を記録し、`q_next` を `q` に移して `q_next` をクリアし（Q。`SCF`/`CCF` が読む）、`_fetch_opcode()` でオペコードを読んで振り分ける。
+5. それ以外は、clock 記録（`msx/clock.py`）の `instruction_pc` に現在の PC を記録し、`q_next` を `q` に移して `q_next` をクリアし（Q。`SCF`/`CCF` が読む）、`_fetch_opcode()` でオペコードを読んで振り分ける。
 
 `_fetch()` は `read_byte(PC)` で 1 バイト読み、PC を 1 進める。`_fetch_opcode()` は同じことをしたうえで、M1 サイクルごとに 1 回 R を進める。M1 サイクルにあたるのは、主オペコードと、CB/DD/ED/FD プレフィックスの次のオペコードバイト。オペランドとディスプレースメントのバイトは R を変えない。`DDCB`/`FDCB` のディスプレースメントと最後のオペコードも同じ。R が数えるのは bit 0〜6 だけ。bit 7 は保持され、`LD R,A` のようなレジスタ全体への書き込みでしか変わらない。実機の SONY HB-F1XD と HB-10 でも R の進み方は同じ。
 
@@ -338,7 +338,7 @@ Majutsushi DAC とキークリック（PPI ポートC bit 7）は、書き込み
 
 `PSG.generate_samples(n, frame_start, frame_end)` は、音量レジスタへの速い書き込みで鳴らすソフトウェア PCM を再現する。
 
-1. `write_port` は各レジスタ書き込みを `(cycle, reg, value)` として記録する。サイクルは、`_machine` の参照を通して `machine.cycle_count` から読む。速いフレームループは、各スキャンラインの T ステートをラインの終わりで `cycle_count` に足す。そのため、書き込みの位置の分解能は 1 スキャンライン（228 T ステート、約 2.8 サンプル）。
+1. `write_port` は各レジスタ書き込みを `(cycle, reg, value)` として記録する。サイクルは、マシンの clock 記録（`msx/clock.py`）から読む。その値が `machine.cycle_count` である。速いフレームループは、各スキャンラインの T ステートをラインの終わりで `cycle_count` に足す。そのため、書き込みの位置の分解能は 1 スキャンライン（228 T ステート、約 2.8 サンプル）。
 2. `generate_samples` は、フレームの最初の書き込みの時点のレジスタとジェネレータの状態に戻る。
 3. バッファを、続いた区間の並びとして描き直す。各書き込みは、サンプル位置 `clamp((cycle - frame_start) * n // (frame_end - frame_start), 0, n)` から新しい区間を始める。
 4. トーン、ノイズ、エンベロープの状態は区間をまたいで引き継ぐ。
@@ -749,13 +749,15 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 
 同じテストは逆向きも調べる。`host/`、`frontend/`、`tools/`、`__main__.py` のコードは、マシンをコアの API（後述）だけで使う。マシンのコアの部品（`.cpu`、`.vdp`、`.memory`、`.fdc` など）やプライベートなフィールドを読んではならない。例外はない。デバッガのトレース用コマンド（`te`/`td`、`ce`/`cd`）と `--vdp-trace`/`--mapper-trace` のフラグは、コアの API でトレースの種類を設定する。`drain_trace()` が返すイベントは `host/trace.py` が文字列にする。したがって、コアを移植するときは `Machine` を置き換えても、デバッガ、RPC サーバ、フロントエンドはそのまま使える。
 
+このテストは、host のコードが `msx/` から何を import するかも調べる。import してよいのは、`msx/boundary.py`、`msx/core_api.py`、`msx/input.py` の `InputFrame`、`msx/machine_loader.py` の `create_machine`、マシン記述層の公開された名前だけ。マシン記述層は `msx/machine_spec.py` と `msx/machine_config.py` で、マシンのモデル、語彙、MachineConfig の文書のエンコーダとパーサからなる。デバイスのモジュールを import しないので、コアがネイティブになっても Python のまま残る。host はこのエンコーダを使い続け、ネイティブのコアは同じ文書（`msx/machine_config.schema.json`）を自分のパーサで読む。固定のメディアのサイズ（`FMPAC_SRAM_SIZE`、`RTC_CMOS_SIZE`、`HALNOTE_SRAM_SIZE`）は境界の定数。host は、コアができる前にセーブファイルを作るため。
+
 ### 境界を通る値
 
 次の値は、どれも `msx/boundary.py` か `msx/input.py` にある。
 
 | 値 | 向き | 中身 |
 | --- | --- | --- |
-| `MachineConfig` | 入力、1 回 | `document`（正規化した MachineConfig の JSON、後述）、`roms`（`RomImage` のレコード。イメージと、その小文字 16 進の SHA1）、`media`（`MediaImage` のレコード。保存済みの SRAM か CMOS のイメージと、その `MediaId`）、`disks`（`DiskMount` のレコード。マウントするイメージ、ドライブ番号、書き込み禁止のフラグ）、`rtc_initial_time`。3 つのイメージのフィールドはタプルで、1 つの id やドライブにレコードは 1 つまで |
+| `MachineConfig` | 入力、1 回 | `document`（正規化した MachineConfig の JSON、後述）、`roms`（`RomImage` のレコード。イメージと、その小文字 16 進の SHA1）、`media`（`MediaImage` のレコード。保存済みの SRAM か CMOS のイメージと、その `MediaId`）、`disks`（`DiskMount` のレコード。マウントするイメージ、ドライブ番号、書き込み禁止のフラグ）、`rtc_initial_time`（既定値は `RTC_DEFAULT_START`、2000-01-01 00:00:00）。3 つのイメージのフィールドはタプルで、1 つの id やドライブにレコードは 1 つまで |
 | `InputFrame` | 入力、毎フレーム | 平らなレコード。`key_matrix` はアクティブ Low のキーボードマトリクス 11 行の 11 バイト、`joy1` と `joy2` はアクティブ Low の 6 ビットのジョイスティックポート（bit 0 上、1 下、2 左、3 右、4 トリガ A、5 トリガ B）、`mouse_dx` と `mouse_dy` はそのフレームのマウスの移動量（MSX 側の単位）、`mouse_buttons` はビットフラグ `MOUSE_LEFT`（1）と `MOUSE_RIGHT`（2）。作った後は変更できない。コンストラクタが調べるのは、`key_matrix` が 11 バイトであることだけ。ポートとボタンはコアがマスクし、移動量は -32768〜32767 に丸める |
 | `FrameOutput` | 出力、毎フレーム | 平らなレコード。`video_width`、`video_height`、`video_pixels`（描画しなかったフレームでは 0、0、`b""`）、`audio`、`frame_number`、`stop_reason`、`frame_complete`（1。フレームが次の呼び出しに続くときは 0） |
 | `RgbFrame` | 出力 | `render_preview()` の結果。行優先に詰めた RGB24。`width` は 256 か 512、`height` は常に 212（192 ラインのモードは、コアがボーダーの色で埋める）。`FrameOutput` の映像のフィールドも同じ並び |
@@ -775,32 +777,32 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 
 | 分類 | 操作 | 備考 |
 | --- | --- | --- |
-| 構築 | `create_machine(config) -> BuildResult` | `status`、`machine`、`error_text` を返す。文書に誤りがあるとき、ROM イメージが欠けているか合わないとき、イメージのレコードが矛盾するときは、何かを作る前に `STATUS_BAD_CONFIG`（4）を返し、マシンはなく、メッセージを付ける。`build_machine(config)` はテストと Python への組み込み用のラッパーで、同じメッセージの `MachineLoadError`（`msx/machine_spec.py`）を出す。host のコードは `create_machine` を呼ぶ。どちらもロガーとトレーサは引数に取らない。デバッグのログ、VDP とマッパーのトレースは、後述のトレースのメンバーを使う |
+| 構築 | `create_machine(config) -> BuildResult` | `status`、`machine`、`error_text` を返す。文書に誤りがあるとき、ROM イメージが欠けているか合わないとき、イメージのレコードが矛盾するとき、デバイスが受け付けないサイズ（ディスクイメージ、RAM マッパー）のとき、RTC の開始時刻が 0〜9999 年の外か実在しない日時のときは、`STATUS_BAD_CONFIG`（4）を返し、マシンはなく、メッセージを付ける。新しいマシンの外は何も変わらない。`build_machine(config)` はテストと Python への組み込み用のラッパーで、同じメッセージの `MachineLoadError`（`msx/machine_spec.py`）を出す。host のコードは `create_machine` を呼ぶ。どちらもロガーとトレーサは引数に取らない。デバッグのログ、VDP とマッパーのトレースは、後述のトレースのメンバーを使う |
 | フレームの実行 | `step_frame(frame_input, render_video) -> FrameOutput` | 1 フレーム、または止まったフレームの残りを実行する。ブレークすると途中で戻り、`stop_reason` が入り、`frame_complete` が 0 になる |
 | | `apply_input(frame_input) -> int` | フレームを動かさずに、入力線とマウスのボタンをすぐ置き換える。RPC のキー入力が使う。常に `STATUS_OK` を返す |
-| | `samples_per_frame()`、`video_standard` | 735 か 882。NTSC か PAL（`video_standard.target_fps` は 60 か 50） |
+| | `samples_per_frame()`、`video_standard`、`keyboard_layout` | 735 か 882。映像の方式とキー配列はただの整数。host が `msx/boundary.py` の `VideoStandard` と `KeyboardLayout` の列挙型に変える（`VideoStandard(core.video_standard).target_fps` は 60 か 50） |
 | 制御 | `reset() -> int` | 電源投入時のリセット。RAM、VRAM、マウント中のメディアはそのまま。常に `STATUS_OK` を返す |
 | | `save_state() -> bytes` | スナップショット（`msx/state.py`） |
 | | `load_state(data) -> int` | `STATUS_OK`（0）を返す。スナップショットが合わなければ `STATUS_STATE_REJECTED`（1）を返し、何も変えない |
 | | `write_memory(addr, data) -> int` | CPU と同じように書き、0xFFFF で折り返す。RPC サーバは一時停止中にだけ使う。常に `STATUS_OK` を返す |
 | メディア | `dirty_media()` | 前回ファイルへ書き戻した後に書き込まれたメディアの id |
-| | `read_media(media_id) -> bytes` | メディアの現在のバイト列。マシンにない id には `b""`（メディアが空になることはない） |
+| | `read_media(media_id) -> bytes` | メディアの現在のバイト列。マシンにない id には、どの整数でも `b""`（メディアが空になることはない） |
 | | `mark_persisted(media_id) -> int` | host がバイト列を書いた後に呼ぶ。`STATUS_OK`（0）を返す。マシンにない id には `STATUS_NO_MEDIUM`（5）を返す |
-| | `mount_disk(drive, data, write_protected) -> int` | `STATUS_OK`（0）を返す。マシンにないドライブには `STATUS_NO_DRIVE`（2）、サイズが 512 の正の倍数でないイメージには `STATUS_BAD_IMAGE`（3）を返す。失敗したときは何も変えない。外すイメージに保存していない書き込みがあれば、host が呼び出しの前にファイルへ書き戻す |
+| | `mount_disk(drive, data, write_protected) -> int` | `STATUS_OK`（0）を返す。マシンにないドライブには `STATUS_NO_DRIVE`（2）、サイズが 512 の正の倍数でないイメージには `STATUS_BAD_IMAGE`（3）、0 と 1 以外の `write_protected` には `STATUS_BAD_ARGUMENT`（6）を返す。失敗したときは何も変えない。外すイメージに保存していない書き込みがあれば、host が呼び出しの前にファイルへ書き戻す |
 | | `eject_disk(drive) -> int` | ドライブを空にする。`STATUS_OK`（0）を返し、マシンにないドライブには `STATUS_NO_DRIVE`（2）を返す |
-| | `last_error_text() -> bytes` | 状態を返すメンバー（と空の値を返した `read_media`、`slot_info`）のうち、最後に失敗した呼び出しのメッセージ（UTF-8）。成功した後は `b""`。コアの API のメンバーは、不正な引数に例外を出さない。`host/state_files.load_state` と `host/media.swap_disk` は、これを `ValueError("<ファイル>: <メッセージ>")` として出す |
+| | `last_error_text() -> bytes` | 状態を返すメンバー（と空の値を返した `read_media`、-1 の値を返した `slot_info`）のうち、最後に失敗した呼び出しのメッセージ（UTF-8）。成功した後は `b""`。コアの API のメンバーは、不正な引数に例外を出さない。`host/state_files.load_state` と `host/media.swap_disk` は、これを `ValueError("<ファイル>: <メッセージ>")` として出す |
 | | `disk_mounted(drive)` | ドライブがあり、イメージが入っているか |
 | デバイス | `attach_mouse(port) -> int` | MSX のマウスをジョイスティックポート 1（`0`）か 2（`1`）につなぐ。マウスのデバイスはコアが作る。ほかのポートには `STATUS_BAD_ARGUMENT`（6）を返す。host が呼ぶのは 1 回まで、最初の `step_frame` と最初の `load_state` の前。マウス付きで保存したステートは、マウスをつないだマシンでだけ読み込める。取り外しはない |
 | 状態の読み出し | `cpu_registers() -> CpuRegisters` | レジスタ一式 |
-| | `read_memory(addr, length) -> bytes` | 今のスロットの選択で、CPU と同じように読む。0xFFFF で折り返す。ウォッチポイントには反応しない。メモリに割り当てられたデバイスのレジスタは、副作用も含めて CPU と同じように読む |
-| | `vram_size()`、`read_vram(addr, length) -> bytes` | 0x4000 か 0x20000。読み出しは VRAM のサイズで折り返す |
+| | `read_memory(addr, length) -> bytes` | 今のスロットの選択で、CPU と同じように読む。0xFFFF で折り返す。ウォッチポイントには反応しない。メモリに割り当てられたデバイスのレジスタは、副作用も含めて CPU と同じように読む。長さが 0〜0x10000 の外なら `b""` を返し、`last_error_text()` を設定する |
+| | `vram_size()`、`read_vram(addr, length) -> bytes` | 0x4000 か 0x20000。読み出しはアドレスの下位ビットで VRAM のサイズに折り返すので、負のアドレスは末尾に折り返す。長さが 0〜VRAM のサイズの外なら `b""` を返し、`last_error_text()` を設定する |
 | | `vdp_info() -> VdpInfo` | ステータスのフラグを消さない |
 | | `frame_number()`、`drive_count()`、`main_ram_range()` | フロッピーのインターフェースがなければ `drive_count()` は 0 |
 | | `slot_layout() -> SlotLayout` | ポート 0xA8 の値、拡張された基本スロットのビットマスク、4 つの拡張スロットレジスタ（拡張されていないスロットは 0）。デバッガの `sl` と `st` が使う |
-| | `slot_info(primary, secondary, page) -> SlotInfo` | 1 つのスロットの内容の文字列、バンクの文字列、KB 単位のサイズ。`sl` と `st` が使う。`secondary` と `page` は、なしのとき -1。0-3 の外の値には、空の文字列とサイズ -1 を返す |
+| | `slot_info(primary, secondary, page) -> SlotInfo` | 1 つのスロットを整数で返す。`sl` と `st` が使う。内容の種類（`SLOT_CONTENT_*`）、カートリッジの `MapperId`、KB 単位のサイズ、バンクの種類（`BANK_*`）、2 つの窓（それぞれ `WINDOW_*` の種類と値）、Halnote のサブバンクとその ROM 上の位置からなる。文字列は `host/debugger/slots.py` が組み立てるので、表示の書式は境界を越えない。`secondary` と `page` は、なしのとき -1。0-3 の外の値には、内容、マッパー、サイズに -1 を返す |
 | | `render_preview() -> RgbFrame` | 今のフレーム。スクリーンショットとステートセーブのサムネイルに使う |
-| デバッグの制御 | `set_breakpoints()`、`set_watchpoints()` などのブレークの設定、`breakpoints()`、`watchpoints()`、`break_halt_di()` | ブレークの設定と、その読み出し。ウォッチポイントは `(addr, kind)` の組で、kind は `WATCH_READ`、`WATCH_WRITE`、またはその両方。デバッガ、RPC、CLI の `r`、`w`、`rw` との変換は `host/watch.py` が行う。各設定は `STATUS_OK` を返す。`MAX_BREAKPOINTS` または `MAX_WATCHPOINTS`（4）を超える件数、0x0000〜0xFFFF の外のアドレスや SP の値、不正な kind、-1 より小さいフレーム、下限が上限より大きい SP の範囲には `STATUS_BAD_ARGUMENT`（6）を返し、設定を変えない。-1 は実行先のアドレスとフレームのブレークポイントを消し、`set_sp_range(-1, -1)` は SP の範囲を消す。`set_break_halt_di()` は常に `STATUS_OK` を返す |
-| | `set_sprites_hidden(hidden) -> int`、`sprites_hidden()` | デバッガの `ds` が使うスプライト表示のフラグ。立っている間、描画はスプライトの処理を飛ばす。リセットでは消えず、ステートセーブにも入らない。設定は常に `STATUS_OK` を返す |
+| デバッグの制御 | `set_breakpoints()`、`set_watchpoints()` などのブレークの設定、`breakpoints()`、`watchpoints()`、`break_halt_di()` | ブレークの設定と、その読み出し。ウォッチポイントは `(addr, kind)` の組で、kind は `WATCH_READ`、`WATCH_WRITE`、またはその両方。デバッガ、RPC、CLI の `r`、`w`、`rw` との変換は `host/watch.py` が行う。各設定は `STATUS_OK` を返す。`MAX_BREAKPOINTS` または `MAX_WATCHPOINTS`（4）を超える件数、0x0000〜0xFFFF の外のアドレスや SP の値、不正な kind、-1 より小さいフレーム、下限が上限より大きい SP の範囲には `STATUS_BAD_ARGUMENT`（6）を返し、設定を変えない。-1 は実行先のアドレスとフレームのブレークポイントを消し、`set_sp_range(-1, -1)` は SP の範囲を消す。`set_break_halt_di()` は 0 か 1 を取り、それ以外の値には `STATUS_BAD_ARGUMENT` を返して設定を変えない |
+| | `set_sprites_hidden(hidden) -> int`、`sprites_hidden()` | デバッガの `ds` が使うスプライト表示のフラグ。立っている間、描画はスプライトの処理を飛ばす。リセットでは消えず、ステートセーブにも入らない。設定は 0 か 1 を取り、それ以外の値には `STATUS_BAD_ARGUMENT` を返してフラグを変えない |
 | | `set_trace_kinds(kinds) -> int`、`trace_kinds()`、`trace_sources()` | 有効なトレースの種類（ビットフラグ `TRACE_VDP`、`TRACE_MAPPER`、`TRACE_DEBUG`。`TRACE_DEBUG` は `--debug` のログ）と、このマシンが出せる種類。`TRACE_MAPPER` には、スロット 1 か 2 にバンク切り替えのある ROM マッパーが要る。ほかのビットには `STATUS_BAD_ARGUMENT`（6）を返す。リセットでは消えず、ステートセーブにも入らない |
 | | `drain_trace() -> tuple[TraceEvent, ...]` | 記録したイベントを順に返す。`TRACE_VDP` が有効な間はポート 0x99 と 0x9B に書いた各バイト、`TRACE_MAPPER` が有効な間はスロット 1/2 のマッパーのバンクの変化を、`TRACE_DEBUG` が有効な間は I/O ポートへの各アクセス、VDP の R#0 と R#1 に保持された各書き込み、各未定義命令、各ハング（PC が 1000 回続くループか、フレームの終わりの割り込み禁止の HALT。直前の 64 命令の後に記録する）を、サイクル数、フレーム番号、PC とともに記録する。取り出すとバッファは空になる。バッファは `TRACE_CAPACITY`（65536）件まで持つ。あふれた後の取り出しは、失われた件数を示す `TRACE_EVENT_LOST` の record 1 つで終わる |
 | | `step() -> int` | 今のフレームの 1 命令を実行し、その T ステート数を返す。サイクル数、フレーム内の位置、VDP は `step_frame` と同じように進む。ブレークポイントとブレーク要求は確かめない |
@@ -820,7 +822,7 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 マシンの定義は、2 つの層を経てコアに届く。
 
 1. **手で書く YAML**（`config/machines`、`config/devices`、`config/extensions`）。ハードウェアについてのコメントを残せる。読むのは host だけ（[マシンと拡張の YAML スキーマ](#マシンと拡張の-yaml-スキーマ) を参照）。
-2. **MachineConfig の文書**。`load_machine_config()` が YAML とコマンドラインの指定から作る。RFC 8785（JCS）で正規化した JSON（UTF-8、キーはソート済み、空白なし、整数のみ）。`format_version` は `1`。解決済みのマシン、スロットごとのカートリッジとそのマッパー（`auto` にはならない）、拡張オーバーレイを持つ。エンコードと解析は `msx/machine_config.py` が行い、形は `msx/machine_config.schema.json`（JSON Schema draft 2020-12）に書いてある。スキーマを読むのはテストで、コアは読まない。
+2. **MachineConfig の文書**。`load_machine_config()` が YAML とコマンドラインの指定から作る。RFC 8785（JCS）で正規化した JSON（UTF-8、キーはソート済み、空白なし、整数のみ）。`format_version` は `1`。解決済みのマシン、スロットごとのカートリッジとそのマッパー（`auto` にはならない）、拡張オーバーレイを持つ。エンコードと解析は `msx/machine_config.py` が行い、形は `msx/machine_config.schema.json`（JSON Schema draft 2020-12）に書いてある。スキーマを読むのはテストで、コアは読まない。`tests/vectors/canonical_json.json` には、入力とその正規形と SHA-256、読み込みで拒否する入力、base64 のバイト列を載せてある。コアを別の言語で実装するときは、このファイルで自分の書き出しと読み込みを確かめられる。
 
 文書の中の ROM は、どれも `{name, size, sha1, pages}` の参照。`name` はディレクトリを含まないファイル名で、表示用のラベルにすぎない。`sha1` は host が読んだバイト列の SHA1。イメージは、その SHA1 をキーにして `MachineConfig.roms` で渡す。解析は厳密で、次のものを拒否する。
 
@@ -901,14 +903,14 @@ SDL2 フロントエンド（`frontend/sdl2_frontend.py`）も同じ形で動く
 
 ### コアの移植
 
-ネイティブのコアが実装するコア API の C の形は、`include/msx_core.h` にある。`CoreApi` のメンバーごとに `msx_core_<member>` の関数が 1 つ、境界のレコードごとに構造体が 1 つあり、定数は `msx/boundary.py` と同じ値を持つ。名前と定数が Python のコードと同じであることは、`tests/test_core_c_header.py` が確かめる。コアが返すバイト列は、同じコアに対する次の呼び出しまで有効で、渡した入力は呼び出しの間だけ読まれる。1 つのコアは、一度に 1 つのスレッドからだけ使う。
+ネイティブのコアが実装するコア API の C の形は、`include/msx_core.h` にある。`CoreApi` のメンバーごとに `msx_core_<member>` の関数が 1 つ、境界のレコードごとに構造体が 1 つあり、定数は `msx/boundary.py` と同じ値を持つ。名前と定数が Python のコードと同じであることは、`tests/test_core_c_header.py` が確かめる。コアが返すバイト列は、同じコアに対する次の呼び出しまで有効で、渡した入力は呼び出しの間だけ読まれる。1 つのコアは、一度に 1 つのスレッドからだけ使う。C の型は、コアがマスク、clamp、拒否するどの値も入る幅にする。マウスの移動量は `int32_t`、フレームのブレークポイントは `int64_t`。`msx_core_create` は呼び出し側が渡したバッファにメッセージを書くので、コアはグローバルな状態を持たない。host は音声のレートとフレームの高さを `msx/boundary.py`（`AUDIO_SAMPLE_RATE`、`OUTPUT_HEIGHT`）から取る。MSX のキー名（`host/key_names.py`）とカートリッジの SRAM のサイズ（`host/machine_config.py`）は、コアのどのモジュールも使わないので、host が持つ。
 
 Python のコードは、`allium/core-frontend.allium` にある言語に依存しない契約と、次の点で違う（同ファイルの *Status* のコメントに一覧がある）。
 
 - `save_state` と `load_state` は、`msx/state.py` を呼ぶ `Machine` のメソッド。
 - 状態を読む操作のレコードは、Python のレジスタ名（`AF`、`AF_`）を使い、パレットをタプルで持つ。
 - `read_media` はバイト列だけを返し、書き込み禁止のフラグはマウント中のイメージが持つ。
-- フレームレートはメソッドではなく、`VideoStandard` のデータ。
+- フレームレートはメソッドではなく、`VideoStandard` のデータ（`target_fps`）。
 - `load_machine_config()` は、host の SRAM ファイルのパスを加えた `LoadedMachineConfig` を返す。コアが読むのは `MachineConfig` の部分だけ。
 
 移植する側は、次の点も決める必要がある。
@@ -940,7 +942,8 @@ Python のコードは、`allium/core-frontend.allium` にある言語に依存�
 - **VRAM と RAM**：サイズ固定の `bytearray`（V9938 は `_VRAM_SIZE = 131072`、TMS9918A は 16384、RAM マッパーはセグメントの配列）。アクセスはすべてスライスとインデックスで直接行う。int のリストや辞書を使った記憶域はない。
 - **I/O バスの振り分け**（`msx/io.py`）：`list[tuple[int, int, Callable]]` を先頭から調べる。辞書の検索もリフレクションも使わない。登録するハンドラは少なく、マシン設定ごとに決まっている。
 - **コンポーネントの構造体**：ハードウェアのコンポーネントはすべて `@dataclass` で、フィールドはすべて型付きで明示的に宣言する。`msx/` のどこにも `__getattr__`/`__setattr__` の仕掛けはない。最も頻繁に通る 2 つの構造体、`Z80` と `Registers` は `@dataclass(slots=True)` にして、インスタンスごとの `__dict__` をなくしている。`Memory` と、V9938 の小さな値の型いくつか（ログのエントリの `_RegChange`/`_PaletteChange`、`_RenderStatus`、`_SatSegment`）も同じ。ほかは素の `@dataclass`。頻繁に通らない場所では、フィールド配置の保証はそれほど重要でないため。
-- **タイミングの定数**：`CYCLES_PER_LINE`、`NTSC_LINES_PER_FRAME` / `PAL_LINES_PER_FRAME`（`msx/vdp/_geometry.py`）、`_HBLANK_START`、`_TR_REASSERT_CYCLES` などは、モジュールレベルの整数定数。1 フレームの予算は `VideoStandard` 列挙型のプロパティから得る。移植では `match` / `const fn` として書く。
+- **エミュレーション上の時刻**（`msx/clock.py`）：マシンは、サイクル数、フレーム数、命令のアドレスを持つ `CoreClock` の記録を 1 つ持つ。`build_machine` は、同じ記録を CPU、VDP、PSG、PPI、RTC、Majutsushi の DAC、トレースバッファに渡す。各値を書くのは 1 か所だけ。どのコンポーネントも、クロージャや `Machine` への参照を通して時刻を読まない。C や Zig の移植では、この記録を構造体にして、各コンポーネントがそれを指す。
+- **タイミングの定数**：`CYCLES_PER_LINE`、`NTSC_LINES_PER_FRAME` / `PAL_LINES_PER_FRAME`（`msx/vdp/_geometry.py`）、`_HBLANK_START`、`_TR_REASSERT_CYCLES` などは、モジュールレベルの整数定数。1 フレームの予算は、同じモジュールの `lines_per_frame(standard)` と `cycles_per_frame(standard)` から得る。移植では `match` / `const fn` として書く。
 
 ### 移植時に対応が必要な Python 固有パターン
 
@@ -969,12 +972,6 @@ Rust/C++ の符号なしの型はアンダーフローで折り返し、符号�
 V9938 の G4/G6 と G5 の、スキャンラインごとのピクセル展開は、`bytes.translate()` の表を `_G46_LUT_CACHE` / `_G5_LUT_CACHE` にためておく。どちらも `(tp: bool, border: int)` をキーにした辞書。`bytes.translate()` は CPython の組み込みで、256 バイトの変換表を C で一度に適用するので、Python でこの変換をする最も速い方法になる。辞書のキャッシュで、スキャンラインごとに同じ表を作り直さずに済む。
 
 `bytes.translate()` も呼び出しごとの辞書のハッシュも、システム言語では自然な書き方ではない。Rust/C++ の移植では、固定の `[u8; 256]` の配列を初期化時に計算しておき、直接インデックスで引く。`(tp, border)` の組み合わせは全部で 32 通りしかない。
-
-#### トレースバッファの値の取得
-
-トレースバッファ（`msx/trace.py` の `TraceLog`）は、各イベントに CPU の命令の PC、サイクル数、VDP のフレーム番号を付ける。これらは `_get_pc`、`_get_cycle`、`_get_frame` の 3 つのクロージャで読む。クロージャは `msx/machine_loader.py` が構築時につなぐ。イベントを記録する VDP とマッパーは、これらの値を手元に持っていないためである。クロージャはコアの中にとどまり、コアの API を通らない。
-
-Rust/C++ の移植では、クロージャを持たずに、3 つの値を記録の呼び出しに渡すか、共有の時計の構造体への参照をバッファに持たせる。
 
 #### フレームタイマーのスピンループ
 

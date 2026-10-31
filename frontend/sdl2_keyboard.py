@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 
 from host.input_state import InputState
-from msx.machine_spec import KeyboardLayout
+from msx.boundary import KeyboardLayout
 
 # SDL2 SDLK key constants as integers so sdl2 is not a hard dependency at import time.
 # ASCII-range keys share values between SDL2 and pygame; special keys use SDL2 SDLK_* values.
@@ -148,7 +148,7 @@ _K_ZERO_SHIFT = -1
 # (openMSX unicodemap.int / unicodemap.jp_jis; map.grauw.nl keymatrix.)
 #
 # PORT-LIBRARY-NOTE: _COMMON_MATRIX/_INT_SYMBOLS/_JP_SYMBOLS/KEY_MATRIX_INT/
-#   KEY_MATRIX_JP/JOY_MAP/KEY_NAME_TO_SDLKEY (this file; KEY_NAME_TO_CELL in msx/input.py) are
+#   KEY_MATRIX_JP/JOY_MAP/KEY_NAME_TO_SDLKEY (this file; KEY_NAME_TO_CELL in host/key_names.py) are
 #   sizable dict literals used as static, immutable lookup tables, built once
 #   at import via MappingProxyType.
 # Rust crate candidates: phf (compile-time perfect-hash maps) for the same
@@ -409,7 +409,7 @@ class SdlKeyboard:
     # Joy1 keyboard overlay: SDL key -> (port, bit). Defaults to JOY_MAP; a
     # config-resolved map replaces it wholesale (resolve_keyboard_joy_map).
     joy_map: Mapping[int, tuple[int, int]] = field(default_factory=lambda: JOY_MAP)
-    # The machine's keyboard layout (Machine.keyboard_layout).
+    # The machine's keyboard layout (CoreApi.keyboard_layout, an int).
     keyboard_layout: KeyboardLayout = KeyboardLayout.INTERNATIONAL
     _matrix_map: dict[int, tuple[int, int]] = field(
         default_factory=lambda: KEY_MATRIX_INT, init=False, repr=False
@@ -423,7 +423,7 @@ class SdlKeyboard:
     _zero_shift_redirect: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        jp = self.keyboard_layout is KeyboardLayout.JAPANESE
+        jp = self.keyboard_layout == KeyboardLayout.JAPANESE
         self._matrix_map = KEY_MATRIX_JP if jp else KEY_MATRIX_INT
 
     def _shift_held(self) -> bool:

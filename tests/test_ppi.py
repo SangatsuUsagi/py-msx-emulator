@@ -1,7 +1,8 @@
 from msx.input import InputLines
+from msx.machine_spec import PpiControlRead
 from msx.mapper import FlatMapper
 from msx.memory import Memory
-from msx.ppi import PPI, PpiControlRead
+from msx.ppi import PPI
 
 
 def make_ppi(slot_register: int = 0, input_state: InputLines | None = None,

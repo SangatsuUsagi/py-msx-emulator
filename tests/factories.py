@@ -7,6 +7,7 @@ build_machine(), so construction logic lives in one place.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 from host.machine_config import load_machine_config
@@ -17,8 +18,9 @@ from msx.machine_spec import (
     ExpandedExtensionOverlay,
     ExtensionOverlay,
     MachineSpec,
-    _RomEntry,
+    RomEntry,
 )
+from msx.vdp.v9938 import V9938
 
 
 def _reversed_keys(node: object) -> object:
@@ -43,7 +45,7 @@ def _msx1_spec() -> MachineSpec:
         name="test_msx1",
         generation="msx1",
         rom_base_dir=Path("."),
-        main_rom_entry=_RomEntry(file="", size_kb=0, pages=[0, 1]),
+        main_rom_entry=RomEntry(file="", size_kb=0, pages=[0, 1]),
         logo_rom_entry=None,
         sub_rom_entry=None,
         has_ram_mapper=False,
@@ -59,9 +61,9 @@ def _msx2_spec() -> MachineSpec:
         machine_id="test_msx2",
         generation="msx2",
         rom_base_dir=Path("."),
-        main_rom_entry=_RomEntry(file="", size_kb=0, pages=[0, 1]),
+        main_rom_entry=RomEntry(file="", size_kb=0, pages=[0, 1]),
         logo_rom_entry=None,
-        sub_rom_entry=_RomEntry(file="", size_kb=0, pages=[]),
+        sub_rom_entry=RomEntry(file="", size_kb=0, pages=[]),
         has_ram_mapper=True,
         ram_size_kb=32,
         has_v9938=True,
@@ -158,3 +160,16 @@ def load_state_file(machine: Machine, path: Path | None = None) -> None:
     if path is None:
         path = (Path("saves") / "states" / "latest.state").resolve()
     state.load_state(machine, path.read_bytes())
+
+
+def watch_scanlines(vdp: V9938, record: Callable[[int], None]) -> None:
+    """Call `record(line)` after each `vdp.begin_scanline(line)`. The machine
+    loop looks the method up on the instance, so the wrapper sees every
+    call, in order."""
+    begin = vdp.begin_scanline
+
+    def begin_and_record(line: int) -> None:
+        begin(line)
+        record(line)
+
+    vdp.begin_scanline = begin_and_record  # type: ignore[method-assign]

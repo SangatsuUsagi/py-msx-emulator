@@ -4,16 +4,16 @@ from collections.abc import Callable
 import pytest
 
 from host.romdb import RomDbEntry
-from msx.boundary import MediaId
+from msx.boundary import MediaId, VideoStandard
 from msx.cpu.z80 import Z80
 from msx.input import InputLines
 from msx.machine import Machine
 from msx.machine_spec import MachineLoadError
 from msx.mapper import Ascii8Mapper, Ascii16Mapper, FlatMapper, KonamiMapper, KonamiSCCMapper
-from msx.vdp._geometry import VideoStandard
+from msx.vdp._geometry import cycles_per_frame
 from tests.factories import make_machine, make_machine_msx2
 
-NTSC_CYCLES = VideoStandard.NTSC.cycles_per_frame
+NTSC_CYCLES = cycles_per_frame(VideoStandard.NTSC)
 
 # 32 KB BIOS ROM filled with NOP (0x00), then HALT (0x76) at offset 0
 _NOP_ROM = bytes(32768)
@@ -68,10 +68,10 @@ def test_run_frame_skip_render_returns_empty_buffer() -> None:
 def test_run_frame_increments_vdp_frame_count() -> None:
     # Machine.run_frame owns frame counting (both VDP variants).
     m = _make_machine()
-    assert m.vdp._frame_count == 0
+    assert m.vdp.frame_count == 0
     m.run_frame()
     m.run_frame(skip_render=True)
-    assert m.vdp._frame_count == 2
+    assert m.vdp.frame_count == 2
 
 
 def test_run_frame_skip_render_still_fires_vblank() -> None:
@@ -147,7 +147,7 @@ def test_halt_with_interrupts_disabled_runs_full_frame() -> None:
     m.run_frame()
     assert m.cpu.halted is True
     assert m.cpu.registers.PC == 1  # PC stays where HALT left it
-    assert m.vdp._frame_count == 1
+    assert m.vdp.frame_count == 1
 
 
 # --- _run_lines_fast JR $ batching (Z80.step_idle_batch) ---------------------
@@ -572,6 +572,7 @@ def test_make_machine_dac_wired_from_slot1_majutsushi() -> None:
     m = make_machine(rom=_NOP_ROM, cartridge=cart, mapper="Majutsushi")
     assert isinstance(m.dac, MajutsushiMapper)
     assert m.dac is m.memory._mapper
+    assert m.dac._clock is m.clock
 
 
 def test_make_machine_dac_wired_from_slot2_majutsushi() -> None:
@@ -580,6 +581,7 @@ def test_make_machine_dac_wired_from_slot2_majutsushi() -> None:
     m = make_machine(rom=_NOP_ROM, cartridge2=cart2, mapper2="Majutsushi")
     assert isinstance(m.dac, MajutsushiMapper)
     assert m.dac is m.memory._mapper2
+    assert m.dac._clock is m.clock
 
 
 def test_make_machine_majutsushi_in_both_slots_rejected() -> None:

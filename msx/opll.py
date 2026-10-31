@@ -92,7 +92,7 @@ _SLOT_CYM = 17  # CAR(8)
 # recomputes them with floating point and checks every entry.
 # ---------------------------------------------------------------------------
 
-# exp_table[x] = round((2^(x/256) - 1) * 1024), x = 0-255.
+# exp_table[x] = int((2^(x/256) - 1) * 1024 + 0.5), x = 0-255 (round half up).
 _EXP_TABLE_DATA: tuple[int, ...] = (
     0, 3, 6, 8, 11, 14, 17, 20, 22, 25, 28, 31, 34, 37, 40, 42,
     45, 48, 51, 54, 57, 60, 63, 66, 69, 72, 75, 78, 81, 84, 87, 90,
@@ -114,7 +114,7 @@ _EXP_TABLE_DATA: tuple[int, ...] = (
 
 
 # The first quarter of fullsin_table:
-# round(-log2(sin((x + 0.5) * pi / 512)) * 256), x = 0-255.
+# int(-log2(sin((x + 0.5) * pi / 512)) * 256 + 0.5), x = 0-255 (round half up).
 _LOGSIN_QUARTER: tuple[int, ...] = (
     2137, 1731, 1543, 1419, 1326, 1252, 1190, 1137, 1091, 1050, 1013, 979, 949, 920, 894, 869,
     846, 825, 804, 785, 767, 749, 732, 717, 701, 687, 672, 659, 646, 633, 621, 609,
@@ -154,7 +154,7 @@ def _build_sin_tables() -> tuple[list[int], list[int]]:
     return full, half
 
 
-_EXP_TABLE = list(_EXP_TABLE_DATA)
+_EXP_TABLE = _EXP_TABLE_DATA
 _FULLSIN_TABLE, _HALFSIN_TABLE = _build_sin_tables()
 _WAVE_TABLE_MAP = (_FULLSIN_TABLE, _HALFSIN_TABLE)
 
@@ -204,12 +204,15 @@ _ML_TABLE: tuple[int, ...] = (
 )
 
 
-# emu2413's key-scale levels (0.000-21.000 dB, multiples of 0.125 dB) on its
-# dB2 scale (dB * 2), in quarter units: dB * 8, so each is an exact integer.
+# emu2413's kl_table: dB2(x) = 2 * x for these x (dB), 0.000-21.000 in 0.125 dB
+# steps. Stored as 4 * dB2(x) = 8 * x so every entry is an integer; the TLL
+# build divides by 4.
+#   x: 0, 9, 12, 13.875, 15, 16.125, 16.875, 17.625,
+#      18, 18.75, 19.125, 19.5, 19.875, 20.25, 20.625, 21
 _KL_TABLE: tuple[int, ...] = (
     0, 72, 96, 111, 120, 129, 135, 141, 144, 150, 153, 156, 159, 162, 165, 168,
 )
-# The dB2 of 3 dB per block below 7, in the same quarter units.
+# 4 * dB2(3.000): 3 dB per block below 7.
 _KL_BLOCK_STEP = 24
 
 

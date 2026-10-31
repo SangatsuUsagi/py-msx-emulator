@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import TYPE_CHECKING, NamedTuple, TypedDict
+from typing import NamedTuple, TypedDict
 
+from msx.boundary import AUDIO_SAMPLE_RATE
+from msx.clock import CoreClock
 from msx.input import InputLines
 from msx.mouse import MouseDevice
 from msx.snapshot_schema import (
@@ -14,13 +16,10 @@ from msx.snapshot_schema import (
     check_object,
 )
 
-if TYPE_CHECKING:
-    from msx.machine import Machine
-
 _REG_IO_PORT_A = 14
 
 PSG_CLOCK: int = 223_722      # AY-3-8910: 3,579,545 Hz / 16
-SAMPLE_RATE: int = 44_100
+SAMPLE_RATE: int = AUDIO_SAMPLE_RATE
 SAMPLES_PER_FRAME: int = 735  # 44100 // 60
 # Upper bound on recorded register writes per audio buffer. Far above any real
 # frame's write count; caps memory if generate_samples is never called (headless).
@@ -108,24 +107,13 @@ class PSG:
     _input: InputLines | None = field(default=None, repr=False)
     _mouse: MouseSlot | None = field(default=None, repr=False)
 
-    # Sub-frame audio: register writes are timestamped (cycle, reg, value) via
-    # `_machine.cycle_count` so generate_samples can place them at their
+    # Sub-frame audio: register writes are timestamped (cycle, reg, value)
+    # with the clock record's cycle count (msx/clock.py; build_machine gives
+    # the machine's record) so generate_samples can place them at their
     # in-frame sample positions (reproduces software PCM). _regs_base /
     # _gen_base snapshot the register + generator state at the frame's first
     # write, for replay rewind.
-    #
-    # PORT-NOTE: _machine is a direct reference to the owning Machine,
-    #   resolved once at wiring time (machine_loader sets `psg._machine =
-    #   machine`, after Machine is fully constructed).
-    # Rust equivalent: a `Rc<RefCell<Machine>>`, or a narrower shared cycle
-    #   counter if the back-reference proves awkward at port time.
-    # C++ equivalent: a raw or shared pointer to the owning Machine, or the
-    #   same narrower-counter alternative.
-    # Kept as a direct reference (not a closure) because: measured ~2x
-    #   faster per read than the closure this replaced. Full benchmark and
-    #   the rejected shared-Clock-object alternative in
-    #   openspec/changes/archive/*-psg-cycle-source-refactor/design.md.
-    _machine: "Machine | None" = field(default=None, repr=False)
+    _clock: CoreClock = field(default_factory=CoreClock, repr=False)
     # Recorded writes as (cycle, reg, value); a port would use a small struct.
     # Kept as a plain tuple here to avoid per-write allocation on the I/O path.
     _events: list[tuple[int, int, int]] = field(default_factory=list, init=False, repr=False)
@@ -184,8 +172,7 @@ class PSG:
                     # Frame's first write: snapshot state to rewind to at replay.
                     self._regs_base = self.regs[:]
                     self._gen_base = self._snapshot_gen()
-                cyc = self._machine.cycle_count if self._machine is not None else 0
-                self._events.append((cyc, reg, value))
+                self._events.append((self._clock.cycle, reg, value))
             self.regs[reg] = value
             if reg == 13:
                 self._reset_envelope()
@@ -194,14 +181,7 @@ class PSG:
                 # bit 4 = Joy1, bit 5 = Joy2. Driven on both ports on every
                 # register-15 write, independent of JOY_SELECT (bit 6).
                 pin8_bit = 4 if self._mouse.port == JoystickPort.JOY1 else 5
-                # Independent read of _machine.cycle_count, not a reuse of
-                # the `cyc` computed above: that one is skipped once the
-                # per-frame event buffer (_MAX_EVENTS) is full, so it isn't
-                # reliably in scope here. Reading cycle_count is a pure
-                # attribute access, so reading it twice per write_port
-                # invocation is correct and cheap.
-                cycle = self._machine.cycle_count if self._machine is not None else 0
-                self._mouse.device.write_pin8((value >> pin8_bit) & 1, cycle)
+                self._mouse.device.write_pin8((value >> pin8_bit) & 1, self._clock.cycle)
 
     def read_port(self, port: int) -> int:
         if port == 0xA2:

@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from msx.machine import Machine
 
 from msx.boundary import (
-    RTC_DEFAULT_START,
+    DRIVE_MEDIA_IDS,
     STATUS_BAD_CONFIG,
     STATUS_OK,
     TRACE_DEBUG,
@@ -41,10 +41,10 @@ from msx.machine_config import RomRef, parse_machine_config
 from msx.machine_spec import (
     AnyExtensionOverlay,
     ExpandedExtensionOverlay,
+    ExpandedSubslotDevice,
     ExtensionOverlay,
     MachineLoadError,
     MachineSpec,
-    _ExpandedSubslotDevice,
 )
 from msx.mapper import (
     Ascii8Mapper,
@@ -72,7 +72,7 @@ from msx.opll import Opll
 from msx.ppi import PPI
 from msx.psg import PSG
 from msx.ram_mapper import RamMapper
-from msx.rtc import RTC
+from msx.rtc import RTC, check_start
 from msx.scc import SCC
 from msx.sram import SramImage
 from msx.vdp.v9938 import V9938
@@ -82,25 +82,16 @@ from msx.vdp.vdp import VDP, VdpDevice
 # Mapper helpers
 # ---------------------------------------------------------------------------
 
-# The ids that name floppy drives, never a battery-backed medium.
-_DRIVE_MEDIA_IDS = (MediaId.DRIVE_A, MediaId.DRIVE_B, MediaId.DRIVE_C, MediaId.DRIVE_D)
-
-_SRAM_SIZES: dict[str, int] = {
-    "ASCII8SRAM2": 2048,
-    "ASCII8SRAM8": 8192,
-    "ASCII16SRAM2": 2048,
-    "ASCII16SRAM8": 8192,
-    "KoeiSRAM32": 32768,
-    "GameMaster2": 8192,
-}
-
-
 def _require_scc(scc: SCC | None) -> SCC:
     if scc is None:
         raise MachineLoadError("KonamiSCC mapper requires an SCC instance")
     return scc
 
 
+# PORT-NOTE: the build dispatches on strings from the parsed document
+#   (mapper type here, `generation` and the FDC `controller` below). It
+#   runs once per build, not per instruction. A native core maps each
+#   string to an enum once, when it parses the document.
 # mapper_type -> builder. Each builder receives (cartridge, rom_bytes, sram,
 # scc): `cartridge` is the raw ROM (None when absent), `rom_bytes` the same
 # with None normalised to b"". FlatMapper keeps the None-able cartridge (it
@@ -223,7 +214,7 @@ class _ResolvedConfig:
     extension_overlay2: AnyExtensionOverlay | None
     media: dict[MediaId, bytes]
     disks: dict[int, DiskMount]       # by drive index
-    rtc_initial_time: RtcTime | None
+    rtc_initial_time: RtcTime
     config_sha256: str
 
 
@@ -246,7 +237,7 @@ def _media_by_id(config: MachineConfig) -> dict[MediaId, bytes]:
     drive id (disks travel in MachineConfig.disks)."""
     media: dict[MediaId, bytes] = {}
     for image in config.media:
-        if image.media_id in _DRIVE_MEDIA_IDS:
+        if image.media_id in DRIVE_MEDIA_IDS:
             raise MachineLoadError(
                 f"MachineConfig has a medium image for {image.media_id.name}, a drive id"
             )
@@ -274,6 +265,16 @@ def _disks_by_drive(config: MachineConfig, drive_count: int) -> dict[int, DiskMo
     return disks
 
 
+def _check_rtc_initial_time(start: RtcTime) -> None:
+    """Reject an RTC start time that a state load would reject, so a built
+    machine can always load its own saved state."""
+    fields = [start.year, start.month, start.day, start.hour, start.minute, start.second]
+    try:
+        check_start(fields, "MachineConfig.rtc_initial_time")
+    except ValueError as exc:
+        raise MachineLoadError(str(exc)) from None
+
+
 def _resolve(config: MachineConfig) -> _ResolvedConfig:
     """Parse the document and pair every ROM reference with its checked
     image -- everything that can reject the config, before anything is built."""
@@ -282,11 +283,13 @@ def _resolve(config: MachineConfig) -> _ResolvedConfig:
     for rom in config.roms:
         images[rom.sha1] = rom.data
     spec = parsed.spec
+    # Only _build_msx2 wires an FDC, so an MSX1 has no drive to mount into.
     drive_count = 0
     if spec.generation == "msx2" and spec.fdc is not None:
         drive_count = spec.fdc.drives
     media = _media_by_id(config)
     disks = _disks_by_drive(config, drive_count)
+    _check_rtc_initial_time(config.rtc_initial_time)
     roms: dict[str, bytes] = {}
     cartridges: dict[str, bytes] = {}
     for role, ref in parsed.roms.items():
@@ -343,7 +346,6 @@ class _ExtensionWiring:
     slot2_sub_slot_enabled: bool
     mapper2_subslots: list[Mapper | None]
     fmpac_device: FmPac | None
-    halnote_device: HalnoteMapper | None
     kanji_device: KanjiRom | None
 
 
@@ -363,27 +365,12 @@ class _ExpandedOverlayWiring:
     `_wire_extension_overlay` to fold into `_ExtensionWiring`."""
 
     subslots: list[Mapper | None]
-    halnote_device: HalnoteMapper | None
     kanji_device: KanjiRom | None
 
 
-@dataclass
-class _ExpandedSubslotDeviceWiring:
-    """One expanded-overlay sub-slot's constructed device, from
-    `_build_expanded_subslot_device`. `halnote_device` is populated only when
-    `mapper_instance` is that sub-slot's `HalnoteMapper`
-    (`None` for every other device kind), so the caller can still track
-    `Machine`'s single `halnote_cart` field without this dataclass needing a
-    separate "which kind was this" flag -- `halnote_device is not None` already
-    says so unambiguously."""
-
-    mapper_instance: Mapper
-    halnote_device: HalnoteMapper | None
-
-
 def _build_expanded_subslot_device(
-    config: _ResolvedConfig, slot: int, subslot: _ExpandedSubslotDevice, index: int
-) -> _ExpandedSubslotDeviceWiring:
+    config: _ResolvedConfig, slot: int, subslot: ExpandedSubslotDevice, index: int
+) -> Mapper:
     """Construct one expanded-overlay sub-slot's device.
 
     Raises:
@@ -395,21 +382,16 @@ def _build_expanded_subslot_device(
     rom_role = f"slot{slot}.{index}"
     if subslot.device == "halnote":
         halnote_sram = config.media.get(subslot_sram_id(slot, index))
-        halnote_device = HalnoteMapper(
-            rom=_rom(config, rom_role),
-            sram=halnote_sram,
-        )
-        return _ExpandedSubslotDeviceWiring(halnote_device, halnote_device)
+        return HalnoteMapper(rom=_rom(config, rom_role), sram=halnote_sram)
     if subslot.device == "flat_rom":
-        mapper = FixedPageMapper(rom=_rom(config, rom_role), base=0x4000)
-        return _ExpandedSubslotDeviceWiring(mapper, None)
+        return FixedPageMapper(rom=_rom(config, rom_role), base=0x4000)
     if subslot.device == "ascii8":
-        return _ExpandedSubslotDeviceWiring(Ascii8Mapper(rom=_rom(config, rom_role)), None)
+        return Ascii8Mapper(rom=_rom(config, rom_role))
     if subslot.device == "ascii16":
-        return _ExpandedSubslotDeviceWiring(Ascii16Mapper(rom=_rom(config, rom_role)), None)
+        return Ascii16Mapper(rom=_rom(config, rom_role))
     if subslot.device == "ram_mapper":
         assert subslot.size_kb is not None  # guaranteed by load-time validation
-        return _ExpandedSubslotDeviceWiring(RamMapper(size_kb=subslot.size_kb), None)
+        return RamMapper(size_kb=subslot.size_kb)
     raise MachineLoadError(
         f"{spec.machine_id}: internal error -- expanded overlay sub-slot "
         f"{index} device {subslot.device!r} passed load-time validation "
@@ -434,8 +416,7 @@ def _wire_expanded_overlay(
     expanded overlay (wired first by `_wire_extension_overlay`) already
     claimed a 'ram_mapper'/'halnote' sub-slot -- two independent RamMapper
     instances would otherwise both register on the same I/O ports
-    (0xFC-0xFF), and two independent HalnoteMapper instances would otherwise
-    both claim `Machine`'s single `halnote_cart` field.
+    (0xFC-0xFF), and a machine never has two HBI-J1 MSX-JE cartridges.
 
     Raises:
         MachineLoadError: If applied to an MSX1 machine, if the overlay
@@ -480,16 +461,11 @@ def _wire_expanded_overlay(
         raise MachineLoadError(
             f"{spec.machine_id}: a 'halnote' extension sub-slot conflicts with the "
             "other cartridge slot's extension overlay, which already claimed one -- "
-            "real hardware never has two HBI-J1 MSX-JE cartridges attached at once, "
-            "and Machine has a single halnote_cart field"
+            "real hardware never has two HBI-J1 MSX-JE cartridges attached at once"
         )
     subslots: list[Mapper | None] = _empty_subslots()
-    halnote_device: HalnoteMapper | None = None
     for index, subslot in extension_overlay.subslots.items():
-        built = _build_expanded_subslot_device(config, slot, subslot, index)
-        subslots[index] = built.mapper_instance
-        if built.halnote_device is not None:
-            halnote_device = built.halnote_device
+        subslots[index] = _build_expanded_subslot_device(config, slot, subslot, index)
     if (
         extension_overlay.io_device is not None
         and extension_overlay.io_device.device == "kanji_rom"
@@ -502,11 +478,7 @@ def _wire_expanded_overlay(
                 "0xD8-0xDB -- these cannot coexist"
             )
         kanji_device = KanjiRom(rom=_rom(config, f"slot{slot}.io_device"))
-    return _ExpandedOverlayWiring(
-        subslots=subslots,
-        halnote_device=halnote_device,
-        kanji_device=kanji_device,
-    )
+    return _ExpandedOverlayWiring(subslots=subslots, kanji_device=kanji_device)
 
 
 @dataclass
@@ -636,7 +608,6 @@ def _wire_extension_overlay(
     mapper1_subslots: list[Mapper | None] = _empty_subslots()
     slot2_sub_slot_enabled = False
     mapper2_subslots: list[Mapper | None] = _empty_subslots()
-    halnote_device: HalnoteMapper | None = None
     fmpac_device: FmPac | None = None
     slot1_ram_mapper_claimed = False
     slot1_halnote_claimed = False
@@ -654,9 +625,7 @@ def _wire_extension_overlay(
         expanded1 = _wire_expanded_overlay(config, 1, extension_overlay1, kanji_device)
         slot1_sub_slot_enabled = True
         mapper1_subslots = expanded1.subslots
-        if expanded1.halnote_device is not None:
-            halnote_device = expanded1.halnote_device
-            slot1_halnote_claimed = True
+        slot1_halnote_claimed = any(_is_halnote_mapper(sub) for sub in mapper1_subslots)
         kanji_device = expanded1.kanji_device
         slot1_ram_mapper_claimed = any(_is_ram_mapper(sub) for sub in mapper1_subslots)
     elif extension_overlay1 is not None:
@@ -676,8 +645,6 @@ def _wire_extension_overlay(
         )
         slot2_sub_slot_enabled = True
         mapper2_subslots = expanded2.subslots
-        if expanded2.halnote_device is not None:
-            halnote_device = expanded2.halnote_device
         kanji_device = expanded2.kanji_device
     elif extension_overlay2 is not None:
         flat2 = _wire_flat_overlay(config, 2, extension_overlay2, scc, existing_fmpac=fmpac_device)
@@ -695,7 +662,6 @@ def _wire_extension_overlay(
         slot2_sub_slot_enabled=slot2_sub_slot_enabled,
         mapper2_subslots=mapper2_subslots,
         fmpac_device=fmpac_device,
-        halnote_device=halnote_device,
         kanji_device=kanji_device,
     )
 
@@ -774,6 +740,11 @@ def _is_ram_mapper(mapper: Mapper | None) -> TypeGuard[RamMapper]:
     return mapper is not None and mapper.kind == MapperKind.RAM_MAPPER
 
 
+def _is_halnote_mapper(mapper: Mapper | None) -> bool:
+    """True if `mapper` is a `HalnoteMapper` -- see `_is_majutsushi_mapper`."""
+    return mapper is not None and mapper.kind == MapperKind.HALNOTE
+
+
 def _resolve_shared_dac(
     spec: MachineSpec, mapper1_instance: Mapper, mapper2_instance: Mapper
 ) -> MajutsushiMapper | None:
@@ -797,42 +768,38 @@ def _resolve_shared_dac(
 
 def _wire_post_construction_attrs(
     machine: "Machine",
-    io: IOBus,
     dac: MajutsushiMapper | None,
     wiring: _ExtensionWiring,
 ) -> None:
-    """Wire closures and device/save-path attributes onto an already-built
-    Machine: the CPU PC accessor IOBus needs, the cycle-count accessor a
-    Majutsushi DAC and the PPI key click need, and the FM-PAC/Halnote/Kanji
-    attributes `build_machine`'s extension-overlay resolution produced."""
-    io._get_pc = lambda: machine.cpu.registers.PC
-    _wire_trace(machine)
-    # PORT-NOTE: these cycle closures capture `machine`, which owns the
-    #   devices -- a cycle in Rust/C++. A port should pass the cycle into the
-    #   write call (or share a narrow cycle counter) instead.
-    if dac is not None:
-        dac._get_cycle = lambda: machine.cycle_count
+    """Wire the clock record and the device attributes onto an already-built
+    Machine: every component that reads or advances the emulated time gets
+    the machine's clock record (msx/clock.py), and the machine gets the
+    FM-PAC/Kanji attributes `build_machine`'s extension-overlay resolution
+    produced. Every value of the record is 0 here, so a
+    component's own record held nothing to keep."""
+    clock = machine.clock
+    machine.cpu._clock = clock
+    machine.vdp._clock = clock
+    machine.psg._clock = clock
     if machine.ppi is not None:
-        machine.ppi._get_cycle = lambda: machine.cycle_count
-    # PSG software PCM: timestamp register writes so generate_samples can place
-    # them at their sub-frame sample positions (mirrors the DAC wiring).
-    machine.psg._machine = machine
+        machine.ppi._clock = clock
+    if dac is not None:
+        dac._clock = clock
+    _wire_trace(machine)
     machine.fmpac = wiring.fmpac_device
-    machine.halnote_cart = wiring.halnote_device
     machine.kanji = wiring.kanji_device
 
 
 def _wire_trace(machine: "Machine") -> None:
-    """Wire the machine's trace buffer (msx/trace.py) into the VDP and the
-    slot 1/2 bank-switching ROM mappers, with the getters it stamps each
-    event with, and record which trace kinds this machine can produce."""
+    """Wire the machine's trace buffer (msx/trace.py) into the VDP, the I/O
+    bus and the slot 1/2 bank-switching ROM mappers, give it the clock
+    record it stamps each event with, and record which trace kinds this
+    machine can produce."""
     trace = machine._trace
-    trace._get_pc = lambda: machine.cpu.instruction_pc
-    trace._get_cycle = lambda: machine.cycle_count
-    trace._get_frame = lambda: machine.vdp.frame_count
+    trace._clock = machine.clock
     machine.vdp._trace = trace
-    trace.sources = TRACE_VDP | TRACE_DEBUG
     machine.io._trace = trace
+    trace.sources = TRACE_VDP | TRACE_DEBUG
     mem = machine.memory
     for mp in (mem._mapper, mem._mapper2):
         if isinstance(mp, BankTracingMapper):
@@ -860,7 +827,9 @@ def create_machine(machine_config: MachineConfig) -> BuildResult:
     core; host code builds through it."""
     try:
         machine = _build(machine_config)
-    except MachineLoadError as exc:
+    except (MachineLoadError, ValueError) as exc:
+        # ValueError: a device constructor (disk image, RAM mapper, Kanji
+        # ROM, Halnote, Memory) rejected a size or a combination.
         return BuildResult(STATUS_BAD_CONFIG, None, str(exc).encode("utf-8"))
     return BuildResult(STATUS_OK, machine, b"")
 
@@ -989,7 +958,7 @@ def _build(machine_config: MachineConfig) -> "Machine":
             mapper2_subslots=mapper2_subslots,
         )
 
-    _wire_post_construction_attrs(machine, io, dac, wiring)
+    _wire_post_construction_attrs(machine, dac, wiring)
     machine._sram_table = _sram_table(machine)
     machine.machine_config_sha256 = config.config_sha256
     return machine
@@ -1047,7 +1016,6 @@ def _build_msx1(
         _mapper2=mapper2_instance,
         slot_register=0x00,
         extrom=logo_bytes,
-        rom_name=spec.main_rom_entry.file,
         slot0_ram=slot0_ram,
         slot0_ram_page=slot0_ram_page,
         slot1_sub_slot_enabled=slot1_sub_slot_enabled,
@@ -1151,8 +1119,6 @@ def _build_msx2(
         sub_rom_subslot=spec.sub_rom_subslot,
         fdc=fdc_device,
         fdc_subslot=spec.fdc_subslot,
-        rom_name=spec.main_rom_entry.file,
-        sub0_rom_name=spec.sub_rom_entry.file if spec.sub_rom_entry is not None else "",
         slot0_ram=slot0_ram,
         slot0_ram_page=slot0_ram_page,
         slot1_sub_slot_enabled=slot1_sub_slot_enabled,
@@ -1166,11 +1132,7 @@ def _build_msx2(
     rtc: RTC | None = None
     if spec.has_rtc:
         rtc_sram = config.media.get(MediaId.RTC_CMOS)
-        start = config.rtc_initial_time
-        rtc = RTC(
-            sram=rtc_sram,
-            start=start if start is not None else RTC_DEFAULT_START,
-        )
+        rtc = RTC(sram=rtc_sram, start=config.rtc_initial_time)
     ppi = PPI(
         memory=memory, _input=input_state, control_read=spec.ppi_control_read
     )
@@ -1201,8 +1163,6 @@ def _build_msx2(
         ppi=ppi,
     )
     if rtc is not None:
-        # PORT-NOTE: same back-reference as _wire_post_construction_attrs' cycle
-        #   closures; a port shares a narrow cycle counter with the RTC.
-        rtc._get_cycle = lambda: machine.cycle_count
-        rtc._start_cycle = machine.cycle_count
+        rtc._clock = machine.clock
+        rtc._start_cycle = machine.clock.cycle
     return machine

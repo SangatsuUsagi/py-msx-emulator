@@ -19,8 +19,9 @@ from msx.machine import Machine
 from tests.factories import make_machine, make_machine_msx2
 
 
-def _ev(kind: int, a: int = 0, b: int = 0, c: int = 0, frame: int = 0) -> TraceEvent:
-    return TraceEvent(kind, 0, frame, 0, a, b, c)
+def _ev(kind: int, a: int = 0, b: int = 0, c: int = 0, frame: int = 0,
+        pc: int = 0) -> TraceEvent:
+    return TraceEvent(kind, 0, frame, pc, a, b, c)
 
 
 def _lines(events: list[TraceEvent]) -> list[str]:
@@ -91,14 +92,29 @@ def test_undefined_opcode_logged_in_debug_mode() -> None:
 
 
 def test_out_logged() -> None:
-    assert _lines([_ev(TRACE_EVENT_IO_WRITE, 0xA8, 0xE0, 0x0041)]) == [
+    assert _lines([_ev(TRACE_EVENT_IO_WRITE, 0xA8, 0xE0, pc=0x0041)]) == [
         "[IO]  OUT  port=A8  val=E0  PC=0041",
     ]
 
 
 def test_in_logged() -> None:
-    assert _lines([_ev(TRACE_EVENT_IO_READ, 0xA8, 0xE0, 0x003F)]) == [
+    assert _lines([_ev(TRACE_EVENT_IO_READ, 0xA8, 0xE0, pc=0x003F)]) == [
         "[IO]  IN   port=A8  val=E0  PC=003F",
+    ]
+
+
+def test_io_lines_give_the_instruction_address() -> None:
+    # 0000 LD A,0xE0 / 0002 OUT (0xA8),A / 0004 IN A,(0xA8) / 0006 JR $.
+    # 0xE0 keeps pages 0 and 1 on slot 0, so the code stays visible.
+    code = bytes((0x3E, 0xE0, 0xD3, 0xA8, 0xDB, 0xA8, 0x18, 0xFE))
+    m = make_machine(code + bytes(32 * 1024 - len(code)))
+    m.set_trace_kinds(TRACE_DEBUG)
+    for _ in range(3):
+        m.step()
+    lines = _lines(list(m.drain_trace()))
+    assert lines == [
+        "[IO]  OUT  port=A8  val=E0  PC=0002",
+        "[IO]  IN   port=A8  val=E0  PC=0004",
     ]
 
 

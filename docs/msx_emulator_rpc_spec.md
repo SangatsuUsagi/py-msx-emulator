@@ -268,6 +268,9 @@ the four set stay.
 **Params:** `{ "address": "0xC000", "length": 16 }`  
 **Result:** `{ "address": "0xC000", "data": "3E 01 32 00 C0 C9 ..." }`
 
+The length must be 0-0x10000. Any other length gives an invalid-params error
+(`-32602`).
+
 ---
 
 ### `memory.write`
@@ -283,6 +286,11 @@ the four set stay.
 
 **Params:** `{ "address": "0x0000", "length": 32 }`  
 **Result:** `{ "address": "0x0000", "data": "..." }`
+
+The address wraps at the VRAM size (0x4000 or 0x20000). On an MSX2 machine an
+address above 0xFFFF reads the VRAM above 64 KB, and the result's `address`
+has five hex digits (`"0x1C000"`). The length must be 0 to the VRAM size. Any
+other length gives an invalid-params error (`-32602`).
 
 ---
 
@@ -437,7 +445,8 @@ Clients that do not need push may ignore these frames.
 The frame loop and class skeleton below are design sketches, not extracts from
 the finished code. The shipped `DebugServer` diverges in at least two ways worth
 knowing: `cpu.continue_sync` is handled inline on the socket thread rather than
-queued (it has to block without stalling the emulator), and the queue wait has a
+queued (it has to block without stalling the emulator, and it answers from the
+pause record the emulator thread writes, with no core call), and the queue wait has a
 named `_DISPATCH_TIMEOUT_S` that answers with a `"dispatch timeout"` error.
 
 ### New files

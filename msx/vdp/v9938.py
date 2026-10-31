@@ -9,7 +9,7 @@ the block more coarsely mirrors these four).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable, TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
 from msx.boundary import (
     TRACE_DEBUG,
@@ -18,6 +18,7 @@ from msx.boundary import (
     TRACE_EVENT_VDP_PORT99,
     TRACE_VDP,
 )
+from msx.clock import CoreClock
 from msx.snapshot_schema import check_bool, check_int, check_int_list, check_object
 from msx.vdp import v9938_renderer
 from msx.vdp._geometry import CYCLES_PER_LINE
@@ -60,7 +61,8 @@ def _power_on_regs() -> list[int]:
 def _apply_log(src: int, dst: int, log_op: int, mask: int = 0xF) -> int:
     """Apply V9938 logical operation (LOG[2:0]) at pixel level.
 
-    LOG codes (see host/trace.py _LOP_NAMES): 0=IMP, 1=AND, 2=OR, 3=XOR, 4=NOT.
+    LOG codes (the host's names: host/trace.py VDP_LOGICAL_OP_NAMES): 0=IMP,
+    1=AND, 2=OR, 3=XOR, 4=NOT.
     Codes 5-7 are undefined and perform no write at all; callers filter them
     out before reaching here (see _vram_pixel_write).
     """
@@ -410,19 +412,6 @@ class V9938:
     regs: list[int] = field(default_factory=_power_on_regs)
     status: int = 0
     palette: list[int] = field(default_factory=lambda: list(_MSX2_DEFAULT_PALETTE))
-    # Observation seam for scanline timing (tests, tracing): called with the
-    # raster line at the end of begin_scanline(). A field, not a monkey-patched
-    # method, so the same observation is expressible in a Rust/C++ port.
-    on_scanline: Callable[[int], None] | None = None
-    # PORT-NOTE: on_scanline is stored as a Python closure assigned at
-    #   wiring time.
-    # Rust equivalent: trait objects (Box<dyn Fn>) or feature-flagged fields
-    #   resolved once at construction, not per-call function pointers.
-    # C++ equivalent: std::function members or a virtual interface pointer,
-    #   assigned once at construction.
-    # Kept as-is here because: resolved once at wiring time and called at
-    #   most once per scanline, not per VRAM/command-engine access; the
-    #   closure indirection costs nothing measurable here.
     # The machine's trace buffer (msx/trace.py), wired at build time; port
     # 0x99 and 0x9B bytes are recorded while TRACE_VDP is on.
     _trace: TraceLog | None = field(default=None, repr=False)
@@ -466,7 +455,9 @@ class V9938:
     _ctrl_pending: bool = field(default=False, init=False, repr=False)
     _pal_pending: bool = field(default=False, init=False, repr=False)
     _read_buf: int = field(default=0, init=False, repr=False)
-    _frame_count: int = field(default=0, init=False, repr=False)
+    # The emulated time (msx/clock.py): increment_frame() advances its
+    # frame count. build_machine gives the machine's record.
+    _clock: CoreClock = field(default_factory=CoreClock, repr=False)
     _ie1_warned: bool = field(default=False, init=False, repr=False)
     _status1: int = field(default=0, init=False, repr=False)
     # R#13 blink timer, shared by TEXT2 character blink and GRAPHIC4-7 page
@@ -593,7 +584,7 @@ class V9938:
     def increment_frame(self) -> None:
         """Advance the completed-frame counter and the R#13 blink timer.
         Called once per frame."""
-        self._frame_count += 1
+        self._clock.frame += 1
         if self.blink_count != 0:
             self.blink_count -= 1
             if self.blink_count == 0:
@@ -616,12 +607,12 @@ class V9938:
 
     @property
     def frame_count(self) -> int:
-        """Public accessor for _frame_count -- see VdpDevice's own docstring."""
-        return self._frame_count
+        """The clock record's frame count -- see VdpDevice's own docstring."""
+        return self._clock.frame
 
     @frame_count.setter
     def frame_count(self, value: int) -> None:
-        self._frame_count = value
+        self._clock.frame = value
 
     def irq_pending(self) -> bool:
         ie0 = bool(self.regs[1] & 0x20)
@@ -836,8 +827,6 @@ class V9938:
         if line == effective and (self.regs[0] & _R0_IE1):
             self._status1 |= _S1_FH
             self.update_irq()
-        if self.on_scanline is not None:
-            self.on_scanline(line)
 
     # ------------------------------------------------------------------
     # Command timer

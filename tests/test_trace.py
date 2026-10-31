@@ -165,3 +165,64 @@ def test_drain_reports_lost_events_on_stderr(capsys) -> None:
 
     TraceOutput().drain(_Core())
     assert capsys.readouterr().err == "trace: 12 events lost\n"
+
+
+# -- tidy-review-findings F1 and R3 -------------------------------------------------
+
+def test_a_drain_writes_stderr_and_the_log_once(capsys) -> None:
+    from msx.boundary import TRACE_EVENT_IO_WRITE
+
+    class _Core:
+        def drain_trace(self):
+            return (
+                TraceEvent(TRACE_EVENT_IO_WRITE, 0, 0, 0x1234, 0x98, 0x55, 0x1234),
+                TraceEvent(TRACE_EVENT_IO_WRITE, 0, 0, 0x1236, 0x99, 0x80, 0x1236),
+                TraceEvent(TRACE_EVENT_LOST, 0, 0, 0, 3),
+            )
+
+    class _CountingFile(io.StringIO):
+        writes = 0
+
+        def write(self, s: str) -> int:
+            type(self).writes += 1
+            return super().write(s)
+
+    log = _CountingFile()
+    out = TraceOutput()
+    out.set_debug_output(log)
+    out.drain(_Core())
+    err = capsys.readouterr().err
+    lines = err.splitlines()
+    assert len(lines) == 3 and lines[-1] == "trace: 3 events lost"
+    assert "OUT" in lines[0] and "OUT" in lines[1]
+    assert log.getvalue().splitlines() == lines[:2]
+    assert _CountingFile.writes == 1
+
+
+_OLD_LOP_NAMES = [
+    "IMP", "AND", "OR", "XOR", "NOT", "????", "????", "????",
+    "TIMP", "TAND", "TOR", "TXOR", "TNOT", "????", "????", "????",
+]
+_OLD_CMD_NAMES = [
+    "ABRT", "????", "????", "????", "POINT", "PSET", "SRCH", "LINE",
+    "LMMV", "LMMM", "LMCM", "LMMC", "HMMV", "HMMM", "YMMM", "HMMC",
+]
+
+
+def test_the_shared_name_tables_keep_the_trace_text() -> None:
+    for value in range(256):
+        line = _lines([_p99(value), _p99(0x80 | 46)])[0]
+        name, lop = _OLD_CMD_NAMES[value >> 4], _OLD_LOP_NAMES[value & 0xF]
+        assert f"VDP_CMD {name:<4s}/{lop:<4s} ({value:02X}h)" in line
+
+
+def test_the_shared_name_tables_keep_the_debugger_text() -> None:
+    from host.debugger.prompt import _decode_cmr
+
+    old_log = {0: "IMP", 1: "AND", 2: "OR", 3: "XOR", 4: "NOT"}
+    for value in range(256):
+        cmd_code, log_code = value >> 4, value & 0x07
+        cmd = _OLD_CMD_NAMES[cmd_code] if _OLD_CMD_NAMES[cmd_code] != "????" \
+            else f"CMD{cmd_code:X}"
+        log = old_log.get(log_code, f"LOG{log_code}") + ("/T" if value & 0x08 else "")
+        assert _decode_cmr(value) == (cmd, log)

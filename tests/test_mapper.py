@@ -3,6 +3,7 @@ import struct
 import pytest
 
 from msx.mapper import (
+    NO_BANK,
     Ascii8Mapper,
     Ascii16Mapper,
     FixedPageMapper,
@@ -157,7 +158,7 @@ def test_fixed_page_snapshot_restore_is_empty_and_noop() -> None:
 def test_fixed_page_has_no_bank_info() -> None:
     rom = bytes([0xAB] + [0] * (16384 - 1))
     m = FixedPageMapper(rom, base=0x8000)
-    assert m.debug_bank_info(1) is None
+    assert m.debug_bank(1) == NO_BANK
 
 
 # ---------------------------------------------------------------------------
@@ -539,14 +540,7 @@ def test_konami_restore_rejects_wrong_bank_count() -> None:
 # ---------------------------------------------------------------------------
 
 def _maj(n_pages: int = 4) -> MajutsushiMapper:
-    m = MajutsushiMapper(_rom_8k_pages(n_pages))
-    cycle = 0
-
-    def _get_cycle() -> int:
-        return cycle
-
-    m._get_cycle = _get_cycle
-    return m
+    return MajutsushiMapper(_rom_8k_pages(n_pages))
 
 
 def test_majutsushi_dac_write_stored() -> None:
@@ -636,8 +630,7 @@ def test_majutsushi_generate_samples_mid_frame_write() -> None:
     # Samples 0-1: threshold < 50 → silence (0x80).
     # Samples 2-3: threshold >= 50 → 0xFF.
     m = MajutsushiMapper(_rom_8k_pages(4))
-    cycle_val = [50]
-    m._get_cycle = lambda: cycle_val[0]
+    m._clock.cycle = 50
     m.write(0x5000, 0xFF)
     buf = m.generate_samples(4, 0, 100)
     # sample 0: threshold = 0*100//4 = 0 < 50 → silence

@@ -44,8 +44,8 @@ from frontend.sdl2_keyboard import (
     resolve_keyboard_joy_map,
 )
 from host.input_state import InputState
-from msx.input import KEY_NAME_TO_CELL
-from msx.machine_spec import KeyboardLayout
+from host.key_names import KEY_NAME_TO_CELL
+from msx.boundary import KeyboardLayout
 
 
 class _Kb:
@@ -101,6 +101,15 @@ KEY_MATRIX = KEY_MATRIX_INT
 
 def make_input() -> _Kb:
     return _Kb()
+
+
+def test_the_layout_is_taken_from_a_plain_int() -> None:
+    # machine-core "The frontend takes the layout and the frame rate by
+    # value": the int 1 selects the Japanese key map.
+    from frontend.sdl2_keyboard import KEY_MATRIX_JP
+
+    kb = SdlKeyboard(InputState(), JOY_MAP, keyboard_layout=1)
+    assert kb._matrix_map is KEY_MATRIX_JP
 
 
 def test_default_matrix_all_released() -> None:

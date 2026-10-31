@@ -1,5 +1,3 @@
-from types import SimpleNamespace
-
 import pytest
 
 from msx.input import InputLines
@@ -292,7 +290,7 @@ def test_reset_restores_register_defaults() -> None:
 
 def test_reset_clears_pending_events() -> None:
     psg = PSG()
-    psg._machine = SimpleNamespace(cycle_count=5)
+    psg._clock.cycle = 5
     psg.write_port(0xA0, 8)
     psg.write_port(0xA1, 0x0F)
     assert psg._events

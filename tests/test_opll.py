@@ -232,7 +232,7 @@ def test_instrument_rom_matches_emu2413() -> None:
 
 def test_the_exp_table_matches_the_formula() -> None:
     expected = [int((2 ** (x / 256.0) - 1) * 1024 + 0.5) for x in range(256)]
-    assert _EXP_TABLE == expected
+    assert list(_EXP_TABLE) == expected
     assert (_EXP_TABLE[0], _EXP_TABLE[1], _EXP_TABLE[255]) == (0, 3, 1018)
 
 

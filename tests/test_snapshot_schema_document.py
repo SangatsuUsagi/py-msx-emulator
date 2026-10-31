@@ -61,11 +61,11 @@ def _with_mouse(machine: Machine) -> Machine:
 
 def _fmpac_overlay(rom_dir: Path) -> ExtensionOverlay:
     (rom_dir / "fmpac.rom").write_bytes(bytes(65536))
-    from msx.machine_spec import _RomEntry
+    from msx.machine_spec import RomEntry
 
     return ExtensionOverlay(
         device="fmpac", rom_base_dir=rom_dir,
-        rom_entry=_RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
+        rom_entry=RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
         sram_save_path=rom_dir / "fmpac.sram",
     )
 

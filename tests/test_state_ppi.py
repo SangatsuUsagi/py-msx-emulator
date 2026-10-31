@@ -10,9 +10,10 @@ import pytest
 from host.machine_config import build_machine_from_spec
 from msx import state
 from msx.machine import Machine
+from msx.machine_spec import PpiControlRead
 from msx.mapper import FlatMapper
 from msx.memory import Memory
-from msx.ppi import KEY_CLICK_LEVEL, PPI, PpiControlRead
+from msx.ppi import KEY_CLICK_LEVEL, PPI
 from msx.snapshot_schema import SnapshotMismatchError
 from msx.state import StateLoadError
 from tests.factories import _msx1_spec, make_machine

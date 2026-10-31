@@ -15,10 +15,10 @@ cycles-per-frame is derived.
 """
 from __future__ import annotations
 
-import enum
+from msx.boundary import OUTPUT_HEIGHT, VideoStandard
 
 ACTIVE_H = 192  # TMS9918A active height (also V9938 with R#9 LN=0)
-OUTPUT_H = 212  # constant emitted frame height (V9938 LN=1 native height)
+OUTPUT_H = OUTPUT_HEIGHT  # constant emitted frame height (V9938 LN=1 native height)
 
 CYCLES_PER_LINE = 228  # Z80 T-states per scanline (TMS9918A / V99x8 raster)
 NTSC_LINES_PER_FRAME = 262
@@ -29,62 +29,20 @@ PAL_LINES_PER_FRAME = 313
 ZERO_BYTE = bytearray(1)
 
 
-class VideoStandard(enum.IntEnum):
-    """Video standard of a machine, an integer at the core boundary. The
-    machine YAML and the canonical MachineConfig document spell it with
-    `spelling` and `from_spelling`. The frame timing is derived from it, so
-    the two cannot disagree."""
-
-    NTSC = 0
-    PAL = 1
-
-    @property
-    def spelling(self) -> str:
-        """The text form of the machine YAML and the canonical document."""
-        return _VIDEO_STANDARD_SPELLINGS[self]
-
-    @classmethod
-    def from_spelling(cls, text: str) -> VideoStandard:
-        """The member spelled `text`. Raises ValueError for another text."""
-        for member in cls:
-            if _VIDEO_STANDARD_SPELLINGS[member] == text:
-                return member
-        raise ValueError(f"unknown video standard {text!r}")
-
-    # Each property names every member (a port's exhaustive `match`), so a
-    # new standard fails loudly instead of silently taking NTSC values.
-
-    @property
-    def lines_per_frame(self) -> int:
-        """Scanlines per frame."""
-        if self is VideoStandard.NTSC:
-            return NTSC_LINES_PER_FRAME
-        if self is VideoStandard.PAL:
-            return PAL_LINES_PER_FRAME
-        raise AssertionError(f"unhandled video standard {self!r}")
-
-    @property
-    def cycles_per_frame(self) -> int:
-        """Z80 T-states per frame."""
-        return CYCLES_PER_LINE * self.lines_per_frame
-
-    @property
-    def target_fps(self) -> int:
-        """Real-time pacing target in frames per second, an integer: a
-        round, host-vsync-friendly rate, not the exact field rate (NTSC
-        59.92 Hz / PAL 50.16 Hz) -- see openspec/specs/app-frame-timer/spec.md's
-        Purpose."""
-        if self is VideoStandard.NTSC:
-            return 60
-        if self is VideoStandard.PAL:
-            return 50
-        raise AssertionError(f"unhandled video standard {self!r}")
+def lines_per_frame(standard: VideoStandard) -> int:
+    """Scanlines per frame of a video standard. Names every member (a port's
+    exhaustive `match`), so a new standard fails loudly instead of silently
+    taking NTSC values."""
+    if standard is VideoStandard.NTSC:
+        return NTSC_LINES_PER_FRAME
+    if standard is VideoStandard.PAL:
+        return PAL_LINES_PER_FRAME
+    raise AssertionError(f"unhandled video standard {standard!r}")
 
 
-_VIDEO_STANDARD_SPELLINGS: dict[VideoStandard, str] = {
-    VideoStandard.NTSC: "ntsc",
-    VideoStandard.PAL: "pal",
-}
+def cycles_per_frame(standard: VideoStandard) -> int:
+    """Z80 T-states per frame of a video standard."""
+    return CYCLES_PER_LINE * lines_per_frame(standard)
 
 
 def pad_rows(native_h: int) -> int:

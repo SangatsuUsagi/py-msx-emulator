@@ -22,6 +22,7 @@ import pytest
 
 from host.machine_config import load_device_registry, load_machine_spec
 from msx.machine_spec import MachineSpec
+from msx.vdp._geometry import cycles_per_frame, lines_per_frame
 
 _ROOT = Path(__file__).resolve().parent.parent
 _CONFIG = _ROOT / "config"
@@ -209,8 +210,8 @@ def test_resolved_spec_matches_golden_baseline(golden: dict[str, object]) -> Non
     assert spec.has_v9938 == golden["has_v9938"]
     assert spec.has_rtc == golden["has_rtc"]
     assert spec.keyboard_type.spelling == golden["keyboard_type"]
-    assert spec.cycles_per_frame == golden["cycles_per_frame"]
-    assert spec.lines_per_frame == golden["lines_per_frame"]
+    assert cycles_per_frame(spec.video_standard) == golden["cycles_per_frame"]
+    assert lines_per_frame(spec.video_standard) == golden["lines_per_frame"]
     assert spec.m1_wait_states == 1
     assert spec.flat_ram_subslot == golden["flat_ram_subslot"]
     if golden["fdc"] is None:

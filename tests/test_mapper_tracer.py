@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from host.trace import map_bank_line
 from msx.boundary import TRACE_MAPPER
+from msx.clock import CoreClock
 from msx.mapper import Ascii8Mapper, Ascii16Mapper, KonamiMapper
 from msx.trace import TraceLog
 
@@ -13,8 +14,7 @@ def _rom16(pages: int) -> bytes:
 
 
 def _attach(mapper, kinds: int = TRACE_MAPPER) -> TraceLog:
-    trace = TraceLog(kinds=kinds, _get_pc=lambda: 0x402E, _get_cycle=lambda: 45231,
-                     _get_frame=lambda: 3)
+    trace = TraceLog(kinds=kinds, _clock=CoreClock(cycle=45231, frame=3, instruction_pc=0x402E))
     mapper._trace = trace
     return trace
 
@@ -95,7 +95,7 @@ def test_a_mapper_with_the_kind_off_behaves_identically() -> None:
     m = make_machine(bytes(32 * 1024), cartridge=_rom16(8), mapper="ASCII16")
     m.io.write_port(0xA8, 0xD4)  # pages 1 and 2 in slot 1
     m.memory.write(0x7000, 2)
-    assert m.memory._mapper.debug_bank_info(2) == "bank 2 @08000-0BFFF"
+    assert m.memory._mapper.debug_bank(2).window_values[0] == 2
     assert m.drain_trace() == ()
 
 

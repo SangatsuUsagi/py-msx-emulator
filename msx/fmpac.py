@@ -17,14 +17,15 @@ from collections.abc import Mapping
 from dataclasses import InitVar, dataclass, field
 from typing import TYPE_CHECKING, ClassVar, TypedDict, cast
 
-from msx.mapper import MapperKind, format_bank_16k
+from msx.boundary import BANK_WINDOW_16K, FMPAC_SRAM_SIZE, WINDOW_NONE, WINDOW_PAGE, WINDOW_SRAM
+from msx.mapper import NO_BANK, BankView, MapperKind
 from msx.snapshot_schema import SchemaError, check_bytes, check_choice, check_int, check_object
 from msx.sram import SramImage
 
 if TYPE_CHECKING:
     from msx.opll import Opll, OpllState
 
-__all__ = ["FmPac", "FmPacState", "SRAM_SIZE"]
+__all__ = ["FmPac", "FmPacState"]
 
 
 class FmPacState(TypedDict):
@@ -46,7 +47,6 @@ class FmPacState(TypedDict):
 _WINDOW_BASE = 0x4000
 _WINDOW_SIZE = 0x4000
 _BANK_SIZE = 0x4000
-SRAM_SIZE = 8192
 
 # Window-relative (address & 0x3FFF) offsets of the fixed registers.
 _OFF_MAGIC_LO = 0x1FFE
@@ -91,7 +91,7 @@ class FmPac:
     _sram_enabled: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self, sram: bytes | bytearray | None) -> None:
-        self.sram_image = SramImage.of(SRAM_SIZE, sram)
+        self.sram_image = SramImage.of(FMPAC_SRAM_SIZE, sram)
 
     # ------------------------------------------------------------- CPU memory
 
@@ -230,7 +230,7 @@ class FmPac:
                 f"{label}.bank {bank} is past the end of the {len(self.rom)}-byte ROM"
             )
         return {
-            "sram": bytes(check_bytes(d["sram"], f"{label}.sram", SRAM_SIZE)),
+            "sram": bytes(check_bytes(d["sram"], f"{label}.sram", FMPAC_SRAM_SIZE)),
             "bank": bank,
             "enable": check_choice(d["enable"], f"{label}.enable", _ENABLE_VALUES),
             "r1ffe": check_int(d["r1ffe"], f"{label}.r1ffe", 0, 0xFF),
@@ -259,12 +259,12 @@ class FmPac:
         self.opll.apply_state(parsed["opll"])
         self._check_sram_enable()
 
-    def debug_bank_info(self, page: int) -> str | None:
+    def debug_bank(self, page: int) -> BankView:
         """The one 16 KB window at 0x4000 (page 1): its ROM bank, or the
         SRAM while it is unlocked (debug-monitor "sl -- cartridge ROM mapper
         bank column")."""
         if page != 1:
-            return None
+            return NO_BANK
         if self._sram_enabled:
-            return format_bank_16k("SRAM@0000")
-        return format_bank_16k(self._bank)
+            return BankView(BANK_WINDOW_16K, (WINDOW_SRAM, WINDOW_NONE), (0, 0))
+        return BankView(BANK_WINDOW_16K, (WINDOW_PAGE, WINDOW_NONE), (self._bank, 0))

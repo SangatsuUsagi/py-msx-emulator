@@ -9,7 +9,7 @@ from PIL import Image
 from host.machine_config import build_machine_from_spec
 from host.state_files import load_state, save_state
 from msx.boundary import STATUS_OK, STATUS_STATE_REJECTED, RgbFrame
-from msx.machine_spec import MachineSpec, _RomEntry, _Slot0RamEntry
+from msx.machine_spec import MachineSpec, RomEntry, Slot0RamEntry
 from msx.snapshot_schema import SnapshotMismatchError
 from msx.state import CURRENT_FORMAT_VERSION, StateLoadError
 from tests.factories import load_state_file, make_machine, make_machine_msx2
@@ -32,9 +32,9 @@ def _make_msx1_machine_with_slot0_ram():
         name="test_msx1_slot0ram",
         generation="msx1",
         rom_base_dir=Path("."),
-        main_rom_entry=_RomEntry(file="", size_kb=0, pages=[0, 1]),
+        main_rom_entry=RomEntry(file="", size_kb=0, pages=[0, 1]),
         logo_rom_entry=None,
-        slot0_ram_entry=_Slot0RamEntry(size_kb=16, page=3),
+        slot0_ram_entry=Slot0RamEntry(size_kb=16, page=3),
         sub_rom_entry=None,
         has_ram_mapper=False,
         ram_size_kb=32,
@@ -59,6 +59,29 @@ def test_save_state_creates_state_file(machine, saves_dir):
     assert path.exists()
     assert path.suffix == ".state"
     assert "test_" in path.name
+
+
+def test_save_state_reads_the_pixels_before_other_core_calls(machine, saves_dir):
+    # Core-owned pixels are valid only until the next core call
+    # (include/msx_core.h), so the thumbnail is written first.
+    calls: list[str] = []
+
+    class _Frame:
+        width, height = 256, 192
+
+        @property
+        def pixels(self):
+            calls.append("pixels")
+            return bytes(256 * 192 * 3)
+
+    class _Core:
+        def __getattr__(self, name):
+            calls.append(name)
+            return getattr(machine, name)
+
+    save_state(_Core(), _Frame(), "order")
+    assert calls[0] == "pixels"
+    assert "save_state" in calls
 
 
 def test_save_state_creates_png(machine, saves_dir):

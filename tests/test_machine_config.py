@@ -23,10 +23,10 @@ from msx.input import InputFrame
 from msx.machine_config import encode_machine_config, parse_machine_config
 from msx.machine_loader import build_machine
 from msx.machine_spec import (
+    ExpandedSubslotDevice,
     ExtensionOverlay,
     MachineLoadError,
-    _ExpandedSubslotDevice,
-    _RomEntry,
+    RomEntry,
 )
 from msx.state import _snapshot_from_machine
 from tests.factories import _msx2_spec, make_config, make_config_msx2, reformat_document
@@ -89,15 +89,14 @@ def test_sram_size_of_a_non_sram_id_names_it_by_name() -> None:
 
 def test_machine_properties_are_integers() -> None:
     # machine-core "Machine properties are integers".
-    from msx.machine_spec import KeyboardLayout
-    from msx.vdp._geometry import VideoStandard
+    from msx.boundary import KeyboardLayout, VideoStandard
 
     spec = _spec("cbios_msx1_jp")
     machine = build_machine(load_machine_config(spec, **_overrides(spec)))
     assert isinstance(machine.video_standard, int)
     assert isinstance(machine.keyboard_layout, int)
-    assert VideoStandard(int(machine.video_standard)) is VideoStandard.NTSC
-    assert KeyboardLayout(int(machine.keyboard_layout)) is KeyboardLayout.JAPANESE
+    assert machine.video_standard == VideoStandard.NTSC
+    assert machine.keyboard_layout == KeyboardLayout.JAPANESE
 
 
 # The canonical documents' SHA-256, recorded before the video standard and
@@ -123,7 +122,7 @@ def test_the_canonical_document_spells_the_enums_as_text(machine_id: str) -> Non
 
 def test_machine_keyboard_layout_defaults_to_international() -> None:
     # input-keyboard "Default layout is International".
-    from msx.machine_spec import KeyboardLayout
+    from msx.boundary import KeyboardLayout
 
     machine = build_machine(make_config(_ROM))
     assert machine.keyboard_layout is KeyboardLayout.INTERNATIONAL
@@ -131,7 +130,7 @@ def test_machine_keyboard_layout_defaults_to_international() -> None:
 
 def test_a_jis_machine_definition_gives_the_japanese_layout() -> None:
     from host.machine_config import load_device_registry, load_machine_spec
-    from msx.machine_spec import KeyboardLayout
+    from msx.boundary import KeyboardLayout
 
     root = Path(__file__).resolve().parent.parent
     config_dir = root / "config"
@@ -509,7 +508,7 @@ def test_an_scc_i_fragment_rom_block_is_ignored(
     monkeypatch.chdir(tmp_path)
     overlay = ExtensionOverlay(
         device="scc_i_cart", rom_base_dir=tmp_path,
-        rom_entry=_RomEntry(file="missing_scc.rom", size_kb=64, pages=[]),
+        rom_entry=RomEntry(file="missing_scc.rom", size_kb=64, pages=[]),
     )
     spec = _spec("hb_f1xd")
     config = load_machine_config(spec, **_overrides(spec), extension_overlay2=overlay)
@@ -525,7 +524,85 @@ def test_a_device_without_a_rom_file_to_read_is_a_load_error(
     # A kanji io_device parsed back from a document has no rom_base_dir.
     monkeypatch.chdir(tmp_path)
     spec = dataclasses.replace(
-        _spec("hb_f1xd"), io_device=_ExpandedSubslotDevice(device="kanji_rom")
+        _spec("hb_f1xd"), io_device=ExpandedSubslotDevice(device="kanji_rom")
     )
     with pytest.raises(MachineLoadError, match="machine io_device: no ROM file to read"):
         load_machine_config(spec, **_overrides(spec))
+
+
+def test_a_ram_mapper_size_the_mapper_does_not_accept_is_rejected() -> None:
+    # machine-core "A RAM mapper size the mapper does not accept is rejected".
+    from msx.boundary import STATUS_BAD_CONFIG
+    from msx.machine_loader import create_machine
+
+    config = make_config_msx2(_ROM, bytes(16 * 1024))
+    document = json.loads(config.document)
+    document["machine"]["ram_mapper_size_kb"] = 8
+    config.document = json.dumps(document).encode("utf-8")
+    result = create_machine(config)
+    assert result.status == STATUS_BAD_CONFIG
+    assert result.machine is None
+
+
+@pytest.mark.parametrize(
+    "start",
+    [
+        RtcTime(2000, 13, 1, 0, 0, 0),
+        RtcTime(2000, 1, 40, 0, 0, 0),
+        RtcTime(2000, 1, 1, 24, 0, 0),
+        RtcTime(-1, 1, 1, 0, 0, 0),
+        RtcTime(10000, 1, 1, 0, 0, 0),
+    ],
+)
+def test_an_invalid_rtc_start_time_is_rejected(start: RtcTime) -> None:
+    # machine-core "An invalid RTC start time is rejected".
+    from msx.boundary import STATUS_BAD_CONFIG
+    from msx.machine_loader import create_machine
+
+    config = make_config_msx2(_ROM, bytes(16 * 1024))
+    config.rtc_initial_time = start
+    result = create_machine(config)
+    assert result.status == STATUS_BAD_CONFIG
+    assert result.machine is None
+
+
+def test_a_valid_rtc_start_time_survives_a_state_round_trip() -> None:
+    # machine-core "A valid RTC start time survives a state round trip".
+    from msx.boundary import STATUS_OK
+    from msx.machine_loader import create_machine
+
+    config = make_config_msx2(_ROM, bytes(16 * 1024))
+    config.rtc_initial_time = RtcTime(2024, 2, 29, 23, 59, 59)
+    result = create_machine(config)
+    assert result.status == STATUS_OK
+    assert result.machine is not None
+    assert result.machine.load_state(result.machine.save_state()) == STATUS_OK
+
+
+def test_a_configuration_without_a_start_time_starts_at_2000() -> None:
+    # machine-core "A configuration without a start time starts at 2000".
+    from msx.boundary import RTC_DEFAULT_START, MachineConfig, RtcTime
+    from msx.machine_loader import create_machine
+
+    assert MachineConfig(document=b"{}").rtc_initial_time == RTC_DEFAULT_START
+    assert RTC_DEFAULT_START == RtcTime(2000, 1, 1, 0, 0, 0)
+    machine = create_machine(make_config_msx2(_ROM, bytes(16 * 1024))).machine
+    assert machine is not None
+    machine.rtc._refresh_time_regs()
+    # Block 0 BCD digits: seconds, minutes, hours (0-5), day (7, 8),
+    # month (9, 10), years since 1980 (11, 12).
+    regs = machine.rtc._regs
+    assert regs[0:6] == [0, 0, 0, 0, 0, 0]
+    assert (regs[7], regs[8], regs[9], regs[10]) == (1, 0, 1, 0)
+    assert (regs[11], regs[12]) == (0, 2)
+
+
+def test_the_start_time_admits_no_none() -> None:
+    # machine-core "The start time admits no None".
+    import typing
+
+    from msx.boundary import MachineConfig
+
+    hint = typing.get_type_hints(MachineConfig)["rtc_initial_time"]
+    assert hint is not type(None)
+    assert type(None) not in typing.get_args(hint)

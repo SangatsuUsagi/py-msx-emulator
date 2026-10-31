@@ -3,7 +3,7 @@
 The SDL keyboard, the gamepad manager, the host mouse and the RPC server all
 write into one InputState; once per frame the frontend hands the machine its
 current value as an InputFrame (take_frame), and RPC injection applies it at
-once (Machine.apply_input). Each joystick port has a keyboard-sourced and a
+once (CoreApi.apply_input). Each joystick port has a keyboard-sourced and a
 pad-sourced line state: a line reads as pressed while either source holds it.
 """
 from __future__ import annotations

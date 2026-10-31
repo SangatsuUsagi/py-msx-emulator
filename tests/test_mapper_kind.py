@@ -4,6 +4,7 @@ docstring and openspec/changes/mapper-state-tagged-union). This test only
 checks the class-level `kind` wiring is consistent -- it does not exercise
 save/load behavior (see tests/test_state.py for that).
 """
+from msx.boundary import MapperId
 from msx.fmpac import FmPac
 from msx.mapper import (
     Ascii8Mapper,
@@ -25,7 +26,7 @@ from msx.mapper import (
     MapperKind,
     RTypeMapper,
     SCCICart,
-    mapper_kind_display_name,
+    mapper_id,
 )
 from msx.opll import Opll
 from msx.ram_mapper import RamMapper
@@ -110,9 +111,16 @@ def test_subclass_inherits_kind_unless_overridden() -> None:
     assert MajutsushiMapper.kind == MapperKind.MAJUTSUSHI
 
 
-def test_ram_mapper_kind_and_display_name() -> None:
+def test_ram_mapper_kind_and_id() -> None:
     assert RamMapper.kind == MapperKind.RAM_MAPPER
-    assert mapper_kind_display_name(MapperKind.RAM_MAPPER) == "RamMapper"
+    assert mapper_id(MapperKind.RAM_MAPPER) == MapperId.RAM_MAPPER
+
+
+def test_every_mapper_kind_has_one_mapper_id_of_the_same_name() -> None:
+    # flatten-slot-info design "Risks": MapperId and MapperKind do not drift.
+    ids = [mapper_id(kind) for kind in MapperKind]
+    assert [i.name for i in ids] == [kind.name for kind in MapperKind]
+    assert sorted(ids) == list(MapperId)
 
 
 # Classes whose sram_medium() returns an SRAM image the host persists (see

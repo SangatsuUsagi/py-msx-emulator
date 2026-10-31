@@ -42,16 +42,18 @@ def handle_stop(
     terminal) opens the REPL whenever there is a debugger, since a person
     at the terminal made it; any other stop pauses the RPC gate when a
     server runs, else opens the REPL (debug-monitor "The REPL opens after
-    the core stops"). Does nothing for STOP_NONE."""
+    the core stops"). Does nothing for STOP_NONE. `stop_reason` is the
+    FrameOutput's; after the early return the last-stop record is read once
+    and gives the reason for every check (the two are equal)."""
     if stop_reason == STOP_NONE:
         return
     stop = machine.last_stop()
     if stop.reason == STOP_WATCHPOINT:
         print(watch_hit_line(stop))
-    if debugger is not None and (stop_reason == STOP_REQUESTED or rpc_server is None):
+    if debugger is not None and (stop.reason == STOP_REQUESTED or rpc_server is None):
         debugger.enter()
     elif rpc_server is not None:
-        rpc_server.on_core_stop(stop_reason)
+        rpc_server.on_core_stop(stop.reason)
 
 
 @contextmanager
@@ -59,7 +61,13 @@ def sigint_requests_break(machine: CoreApi) -> Iterator[None]:
     """While active, Ctrl-C asks the core to stop (request_break) instead of
     raising KeyboardInterrupt. Restores the previous handler on exit. Off
     the main thread (where signal handlers cannot be set) it changes
-    nothing."""
+    nothing.
+
+    Python runs the handler only between bytecodes of the main thread. The
+    Python core runs as bytecode, so the request can stop the current
+    step_frame call at the start of vertical blanking. A native core
+    returns to Python only when step_frame returns, so the request stops
+    the next call at its start, up to one frame later."""
     if threading.current_thread() is not threading.main_thread():
         yield
         return

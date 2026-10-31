@@ -22,8 +22,8 @@ from host.state_files import load_state, save_state
 from msx.boundary import RgbFrame
 from msx.machine_spec import (
     ExpandedExtensionOverlay,
+    ExpandedSubslotDevice,
     MachineLoadError,
-    _ExpandedSubslotDevice,
 )
 from msx.ram_mapper import RamMapper
 
@@ -300,7 +300,7 @@ def test_two_ram_mapper_subslots_in_one_overlay_rejected(tmp_path: Path) -> None
 
 def _ram_mapper_overlay(size_kb: int = 512) -> ExpandedExtensionOverlay:
     return ExpandedExtensionOverlay(
-        subslots={0: _ExpandedSubslotDevice(device="ram_mapper", size_kb=size_kb)},
+        subslots={0: ExpandedSubslotDevice(device="ram_mapper", size_kb=size_kb)},
     )
 
 

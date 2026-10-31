@@ -1,6 +1,8 @@
 """Tests for msx.ram_mapper.RamMapper."""
 import pytest
 
+from msx.boundary import BANK_WINDOW_16K, WINDOW_NONE, WINDOW_PAGE
+from msx.mapper import NO_BANK, BankView
 from msx.ram_mapper import RamMapper
 
 # ---------------------------------------------------------------------------
@@ -197,7 +199,7 @@ def test_minimum_size_16kb_single_bank() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Mapper protocol: kind, snapshot/restore, debug_bank_info
+# Mapper protocol: kind, snapshot/restore, debug_bank
 # ---------------------------------------------------------------------------
 
 def test_kind_is_ram_mapper() -> None:
@@ -229,16 +231,15 @@ def test_restore_rejects_wrong_ram_length() -> None:
         rm.restore({"banks": [0, 0, 0, 0], "ram": bytes(16384)})
 
 
-def test_debug_bank_info_describes_page_bank() -> None:
+def test_debug_bank_describes_page_bank() -> None:
+    # memory-ram-mapper "debug_bank_info describes the page's own bank".
     rm = RamMapper()
     rm.banks[2] = 5
-    info = rm.debug_bank_info(2)
-    assert info is not None
-    assert "5" in info
-    assert f"{5 * 0x4000:05X}" in info
+    assert rm.debug_bank(2) == BankView(
+        BANK_WINDOW_16K, (WINDOW_PAGE, WINDOW_NONE), (5, 0))
 
 
-def test_debug_bank_info_out_of_range_page_is_none() -> None:
+def test_debug_bank_out_of_range_page_is_none() -> None:
     rm = RamMapper()
-    assert rm.debug_bank_info(4) is None
-    assert rm.debug_bank_info(-1) is None
+    assert rm.debug_bank(4) == NO_BANK
+    assert rm.debug_bank(-1) == NO_BANK

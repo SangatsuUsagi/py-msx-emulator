@@ -13,10 +13,8 @@ from pathlib import Path
 import pytest
 
 import msx.boundary as boundary
-from msx.boundary import MediaId
+from msx.boundary import KeyboardLayout, MapperId, MediaId, VideoStandard
 from msx.core_api import CoreApi
-from msx.machine_spec import KeyboardLayout
-from msx.vdp._geometry import VideoStandard
 
 _HEADER = Path(__file__).resolve().parent.parent / "include" / "msx_core.h"
 _EXTRA_FUNCTIONS = {"create", "destroy", "abi_version"}
@@ -44,6 +42,7 @@ def _python_constants() -> dict[str, int]:
             result[name] = value
     enums: tuple[tuple[str, type[enum.IntEnum]], ...] = (
         ("MEDIA", MediaId), ("VIDEO", VideoStandard), ("KEYBOARD", KeyboardLayout),
+        ("MAPPER", MapperId),
     )
     for prefix, enum_type in enums:
         for member in enum_type:
@@ -68,6 +67,26 @@ def test_every_constant_matches() -> None:
     }
     assert macros.pop("CORE_ABI_VERSION") == 1
     assert macros == _python_constants()
+
+
+def test_the_mouse_motion_and_the_frame_breakpoint_are_wide() -> None:
+    # machine-c-abi "The mouse motion and the frame breakpoint are wide".
+    code = _code()
+    assert re.search(r"\bint32_t\s+mouse_dx;", code)
+    assert re.search(r"\bint32_t\s+mouse_dy;", code)
+    assert re.search(
+        r"msx_core_set_frame_breakpoint\(\s*msx_core\s*\*core,\s*int64_t\s+frame\s*\)", code
+    )
+
+
+def test_the_create_call_takes_a_caller_buffer() -> None:
+    # machine-c-abi "The create call takes a caller buffer".
+    code = " ".join(_code().split())
+    assert (
+        "int32_t msx_core_create(const msx_machine_config *config, msx_core **out_core, "
+        "char *error_text, size_t error_cap, size_t *error_len);"
+    ) in code
+    assert "has_rtc_initial_time" not in code
 
 
 def test_the_header_states_the_ownership_rule() -> None:

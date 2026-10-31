@@ -31,6 +31,7 @@ from msx.boundary import (
     WATCH_WRITE,
     CpuRegisters,
     FrameOutput,
+    KeyboardLayout,
     MediaId,
     RgbFrame,
     SlotInfo,
@@ -38,14 +39,15 @@ from msx.boundary import (
     StopInfo,
     TraceEvent,
     VdpInfo,
+    VideoStandard,
     drive_media_id,
 )
+from msx.clock import CoreClock
 from msx.cpu.z80 import Z80
 from msx.input import InputFrame, InputLines
 from msx.io import IOBus
 from msx.kanji import KanjiRom
-from msx.machine_spec import KeyboardLayout
-from msx.mapper import HalnoteMapper, MajutsushiMapper
+from msx.mapper import MajutsushiMapper
 from msx.memory import Memory
 from msx.mouse import TRIGGER_A_BIT, TRIGGER_B_BIT, MouseDevice
 from msx.ppi import PPI
@@ -53,7 +55,7 @@ from msx.psg import PSG, SAMPLE_RATE, JoystickPort
 from msx.scc import SCC
 from msx.sram import Medium, SramImage
 from msx.trace import TraceLog
-from msx.vdp._geometry import OUTPUT_H, VideoStandard
+from msx.vdp._geometry import OUTPUT_H, cycles_per_frame, lines_per_frame
 from msx.vdp.renderer import render_frame
 from msx.vdp.v9938 import V9938
 from msx.vdp.v9938_renderer import render_frame as render_frame_v9938
@@ -81,7 +83,6 @@ class Machine:
     dac: MajutsushiMapper | None = field(default=None)
     fdc: "FloppyDisk | None" = field(default=None)
     fmpac: "FmPac | None" = field(default=None, repr=False)
-    halnote_cart: HalnoteMapper | None = field(default=None, repr=False)
     kanji: KanjiRom | None = field(default=None, repr=False)
     ppi: PPI | None = field(default=None, repr=False)
     rtc: "RTC | None" = field(default=None, repr=False)
@@ -92,17 +93,14 @@ class Machine:
     # The keyboard matrix layout, from the machine definition (frontends pick
     # their host-key table from it).
     keyboard_layout: KeyboardLayout = KeyboardLayout.INTERNATIONAL
-    # Free-running T-state clock, never reset.
-    #
-    # PORT-NOTE: at 3.58 MHz a u32 wraps in ~20 minutes of emulated run time.
-    # Rust/C++ equivalent: u64/uint64_t for this field; the per-frame totals
-    #   threaded through _run_lines() are frame-relative and fit in u32.
-    # Kept as-is here because: semantic necessity, not performance -- Python's
-    #   arbitrary-precision int never wraps, so this width requirement is
-    #   invisible in Python and must be sized explicitly at port time.
-    cycle_count: int = 0
-    # The trace buffer the VDP and the slot 1/2 mappers record into
-    # (set_trace_kinds, drain_trace); wired by msx/machine_loader.py.
+    # The emulated time (msx/clock.py): the free-running T-state count
+    # (never reset), the frame count and the instruction address. The run
+    # loop adds to its cycle count; build_machine gives the record to the
+    # components that read or advance it.
+    clock: CoreClock = field(default_factory=CoreClock, repr=False)
+    # The trace buffer the CPU, the I/O bus, the VDP, the slot 1/2 mappers
+    # and the frame loop record into (set_trace_kinds, drain_trace); wired by
+    # msx/machine_loader.py.
     _trace: TraceLog = field(default_factory=TraceLog, repr=False)
     # SRAM media by id, filled once by build_machine (see sram_media()).
     _sram_table: dict[MediaId, SramImage] = field(default_factory=dict, repr=False)
@@ -137,8 +135,8 @@ class Machine:
     # Set by request_break() (Ctrl-C); run_frame() honors it before the next
     # frame segment.
     _break_request: bool = field(default=False, init=False, repr=False)
-    # The message of the last failed load_state or mount_disk (UTF-8), b""
-    # after a successful one (last_error_text()).
+    # The UTF-8 message of the last call that failed with a status other than
+    # STATUS_OK, b"" after a later call that clears it (last_error_text()).
     _error_text: bytes = field(default=b"", init=False, repr=False)
     # Position of a frame that stopped at a break (machine-core "A break stops
     # step_frame and the next call continues the frame"): the next scanline
@@ -163,14 +161,23 @@ class Machine:
     _resume_after_stop: bool = field(default=False, init=False, repr=False)
 
     @property
+    def cycle_count(self) -> int:
+        """T-states since power-on (the clock record's cycle count)."""
+        return self.clock.cycle
+
+    @cycle_count.setter
+    def cycle_count(self, value: int) -> None:
+        self.clock.cycle = value
+
+    @property
     def cycles_per_frame(self) -> int:
         """Z80 T-states per frame, from the video standard."""
-        return self.video_standard.cycles_per_frame
+        return cycles_per_frame(self.video_standard)
 
     @property
     def lines_per_frame(self) -> int:
         """Scanlines per frame, from the video standard."""
-        return self.video_standard.lines_per_frame
+        return lines_per_frame(self.video_standard)
 
     def __post_init__(self) -> None:
         # PORT-NOTE: this wires the CPU's memory/IO bus by reassigning bound
@@ -229,12 +236,11 @@ class Machine:
             self.memory.ram_mapper.reset()
         self.memory._mapper.reset()
         self.memory._mapper2.reset()
-        # halnote_cart (when present) is always also one of these sub-slot
+        # A HalnoteMapper (when present) is always one of these sub-slot
         # entries -- _wire_expanded_overlay is the only place that ever
-        # constructs a HalnoteMapper (EXTENSION_DEVICES, the flat overlay's
-        # device allow-list in msx/machine_config.py, lacks "halnote") -- so
-        # resetting it via this loop, not a separate halnote_cart branch,
-        # covers it exactly once. Slot 1's own sub-slots (openspec/changes/
+        # constructs one (EXTENSION_DEVICES, the flat overlay's device
+        # allow-list in msx/machine_config.py, lacks "halnote") -- so this
+        # loop resets it exactly once. Slot 1's own sub-slots (openspec/changes/
         # slot1-slot2-symmetrization) get the identical treatment.
         for sub_mapper in (*self.memory._mapper1_subslots, *self.memory._mapper2_subslots):
             if sub_mapper is not None:
@@ -278,7 +284,7 @@ class Machine:
         so b"" is unambiguous."""
         medium = self._media().get(media_id)
         if medium is None:
-            self._fail(STATUS_NO_MEDIUM, f"no medium {media_id.name} on this machine")
+            self._fail(STATUS_NO_MEDIUM, f"no medium {_media_label(media_id)} on this machine")
             return b""
         self._error_text = b""
         return medium.data()
@@ -289,7 +295,9 @@ class Machine:
         id the machine does not have."""
         medium = self._media().get(media_id)
         if medium is None:
-            return self._fail(STATUS_NO_MEDIUM, f"no medium {media_id.name} on this machine")
+            return self._fail(
+                STATUS_NO_MEDIUM, f"no medium {_media_label(media_id)} on this machine"
+            )
         medium.mark_persisted()
         self._error_text = b""
         return STATUS_OK
@@ -300,10 +308,16 @@ class Machine:
         The host writes a dirty outgoing image back before the swap. Returns
         STATUS_NO_DRIVE for a machine without that drive and STATUS_BAD_IMAGE
         for an image whose size is not a positive multiple of 512, changing
-        nothing (last_error_text() gives the message)."""
+        nothing (last_error_text() gives the message). Returns
+        STATUS_BAD_ARGUMENT, changing nothing, for a `write_protected` other
+        than 0 and 1."""
         from msx.fdc.disk_image import SECTOR_SIZE, DskDiskImage
 
-        if self.fdc is None or not 0 <= drive < len(self.fdc.drives):
+        if write_protected != 0 and write_protected != 1:
+            return self._fail(
+                STATUS_BAD_ARGUMENT, f"write_protected {write_protected} is not 0 or 1"
+            )
+        if self.fdc is None or not self._has_drive(drive):
             return self._fail(STATUS_NO_DRIVE, f"no floppy drive {drive} on this machine")
         size = len(data)
         if size == 0 or size % SECTOR_SIZE != 0:
@@ -311,7 +325,7 @@ class Machine:
                 STATUS_BAD_IMAGE,
                 f"size {size} is not a positive multiple of {SECTOR_SIZE}",
             )
-        self.fdc.swap(drive, DskDiskImage(data, write_protected=write_protected))
+        self.fdc.swap(drive, DskDiskImage(data, write_protected=write_protected == 1))
         self._error_text = b""
         return STATUS_OK
 
@@ -319,15 +333,17 @@ class Machine:
         """Empty `drive` (0 = A) and return STATUS_OK. The host writes a
         dirty outgoing image back first. Returns STATUS_NO_DRIVE, changing
         nothing, for a machine without that drive."""
-        if self.fdc is None or not 0 <= drive < len(self.fdc.drives):
+        if self.fdc is None or not self._has_drive(drive):
             return self._fail(STATUS_NO_DRIVE, f"no floppy drive {drive} on this machine")
         self.fdc.swap(drive, None)
         self._error_text = b""
         return STATUS_OK
 
     def last_error_text(self) -> bytes:
-        """The UTF-8 message of the last failed load_state or mount_disk
-        call, or b"" when the last such call succeeded."""
+        """The UTF-8 message of the last call that failed with a status other
+        than STATUS_OK (or an empty result from read_media, read_memory,
+        read_vram or slot_info). A member that checks its arguments clears
+        it on success; the members that cannot fail leave it as it is."""
         return self._error_text
 
     def _fail(self, status: int, message: str) -> int:
@@ -339,9 +355,13 @@ class Machine:
         return self._mounted_image(drive) is not None
 
     def _mounted_image(self, drive: int) -> DskDiskImage | None:
-        if self.fdc is None or not 0 <= drive < len(self.fdc.drives):
+        if self.fdc is None or not self._has_drive(drive):
             return None
         return self.fdc.drives[drive].image
+
+    def _has_drive(self, drive: int) -> bool:
+        """Whether the machine has floppy drive `drive` (0 = A)."""
+        return self.fdc is not None and 0 <= drive < len(self.fdc.drives)
 
     def attach_mouse(self, port: int) -> int:
         """Attach a new MSX mouse to joystick port `port` (0 = Joy1, 1 =
@@ -394,18 +414,30 @@ class Machine:
         return STATUS_OK
 
     def set_break_halt_di(self, enabled: bool) -> int:
-        """Enable/disable breaking when the CPU executes HALT with interrupts
-        off. Always STATUS_OK."""
-        self._break_halt_di = enabled
+        """Enable (1) or disable (0) breaking when the CPU executes HALT with
+        interrupts off, and return STATUS_OK. Returns STATUS_BAD_ARGUMENT,
+        keeping the setting, for any other value."""
+        if enabled != 0 and enabled != 1:
+            return self._fail(
+                STATUS_BAD_ARGUMENT, f"set_break_halt_di value {enabled} is not 0 or 1"
+            )
+        self._break_halt_di = enabled == 1
         self._halt_di_seen = False
+        self._error_text = b""
         return STATUS_OK
 
     def set_sprites_hidden(self, hidden: bool) -> int:
         """Hide or show sprites: while hidden, the renderer skips its sprite
         pass (on the TMS9918A also the S#0 sprite flags of that frame). A
         debug setting: no reset clears it and the saved state omits it.
-        Always STATUS_OK."""
-        self.vdp.debug_disable_sprites = hidden
+        Takes 0 or 1 and returns STATUS_OK. Returns STATUS_BAD_ARGUMENT,
+        keeping the setting, for any other value."""
+        if hidden != 0 and hidden != 1:
+            return self._fail(
+                STATUS_BAD_ARGUMENT, f"set_sprites_hidden value {hidden} is not 0 or 1"
+            )
+        self.vdp.debug_disable_sprites = hidden == 1
+        self._error_text = b""
         return STATUS_OK
 
     def set_sp_range(self, low: int, high: int) -> int:
@@ -454,9 +486,9 @@ class Machine:
     def set_frame_breakpoint(self, frame: int) -> int:
         """Set a one-shot run-to-frame breakpoint (debugger 'gf'); cleared
         when hit. -1 clears it. Returns STATUS_OK, or STATUS_BAD_ARGUMENT
-        for a frame below -1."""
-        if frame < -1:
-            return self._fail(STATUS_BAD_ARGUMENT, f"frame {frame} is below -1")
+        for a frame below -1 or above 2^63 - 1 (the C int64_t)."""
+        if frame < -1 or frame > 0x7FFF_FFFF_FFFF_FFFF:
+            return self._fail(STATUS_BAD_ARGUMENT, f"frame {frame} is outside -1 to 2^63 - 1")
         self._frame_breakpoint = None if frame == -1 else frame
         self._error_text = b""
         return STATUS_OK
@@ -584,7 +616,13 @@ class Machine:
     def read_memory(self, addr: int, length: int) -> bytes:
         """`length` bytes from `addr` as the CPU reads them in the current slot
         selection, wrapping at 0xFFFF. Bypasses watchpoints. A memory-mapped
-        device register reads as it does for the CPU, side effects included."""
+        device register reads as it does for the CPU, side effects included.
+        Returns b"" for a length outside 0-0x10000 (last_error_text() gives
+        the message)."""
+        if not 0 <= length <= 0x10000:
+            self._fail(STATUS_BAD_ARGUMENT, f"read_memory length {length} is outside 0-0x10000")
+            return b""
+        self._error_text = b""
         read = self.memory.read
         out = bytearray(length)
         for i in range(length):
@@ -604,12 +642,22 @@ class Machine:
         return len(self.vdp.vram)
 
     def read_vram(self, addr: int, length: int) -> bytes:
-        """`length` VRAM bytes from `addr`, wrapping at the VRAM size."""
+        """`length` VRAM bytes from `addr`, wrapping at the VRAM size by the
+        address's low bits (a negative address wraps to the end). Returns b""
+        for a length outside 0 to vram_size() (last_error_text() gives the
+        message)."""
         vram = self.vdp.vram
         size = len(vram)
+        if not 0 <= length <= size:
+            self._fail(STATUS_BAD_ARGUMENT, f"read_vram length {length} is outside 0-{size:#x}")
+            return b""
+        self._error_text = b""
+        # The VRAM size is a power of two (0x4000 or 0x20000), so the mask
+        # wraps the same way in every language.
+        mask = size - 1
         out = bytearray(length)
         for i in range(length):
-            out[i] = vram[(addr + i) % size]
+            out[i] = vram[(addr + i) & mask]
         return bytes(out)
 
     def vdp_info(self) -> VdpInfo:
@@ -666,10 +714,10 @@ class Machine:
         return SlotLayout(mem.slot_register & 0xFF, expanded, bytes(secondary))
 
     def slot_info(self, primary: int, secondary: int, page: int) -> SlotInfo:
-        """The content text, bank text and size in KB of a primary slot, a
-        sub-slot (-1: none) and a page (-1: none). Returns empty texts and a
-        size of -1 for a value outside 0-3 (last_error_text() gives the
-        message)."""
+        """The content, mapper, size in KB and bank of a primary slot, a
+        sub-slot (-1: none) and a page (-1: none), as integers. Returns a
+        content, mapper and size of -1 for a value outside 0-3
+        (last_error_text() gives the message)."""
         if not 0 <= primary <= 3:
             return self._bad_slot(f"no primary slot {primary}")
         if secondary != -1 and not 0 <= secondary <= 3:
@@ -679,17 +727,12 @@ class Machine:
         # The Memory helpers take None for "no sub-slot" and "no page".
         sec = None if secondary == -1 else secondary
         pg = None if page == -1 else page
-        mem = self.memory
         self._error_text = b""
-        return SlotInfo(
-            content=mem.debug_slot_content(primary, sec, pg).encode("utf-8"),
-            bank=mem.debug_slot_bank(primary, sec, pg).encode("utf-8"),
-            size_kb=mem.debug_slot_size_kb(primary, sec),
-        )
+        return self.memory.describe_slot(primary, sec, pg)
 
     def _bad_slot(self, message: str) -> SlotInfo:
         self._fail(STATUS_BAD_ARGUMENT, message)
-        return SlotInfo(content=b"", bank=b"", size_kb=-1)
+        return SlotInfo(content=-1, mapper=-1, size_kb=-1)
 
     def breakpoints(self) -> tuple[int, ...]:
         """The breakpoint addresses, ascending."""
@@ -782,14 +825,14 @@ class Machine:
     def _read_with_watch(self, addr: int) -> int:
         val = self.memory.read(addr)
         if addr in self._watch_read:
-            pc = self.cpu.instruction_pc
+            pc = self.clock.instruction_pc
             self._stop = StopInfo(STOP_WATCHPOINT, pc, addr, val, WATCH_READ)
             self._stop_pending = True
         return val
 
     def _write_with_watch(self, addr: int, value: int) -> None:
         if addr in self._watch_write:
-            pc = self.cpu.instruction_pc
+            pc = self.clock.instruction_pc
             self._stop = StopInfo(STOP_WATCHPOINT, pc, addr, value, WATCH_WRITE)
             self._stop_pending = True
         self.memory.write(addr, value)
@@ -818,7 +861,7 @@ class Machine:
                 self.run_frame()
         finally:
             self._step_one = False
-        self.audio.take()
+        self.take_audio()  # a step returns no audio
         self._resume_after_stop = True
         return self._step_cycles
 
@@ -947,7 +990,8 @@ class Machine:
         self.apply_input(frame_input)
         mouse = self.psg.mouse
         if mouse is not None and new_frame:
-            # The motion is an int16 in the C struct: clamp it to that range.
+            # The core clamps the motion to 16 bits (machine-core "The core
+            # masks or clamps an input value outside its range").
             dx = max(-0x8000, min(0x7FFF, frame_input.mouse_dx))
             dy = max(-0x8000, min(0x7FFF, frame_input.mouse_dy))
             mouse.add_motion(dx, dy)
@@ -993,20 +1037,20 @@ class Machine:
         True when the frame stops there.
 
         Checked at segment boundaries, not in the scanline loops: Ctrl-C needs
-        no finer stop (openspec/changes/add-core-debug-control design
-        Decision 3)."""
+        no finer stop (openspec/changes/archive/2026-10-29-add-core-debug-control
+        design Decision 3)."""
         if not self._break_request:
             return False
         self._break_request = False
         self._stop_line = line
         self._enter_break(STOP_REQUESTED)
-        return self._stop_pending
+        return True
 
     def _run_lines(
         self, vdp9938: V9938 | None, first_line: int, end_line: int, total: int
     ) -> int:
         """Run scanlines [first_line, end_line) with the loop arm this mode
-        needs (break conditions / hot / logger); return the running T-state
+        needs (break conditions / hot / TRACE_DEBUG); return the running T-state
         total, measured from the start of the frame.
 
         PORT-NOTE: the arms take `self` and `vdp9938` -- which aliases
@@ -1029,7 +1073,7 @@ class Machine:
             return self._run_lines_debug(vdp9938, first_line, end_line, total)
         if not self._trace.kinds & TRACE_DEBUG:
             return self._run_lines_fast(vdp9938, first_line, end_line, total)
-        return self._run_lines_logged(vdp9938, first_line, end_line, total)
+        return self._run_lines_traced(vdp9938, first_line, end_line, total)
 
     def _run_lines_debug(
         self, vdp9938: V9938 | None, first_line: int, end_line: int, total: int
@@ -1040,6 +1084,7 @@ class Machine:
         cpu_step = cpu.step
         cpf = self.cycles_per_frame
         lpf = self.lines_per_frame
+        clock = self.clock
         # Two loop-invariants lifted out of the inner loop: the post-step
         # condition test (see _post_step_checks_armed) and, as in the fast arm,
         # cycle_count aggregation into a per-line local flushed once a scanline.
@@ -1064,7 +1109,7 @@ class Machine:
                     if pc == self._temp_breakpoint:
                         self._temp_breakpoint = None
                     self._enter_break(STOP_BREAKPOINT)
-                    self.cycle_count += line_cycles
+                    clock.cycle += line_cycles
                     self._stop_line = line
                     return total
                 cpu.int_pending = vdp.irq
@@ -1088,10 +1133,10 @@ class Machine:
                 if self._stop_pending:
                     # A watchpoint (or post-step condition) stopped this
                     # instruction; return at the boundary.
-                    self.cycle_count += line_cycles
+                    clock.cycle += line_cycles
                     self._stop_line = line
                     return total
-            self.cycle_count += line_cycles
+            clock.cycle += line_cycles
             line_cycles = 0
             if vdp9938 is not None:
                 vdp9938.begin_scanline(line)
@@ -1100,8 +1145,9 @@ class Machine:
     def _run_lines_fast(
         self, vdp9938: V9938 | None, first_line: int, end_line: int, total: int
     ) -> int:
-        """Hot-path scanline loop (no debugger, no logger); see `_run_lines`."""
-        # Hot path (no debugger, no logger). Two frame-invariants are lifted
+        """Hot-path scanline loop (no break conditions, TRACE_DEBUG off); see
+        `_run_lines`."""
+        # Hot path (no break conditions, TRACE_DEBUG off). Two frame-invariants are lifted
         # out of the inner loop: (1) the is_v9938 branch — split into a
         # V9938 loop and a plain loop so the per-instruction `if vdp9938 /
         # if vdp_tick` tests vanish; (2) cycle_count aggregation — summed
@@ -1115,6 +1161,7 @@ class Machine:
         cpu_step = cpu.step
         cpf = self.cycles_per_frame
         lpf = self.lines_per_frame
+        clock = self.clock
         if vdp9938 is not None:
             for line in range(first_line, end_line):
                 line_end = (line + 1) * cpf // lpf
@@ -1182,7 +1229,7 @@ class Machine:
                         vdp9938.tick(n)
                     else:
                         vdp9938._line_cycle += n
-                self.cycle_count += line_cycles
+                clock.cycle += line_cycles
                 vdp9938.begin_scanline(line)
         else:
             vdp = self.vdp  # hot-loop local for the per-instruction .irq read
@@ -1210,18 +1257,20 @@ class Machine:
                         n = cpu_step()
                     total += n
                     line_cycles += n
-                self.cycle_count += line_cycles
+                clock.cycle += line_cycles
         return total
 
-    def _run_lines_logged(
+    def _run_lines_traced(
         self, vdp9938: V9938 | None, first_line: int, end_line: int, total: int
     ) -> int:
-        """Scanline loop with diagnostic logging: detects PC-loop / HALT+DI hangs."""
+        """Scanline loop while TRACE_DEBUG is on: records PC-loop and HALT+DI
+        hang events."""
         trace = self._trace
         cpu = self.cpu
         cpu_step = cpu.step
         cpf = self.cycles_per_frame
         lpf = self.lines_per_frame
+        clock = self.clock
         # Either chip; hot-loop local for the per-instruction .irq read. When
         # vdp9938 is not None it is this same object, passed only to gate the
         # V9938 per-scanline hooks.
@@ -1233,7 +1282,7 @@ class Machine:
                 cpu.int_pending = vdp.irq
                 n = cpu_step()
                 total += n
-                self.cycle_count += n
+                clock.cycle += n
                 if vdp9938 is not None:
                     # Same optimization as _run_lines_fast's own comment.
                     if vdp9938._cmd_active:
@@ -1242,10 +1291,10 @@ class Machine:
                         vdp9938._line_cycle += n
                 if not (cpu.halted and cpu.iff1):
                     if pc == self._last_pc:
-                        self._pc_repeat += 1
-                        if self._pc_repeat >= HANG_PC_REPEAT_THRESHOLD:
-                            # Once per run of repeats: the host reports each
-                            # PC once per run.
+                        # The count stops at the threshold, so it never wraps
+                        # and the hang is recorded once per run of repeats.
+                        if self._pc_repeat < HANG_PC_REPEAT_THRESHOLD:
+                            self._pc_repeat += 1
                             if self._pc_repeat == HANG_PC_REPEAT_THRESHOLD:
                                 trace.record_hang(TRACE_EVENT_HANG_PC_LOOP, pc)
                     else:
@@ -1262,3 +1311,9 @@ class Machine:
         return total
 
 
+def _media_label(media_id: int) -> str:
+    """A media id for a message: its MediaId name, or its number for an
+    integer outside MediaId (the ids are 0 to DRIVE_D, without gaps)."""
+    if 0 <= media_id <= MediaId.DRIVE_D:
+        return MediaId(media_id).name
+    return str(int(media_id))

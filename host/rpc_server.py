@@ -56,11 +56,12 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from host.debugger.disasm import disassemble
+from host.debugger.disasm import byte_reader, disassemble
 from host.input_state import InputState
+from host.key_names import KEY_NAME_TO_CELL
 from host.media import DiskFiles
 from host.screenshot import encode_rgb24_png, scale_rgb24
-from host.watch import watch_kind
+from host.watch import watch_kind_exact
 from msx.boundary import (
     STATUS_OK,
     STOP_BREAKPOINT,
@@ -68,7 +69,6 @@ from msx.boundary import (
     STOP_WATCHPOINT,
     VDP_KIND_V9938,
 )
-from msx.input import KEY_NAME_TO_CELL
 
 if TYPE_CHECKING:
     from msx.core_api import CoreApi
@@ -99,8 +99,6 @@ _STOP_TO_REASON: dict[int, PauseReason] = {
     STOP_REQUESTED: PauseReason.USER_REQUEST,
 }
 
-REASON_USER = PauseReason.USER_REQUEST
-REASON_STEP = PauseReason.STEP_COMPLETE
 
 DEFAULT_SOCKET_PATH = "/tmp/py_msx_emu.sock"
 PROTOCOL_VERSION = "1.0"
@@ -149,8 +147,9 @@ class PauseState:
 
     PORT-NOTE: these plain fields are written by the emulator thread
       (``on_pause``, handlers via ``drain``) and by the socket thread
-      (``cpu.continue_sync``), and read by the frontend loop -- safe here
-      only because of the GIL.
+      (``cpu.continue_sync`` sets it running), and read by the frontend
+      loop -- safe here only because of the GIL. The socket thread makes no
+      core API call.
     Rust equivalent: guard with a Mutex, or use AtomicBool/an atomic enum for
       `paused`/`reason` -- Rust has no GIL to fall back on for cross-thread
       plain-field access.
@@ -164,7 +163,7 @@ class PauseState:
 
     def __init__(self) -> None:
         self.paused: bool = False
-        self.reason: str = REASON_USER
+        self.reason: str = PauseReason.USER_REQUEST
 
     def set_paused(self, reason: str) -> None:
         self.paused = True
@@ -179,7 +178,7 @@ class DebugServer:
 
     def __init__(
         self,
-        machine: "CoreApi",
+        machine: CoreApi,
         sock_path: str = DEFAULT_SOCKET_PATH,
         pause_state: PauseState | None = None,
         disk_files: DiskFiles | None = None,
@@ -200,6 +199,10 @@ class DebugServer:
         self._handlers: dict[str, Handler] = {}
         # Set when the machine pauses; cpu.continue_sync waits on it.
         self._pause_event = threading.Event()
+        # The last core stop, as cpu.continue_sync answers it: written on the
+        # emulator thread before _pause_event is set, read on the socket
+        # thread after the wait, so the socket thread never calls the core.
+        self._last_pause: dict[str, Any] = {}
         # Breakpoint / watchpoint registries (id -> spec), owned here so the RPC
         # surface is decoupled from the interactive debugger's REPL state.
         self._breakpoints: dict[int, int] = {}
@@ -228,7 +231,7 @@ class DebugServer:
         return self._pause_state
 
     @property
-    def machine(self) -> "CoreApi":
+    def machine(self) -> CoreApi:
         return self._machine
 
     @property
@@ -276,20 +279,20 @@ class DebugServer:
         self.on_pause(_STOP_TO_REASON[stop_reason], self._machine.cpu_registers().PC)
 
     def on_pause(self, reason: str, pc: int) -> None:
-        """Record the pause and push a notification. Runs on the emulator
-        thread (on_core_stop)."""
+        """Record the pause, wake cpu.continue_sync and push a notification.
+        Runs on the emulator thread (on_core_stop). The record is complete
+        before the event is set (Event orders the write before the waiter's
+        read)."""
+        registers = self.registers_dict()
+        self._last_pause = {
+            "paused": True, "reason": reason, "pc": hex16(pc), "registers": registers,
+        }
         self._pause_state.set_paused(reason)
         self._pause_event.set()
-        self._push_paused(reason, pc)
-
-    def _push_paused(self, reason: str, pc: int) -> None:
-        frame = {
-            "notification": "paused",
-            "reason": reason,
-            "pc": hex16(pc),
-            "registers": self.registers_dict(),
-        }
-        self._send_to_client(frame)
+        self._send_to_client({
+            "notification": "paused", "reason": reason, "pc": hex16(pc),
+            "registers": registers,
+        })
 
     # -- socket threads -----------------------------------------------------
 
@@ -446,22 +449,16 @@ class DebugServer:
     def _continue_sync(self, req: dict[str, Any]) -> dict[str, Any]:
         """Resume and block (on the socket thread) until the next pause event.
 
-        PORT-NOTE: this runs on the socket thread yet calls into the core
-          (reading the PC). It is
-          safe here only because of the GIL and because the machine is
-          quiescent by the time the pause event fires (the debug loop has
-          returned).
-        Rust equivalent: can't take `&mut Machine` from two threads -- route
-          continue as a command handled on the emulator thread instead
-          (e.g. via a channel/queue the emulator thread polls).
-        C++ equivalent: same -- route continue through a thread-safe
-          command queue handled on the emulator thread, rather than calling
-          into Machine directly from the socket thread.
-        Kept as-is here because: this file is an adapter-only layer; the
-          GIL-reliant cross-thread call is safe under CPython's actual
-          threading model as written, and Rust/C++ have no GIL to rely on so
-          this needs a real command-queue redesign at port time, not a
-          direct translation.
+        It makes no core API call: it answers from the pause record
+        on_pause writes on the emulator thread before it sets the event
+        (remote-socket-rpc "Threaded queue execution model").
+
+        PORT-NOTE: the pause flag and the record cross threads through
+          PauseState and threading.Event.
+        Rust equivalent: send the record over an mpsc/oneshot channel, or
+          keep it in a Mutex next to a Condvar.
+        C++ equivalent: the same, with std::mutex and
+          std::condition_variable.
         """
         req_id = req.get("id")
         params = req.get("params") or {}
@@ -477,12 +474,7 @@ class DebugServer:
         self._pause_event.clear()
         self._pause_state.set_running()
         if self._pause_event.wait(timeout=timeout_s):
-            return self._ok(req_id, {
-                "paused": True,
-                "reason": self._pause_state.reason,
-                "pc": hex16(self._machine.cpu_registers().PC),
-                "registers": self.registers_dict(),
-            })
+            return self._ok(req_id, self._last_pause)
         return self._ok(req_id, {"paused": False, "reason": "timeout"})
 
     def _process_key_releases(self) -> None:
@@ -500,15 +492,6 @@ class DebugServer:
 
     def schedule_key_release(self, row: int, bit: int, duration_ms: int) -> None:
         self._key_releases.append((time.monotonic() + duration_ms / 1000.0, row, bit))
-
-    def capture_rgb(self) -> tuple[bytes, int, int]:
-        """Render the current VDP frame to RGB24 without advancing the frame counter.
-
-        Returns:
-            (rgb_bytes, width, height) for the current frame.
-        """
-        frame = self._machine.render_preview()
-        return frame.pixels, frame.width, frame.height
 
     def alloc_breakpoint(self, address: int) -> int:
         """Add a breakpoint and return its id. Raises an invalid-params
@@ -602,11 +585,11 @@ def _h_debugger_status(server: DebugServer, params: dict[str, Any]) -> dict[str,
 
 
 def _h_debugger_pause(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
-    server.pause_state.set_paused(REASON_USER)
+    server.pause_state.set_paused(PauseReason.USER_REQUEST)
     return {
         "paused": True,
         "pc": hex16(server.machine.cpu_registers().PC),
-        "reason": REASON_USER,
+        "reason": PauseReason.USER_REQUEST,
     }
 
 
@@ -616,9 +599,9 @@ def _h_cpu_step(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
     server.require_paused()
     m = server.machine
     pc_before = m.cpu_registers().PC
-    mnemonic, _size = disassemble(_byte_reader(m), pc_before)
+    mnemonic, _size = disassemble(byte_reader(m), pc_before)
     t_states = m.step()
-    server.pause_state.set_paused(REASON_STEP)
+    server.pause_state.set_paused(PauseReason.STEP_COMPLETE)
     return {
         "pc": hex16(m.cpu_registers().PC),
         "t_states": t_states,
@@ -661,7 +644,7 @@ def _h_list_breakpoints(server: DebugServer, params: dict[str, Any]) -> dict[str
 def _h_set_watchpoint(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
     addr = _parse_addr(params.get("address"))
     mode = params.get("mode", "rw")
-    kind = watch_kind(mode) if mode in ("r", "w", "rw") else None
+    kind = watch_kind_exact(mode)
     if kind is None:
         raise RpcError(ERR_INVALID_PARAMS, f"invalid watchpoint mode: {mode}")
     wp_id = server.alloc_watchpoint(addr, kind)
@@ -677,7 +660,9 @@ def _h_remove_watchpoint(server: DebugServer, params: dict[str, Any]) -> dict[st
 def _h_memory_read(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
     addr = _parse_addr(params.get("address"))
     length = _require_int(params, "length", default=16)
-    data = _fmt_bytes(server.machine.read_memory(addr, max(0, length)))
+    if not 0 <= length <= 0x10000:
+        raise RpcError(ERR_INVALID_PARAMS, f"length {length} is outside 0-0x10000")
+    data = _fmt_bytes(server.machine.read_memory(addr, length))
     return {"address": hex16(addr), "data": data}
 
 
@@ -690,16 +675,22 @@ def _h_memory_write(server: DebugServer, params: dict[str, Any]) -> dict[str, An
 
 
 def _h_memory_read_vram(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
-    addr = _parse_addr(params.get("address"))
+    size = server.machine.vram_size()
+    # The VRAM size is a power of two (0x4000 or 0x20000): the mask wraps the
+    # address at it, as the core does.
+    addr = _parse_addr(params.get("address"), size - 1)
     length = _require_int(params, "length", default=32)
-    data = _fmt_bytes(server.machine.read_vram(addr, max(0, length)))
-    return {"address": hex16(addr), "data": data}
+    if not 0 <= length <= size:
+        raise RpcError(ERR_INVALID_PARAMS, f"length {length} is outside 0-{size:#x}")
+    data = _fmt_bytes(server.machine.read_vram(addr, length))
+    # Four hex digits below 0x10000, five above (hex16 would cut it).
+    return {"address": f"0x{addr:04X}", "data": data}
 
 
 def _h_memory_disassemble(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
     addr = _parse_addr(params.get("address"))
     count = _require_int(params, "count", default=10)
-    read = _byte_reader(server.machine)
+    read = byte_reader(server.machine)
     instructions: list[dict[str, Any]] = []
     cur = addr
     for _ in range(count):
@@ -720,7 +711,7 @@ def _h_vdp_get_registers(server: DebugServer, params: dict[str, Any]) -> dict[st
 
 
 def _h_vdp_get_status(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
-    return {"status": hex8(server.machine.vdp_info().status[0])}
+    return {"status": hex8(server.machine.vdp_info().status[0])}  # S#0
 
 
 # ── Input injection ──────────────────────────────────────────────────────────
@@ -788,7 +779,8 @@ def _h_input_joystick_release(server: DebugServer, params: dict[str, Any]) -> di
 
 def _h_screen_capture(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
     scale = _require_int(params, "scale", default=1)
-    rgb, width, height = server.capture_rgb()
+    frame = server.machine.render_preview()
+    rgb, width, height = frame.pixels, frame.width, frame.height
     if scale > 1:
         out_w, out_h = width * scale, height * scale
         rgb = scale_rgb24(rgb, width, height, out_w, out_h)
@@ -807,12 +799,10 @@ def _h_screen_capture(server: DebugServer, params: dict[str, Any]) -> dict[str, 
 
 def _h_state_save(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
     from host.state_files import save_state
-    from msx.boundary import RgbFrame
 
     path = params.get("path")
     title = Path(path).stem if isinstance(path, str) and path else "rpc_checkpoint"
-    rgb, width, height = server.capture_rgb()
-    saved = save_state(server.machine, RgbFrame(width, height, rgb), title, server.disk_files)
+    saved = save_state(server.machine, server.machine.render_preview(), title, server.disk_files)
     return {"path": str(saved)}
 
 
@@ -855,13 +845,6 @@ _JOY_BITS: dict[str, int] = {
 }
 
 
-def _byte_reader(core: "CoreApi") -> Callable[[int], int]:
-    """A one-byte memory reader over the core API, for the disassembler."""
-
-    def read(addr: int) -> int:
-        return core.read_memory(addr, 1)[0]
-
-    return read
 
 
 class _Missing:
@@ -883,15 +866,16 @@ def _set_key(server: DebugServer, row: int, bit: int, pressed: bool) -> None:
     server.apply_injected_input()
 
 
-def _parse_addr(value: Any) -> int:
+def _parse_addr(value: Any, mask: int = 0xFFFF) -> int:
+    """An address param (an integer or a hex string), wrapped by `mask`."""
     if isinstance(value, bool):
         raise RpcError(ERR_INVALID_PARAMS, "address must be an integer or hex string")
     if isinstance(value, int):
-        return value & 0xFFFF
+        return value & mask
     if not isinstance(value, str) or not value:
         raise RpcError(ERR_INVALID_PARAMS, "address is required")
     try:
-        return int(value, 16) & 0xFFFF
+        return int(value, 16) & mask
     except ValueError:
         raise RpcError(ERR_INVALID_PARAMS, f"invalid address: {value}") from None
 

@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from msx.boundary import (
+    STATUS_BAD_ARGUMENT,
     STATUS_BAD_IMAGE,
     STATUS_NO_DRIVE,
     STATUS_NO_MEDIUM,
@@ -188,3 +189,26 @@ def test_the_sram_table_is_built_once() -> None:
     m = make_machine(rom=_ROM, cartridge=bytes(65536), mapper="ASCII8SRAM2")
     assert m.sram_media() is m.sram_media()
     assert m.sram_media()[MediaId.SLOT1_SRAM] is m.memory._mapper.sram_medium()
+
+
+def test_an_integer_outside_the_media_ids_is_rejected() -> None:
+    # machine-core "An integer outside the media ids is rejected".
+    m = make_machine(rom=_ROM, cartridge=bytes(65536), mapper="ASCII8SRAM2")
+    before = m.dirty_media()
+    assert m.read_media(99) == b""
+    assert m.last_error_text() == b"no medium 99 on this machine"
+    assert m.mark_persisted(99) == STATUS_NO_MEDIUM
+    assert m.last_error_text() == b"no medium 99 on this machine"
+    assert m.dirty_media() == before
+
+
+def test_a_bad_write_protect_flag_leaves_the_drive_unchanged() -> None:
+    # machine-core "A bad write-protect flag leaves the drive unchanged".
+    m = _fdc_machine(drives=1)
+    m.mount_disk(0, _2DD, False)
+    m.fdc.drives[0].disk_changed = False
+    before = m.fdc.drives[0].image
+    assert m.mount_disk(0, _2DD, 2) == STATUS_BAD_ARGUMENT
+    assert m.last_error_text() == b"write_protected 2 is not 0 or 1"
+    assert m.fdc.drives[0].image is before
+    assert m.fdc.drives[0].disk_changed is False

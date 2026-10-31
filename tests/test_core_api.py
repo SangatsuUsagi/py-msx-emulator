@@ -3,6 +3,7 @@
 "Inspection queries do not change emulated state"."""
 from __future__ import annotations
 
+import dataclasses
 import inspect
 import typing
 from dataclasses import fields
@@ -10,8 +11,11 @@ from dataclasses import fields
 import pytest
 
 from msx.boundary import (
+    BANK_WINDOW_16K,
     MAX_BREAKPOINTS,
     MAX_WATCHPOINTS,
+    SLOT_CONTENT_CARTRIDGE,
+    SLOT_CONTENT_MAIN_ROM,
     STATUS_BAD_ARGUMENT,
     STATUS_OK,
     STATUS_STATE_REJECTED,
@@ -27,7 +31,9 @@ from msx.boundary import (
     VDP_KIND_V9938,
     WATCH_READ,
     WATCH_WRITE,
+    WINDOW_PAGE,
     CpuRegisters,
+    MapperId,
     SlotInfo,
     SlotLayout,
 )
@@ -238,27 +244,43 @@ def test_a_bank_switching_cartridge_page_shows_its_bank() -> None:
     m.io.write_port(0xA8, 0xD4)  # pages 1 and 2 in slot 1
     m.write_memory(0x7000, b"\x00")  # window 1 (0x8000) -> bank 0
     info = m.slot_info(1, -1, 2)
-    assert b"Ascii16" in info.content
-    assert info.bank == b"bank 0 @00000-03FFF"
+    assert (info.content, info.mapper) == (SLOT_CONTENT_CARTRIDGE, MapperId.ASCII16)
+    assert info.bank == BANK_WINDOW_16K
+    assert (info.window_kinds[0], info.window_values[0]) == (WINDOW_PAGE, 0)
 
 
 def test_the_main_rom_reports_its_size() -> None:
     info = _msx1().slot_info(0, -1, -1)
+    assert info.content == SLOT_CONTENT_MAIN_ROM
     assert info.size_kb == 32
 
 
 def test_an_invalid_slot_is_rejected() -> None:
     m = _msx1()
-    assert m.slot_info(4, -1, -1) == SlotInfo(content=b"", bank=b"", size_kb=-1)
+    assert m.slot_info(4, -1, -1) == SlotInfo(content=-1, mapper=-1, size_kb=-1)
     assert b"4" in m.last_error_text()
     assert m.slot_info(0, -1, -1).size_kb == 32
     assert m.last_error_text() == b""
 
 
+def test_the_record_holds_no_text() -> None:
+    m = make_machine_msx2(_ROM, bytes(0x4000), cartridge=bytes(128 * 1024), mapper="ASCII16")
+    infos = [m.slot_info(4, -1, -1)]
+    for prim in range(4):
+        for sec in (-1, 0, 1, 2, 3):
+            for page in (-1, 0, 1, 2, 3):
+                infos.append(m.slot_info(prim, sec, page))
+    for info in infos:
+        for field in dataclasses.fields(info):
+            value = getattr(info, field.name)
+            items = value if isinstance(value, tuple) else (value,)
+            assert all(type(item) is int for item in items), field.name
+
+
 @pytest.mark.parametrize("args", [(0, 4, -1), (0, -2, -1), (0, -1, 4), (0, -1, -2), (-1, -1, -1)])
 def test_every_slot_argument_outside_its_range_is_rejected(args: tuple[int, int, int]) -> None:
     m = _msx1()
-    assert m.slot_info(*args) == SlotInfo(content=b"", bank=b"", size_kb=-1)
+    assert m.slot_info(*args) == SlotInfo(content=-1, mapper=-1, size_kb=-1)
     assert m.last_error_text() != b""
 
 
@@ -314,7 +336,7 @@ def test_a_trace_kind_that_is_off_records_nothing() -> None:
     m.io.write_port(0x99, 0x80)
     m.io.read_port(0xA8)
     m.memory.write(0x7000, 3)  # window 1 -> bank 3
-    assert m.memory._mapper.debug_bank_info(2) == "bank 3 @0C000-0FFFF"
+    assert m.memory._mapper.debug_bank(2).window_values[0] == 3
     assert m.drain_trace() == ()
 
 
@@ -489,6 +511,15 @@ def test_every_address_setter_rejects_a_value_outside_16_bits(call) -> None:
     assert m._stepout_sp is None and m._sp_range is None
 
 
+def test_a_frame_number_above_64_bits_is_rejected() -> None:
+    # machine-core "A frame number above 64 bits is rejected".
+    m = _msx1()
+    m.set_frame_breakpoint(10)
+    assert m.set_frame_breakpoint(2**63) == STATUS_BAD_ARGUMENT
+    assert m._frame_breakpoint == 10
+    assert m.set_frame_breakpoint(2**63 - 1) == STATUS_OK
+
+
 def test_a_frame_number_below_minus_1_is_rejected() -> None:
     m = _msx1()
     m.set_frame_breakpoint(10)
@@ -549,3 +580,60 @@ def test_a_state_with_a_mouse_is_rejected_on_a_machine_without_one() -> None:
     m = _msx1()
     assert m.load_state(saved.save_state()) == STATUS_STATE_REJECTED
     assert b"mouse wiring" in m.last_error_text()
+
+
+# ---------------------------------------------------------------------------
+# machine-core "Memory and VRAM reads take a length in range"
+# ---------------------------------------------------------------------------
+
+def test_a_negative_read_length_is_rejected() -> None:
+    m = _msx1()
+    assert m.read_memory(0x0000, -1) == b""
+    assert b"-1" in m.last_error_text()
+    assert m.read_vram(0x0000, -1) == b""
+    assert b"-1" in m.last_error_text()
+
+
+def test_a_read_length_above_the_range_is_rejected() -> None:
+    for m in (_msx1(), _msx2()):
+        assert m.read_memory(0x0000, 0x10001) == b""
+        assert m.read_vram(0x0000, m.vram_size() + 1) == b""
+
+
+def test_the_full_read_range_is_read() -> None:
+    for m in (_msx1(), _msx2()):
+        m.read_vram(0x0000, -1)
+        assert len(m.read_memory(0x0000, 0x10000)) == 0x10000
+        assert m.last_error_text() == b""
+        m.read_memory(0x0000, -1)
+        assert len(m.read_vram(0x0000, m.vram_size())) == m.vram_size()
+        assert m.last_error_text() == b""
+
+
+def test_a_negative_vram_address_wraps_to_the_end() -> None:
+    for m in (_msx1(), _msx2()):
+        size = m.vram_size()
+        m.vdp.vram[size - 1] = 0x5A
+        m.vdp.vram[0] = 0xA5
+        assert m.read_vram(-1, 2) == b"\x5a\xa5"
+
+
+# ---------------------------------------------------------------------------
+# machine-core "The boolean settings take 0 or 1"
+# ---------------------------------------------------------------------------
+
+def test_a_halt_di_value_other_than_0_and_1_is_rejected() -> None:
+    m = _msx1()
+    assert m.set_break_halt_di(1) == STATUS_OK
+    assert m.set_break_halt_di(2) == STATUS_BAD_ARGUMENT
+    assert m.last_error_text() == b"set_break_halt_di value 2 is not 0 or 1"
+    assert m.break_halt_di() == 1
+    assert m.set_break_halt_di(0) == STATUS_OK
+    assert m.last_error_text() == b""
+
+
+def test_the_sprite_flag_rejects_a_value_other_than_0_and_1() -> None:
+    m = _msx1()
+    assert m.set_sprites_hidden(2) == STATUS_BAD_ARGUMENT
+    assert m.last_error_text() == b"set_sprites_hidden value 2 is not 0 or 1"
+    assert m.sprites_hidden() == 0

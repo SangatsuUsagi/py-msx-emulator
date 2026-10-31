@@ -2,36 +2,48 @@
 (machine-core "Host and frontend reach the core only through the core API").
 
 `Machine` implements it structurally; a wrapper of a native core can
-implement it later. The inspection queries return integers, bytes or flat
-records of integers and bytes (msx/boundary.py), and change no emulated
-state. No member takes a callback the core calls (machine-core "The core
-API has no callback into the host"): a break is the step_frame stop reason
-and the last-stop query. Every parameter and result is an integer, bytes,
-or a flat record or tuple of these, never None (an absent integer argument
-is -1) (machine-core "Core API values are
-integers, bytes or flat records"): the ids and machine properties are
-integer enums, watch kinds and mouse buttons are bit flags, step_frame's
-InputFrame and FrameOutput hold no nested or optional record (a frame that
-was not rendered has a video width of 0), and no member takes or returns a
-file path. No member raises for an invalid argument: every control
-operation returns an integer status (msx/boundary.py STATUS_*), the break
-setters STATUS_BAD_ARGUMENT for a value outside its range or more than
-MAX_BREAKPOINTS / MAX_WATCHPOINTS entries, read_media returns b"" for an
-id the machine lacks, slot_info returns empty texts and a size of -1 for a
-slot, sub-slot or page outside 0-3 (-1 is "none" for the last two), and
-last_error_text() gives the message of the last failure. A disk is ejected
-with eject_disk.
-The slot queries (slot_layout, slot_info) and the sprite display flag
-(set_sprites_hidden, sprites_hidden) serve the debugger's sl, st and ds;
-the flag is a debug setting outside the saved state. The trace members
-(set_trace_kinds, trace_kinds, trace_sources, drain_trace) carry the VDP
-and mapper trace and the debug log as flat integer events
-(msx/boundary.py TraceEvent) that
-the host formats; set_trace_kinds returns STATUS_BAD_ARGUMENT for an
-unknown kind, and the kinds are a debug setting outside the saved state
-too. The machine is built
-by msx.machine_loader.create_machine, which reports a rejected
-configuration the same way (allium/core-frontend.allium).
+implement it later (include/msx_core.h is the C form).
+
+Values. Every parameter and result is an integer, bytes, or a flat record,
+list or tuple of these, never None; an absent integer argument is -1
+(machine-core "Core API values are integers, bytes or flat records"). The
+ids and the machine properties are plain integers (their enums are in
+msx/boundary.py), watch kinds and mouse buttons are bit flags, and
+step_frame's InputFrame and FrameOutput hold no nested or optional record
+(a frame that was not rendered has a video width of 0). No member takes or
+returns a file path, and none takes a callback the core calls (machine-core
+"The core API has no callback into the host"): a break is the step_frame
+stop reason and the last-stop query. The inspection queries change no
+emulated state.
+
+Errors. No member raises for an invalid argument. Every control operation
+returns an integer status (msx/boundary.py STATUS_*):
+
+- the break setters: STATUS_BAD_ARGUMENT for a value outside its range or
+  more than MAX_BREAKPOINTS / MAX_WATCHPOINTS entries;
+- the flag setters and mount_disk's write_protected: 0 or 1, else
+  STATUS_BAD_ARGUMENT;
+- read_media: b"" for an id the machine lacks (any integer);
+- read_memory, read_vram: b"" for a length outside 0-0x10000 /
+  0-vram_size;
+- slot_info: a content, mapper and size of -1 for a slot, sub-slot or
+  page outside 0-3 (-1 is "none" for the last two). Its record is
+  integers only; the host builds the sl/st text.
+
+last_error_text() gives the message of the last failure. A disk is
+ejected with eject_disk.
+
+Debug settings. The slot queries (slot_layout, slot_info) and the sprite
+display flag (set_sprites_hidden, sprites_hidden) serve the debugger's sl,
+st and ds. The trace members (set_trace_kinds, trace_kinds, trace_sources,
+drain_trace) carry the VDP and mapper trace and the debug log as flat
+integer events (msx/boundary.py TraceEvent) that the host formats;
+set_trace_kinds returns STATUS_BAD_ARGUMENT for an unknown kind. The flag
+and the kinds are outside the saved state.
+
+Construction. msx.machine_loader.create_machine builds the machine and
+reports every rejected configuration as a status, a device size and an
+RTC start time included (allium/core-frontend.allium).
 """
 from __future__ import annotations
 
@@ -51,8 +63,6 @@ if TYPE_CHECKING:
     )
     from msx.input import InputFrame
     from msx.machine import Machine
-    from msx.machine_spec import KeyboardLayout
-    from msx.vdp._geometry import VideoStandard
 
 
 @runtime_checkable
@@ -64,16 +74,16 @@ class CoreApi(Protocol):
     @property
     def cycle_count(self) -> int: ...
     @property
-    def video_standard(self) -> VideoStandard: ...
+    def video_standard(self) -> int: ...  # a VideoStandard value
     @property
-    def keyboard_layout(self) -> KeyboardLayout: ...
+    def keyboard_layout(self) -> int: ...  # a KeyboardLayout value
     def samples_per_frame(self) -> int: ...
 
     # -- running ---------------------------------------------------------------
 
     def step_frame(self, frame_input: InputFrame, render_video: bool) -> FrameOutput: ...
     def apply_input(self, frame_input: InputFrame) -> int: ...
-    def step(self) -> int: ...
+    def step(self) -> int: ...  # the T-states of the instruction
     def reset(self) -> int: ...
 
     # -- media -------------------------------------------------------------------
@@ -93,7 +103,7 @@ class CoreApi(Protocol):
 
     # -- attachments -----------------------------------------------------------
 
-    def attach_mouse(self, port: int) -> int: ...
+    def attach_mouse(self, port: int) -> int: ...  # once, before the first step_frame
 
     # -- break settings ------------------------------------------------------------
 
@@ -109,7 +119,7 @@ class CoreApi(Protocol):
 
     # -- break control ---------------------------------------------------------------
 
-    def request_break(self) -> int: ...
+    def request_break(self) -> int: ...  # safe from a signal handler
     def last_stop(self) -> StopInfo: ...
 
     # -- inspection queries --------------------------------------------------------

@@ -1,0 +1,107 @@
+{
+  "description": "Cross-implementation vectors for the core's canonical JSON (RFC 8785 for integer-only documents with ASCII keys): msx/canonical_json.py. accept: input text, its canonical form and the SHA-256 of that form. reject: input text the strict reader refuses (floats, NaN, Infinity and duplicate keys; plain JSON allows some of them). base64: a byte blob and its padded RFC 4648 base64 string.",
+  "accept": [
+    {
+      "name": "key order and whitespace",
+      "input": "{ \"b\" : 2 ,\n\t\"a\" : 1 }",
+      "canonical": "{\"a\":1,\"b\":2}",
+      "sha256": "43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777"
+    },
+    {
+      "name": "nested values and literals",
+      "input": "{\"z\":[{\"y\":true,\"x\":false},null,[]],\"a\":{}}",
+      "canonical": "{\"a\":{},\"z\":[{\"x\":false,\"y\":true},null,[]]}",
+      "sha256": "ca20debc8758d1b3e04522b90e00aa5489e5da068e7d5668750d764efd07fe33"
+    },
+    {
+      "name": "non-ASCII text stays raw UTF-8",
+      "input": "{\"name\":\"\u30b2\u30fc\u30e0.rom\"}",
+      "canonical": "{\"name\":\"\u30b2\u30fc\u30e0.rom\"}",
+      "sha256": "856adc368fbce92932da0908a85ed43ef8145e29eb6c258866830cb20e6ce7f3"
+    },
+    {
+      "name": "short escapes",
+      "input": "{\"s\":\"\\\"\\\\\\b\\f\\n\\r\\t\"}",
+      "canonical": "{\"s\":\"\\\"\\\\\\b\\f\\n\\r\\t\"}",
+      "sha256": "b8a820fee44f5e71f6736e14fb2d82bcf1fb169f0c48cac32d32ccc0c4a98b51"
+    },
+    {
+      "name": "other control characters as lowercase \\u00xx",
+      "input": "{\"s\":\"\\u0001\\u001f\\u001F\"}",
+      "canonical": "{\"s\":\"\\u0001\\u001f\\u001f\"}",
+      "sha256": "3fcb0dda19031e680c75d2746ffa2dea3810ef8b3cf737826dba1bb738492470"
+    },
+    {
+      "name": "solidus, DEL and U+2028 are not escaped",
+      "input": "{\"s\":\"/\\/\\u007f\\u2028\"}",
+      "canonical": "{\"s\":\"//\u007f\u2028\"}",
+      "sha256": "f4482b4eefd4485295a536f7cd0c8cc5bfccc552c511d22888bf6d105145de9a"
+    },
+    {
+      "name": "input escapes of plain characters",
+      "input": "{\"s\":\"\\u0041\\u00e9\\u3042\"}",
+      "canonical": "{\"s\":\"A\u00e9\u3042\"}",
+      "sha256": "3d0b144fe6d4a157a5707d5173be65dd0e783272184327db3958097ed3e1d46a"
+    },
+    {
+      "name": "integers",
+      "input": "{\"n\":[0,-0,-1,9007199254740991,-9007199254740991]}",
+      "canonical": "{\"n\":[0,0,-1,9007199254740991,-9007199254740991]}",
+      "sha256": "5373419475e33e2f0eeb81a1c16d55914a4f5140579af0177c89dd776a5a09d6"
+    },
+    {
+      "name": "top-level array",
+      "input": "[3, 2, 1]",
+      "canonical": "[3,2,1]",
+      "sha256": "30c8681f9b840aceee56b737f3b126ae67ec4eb71d2881db831f86014fba016d"
+    }
+  ],
+  "reject": [
+    {
+      "name": "fraction",
+      "input": "{\"n\":1.0}"
+    },
+    {
+      "name": "exponent",
+      "input": "{\"n\":1e3}"
+    },
+    {
+      "name": "NaN",
+      "input": "{\"n\":NaN}"
+    },
+    {
+      "name": "Infinity",
+      "input": "{\"n\":Infinity}"
+    },
+    {
+      "name": "-Infinity",
+      "input": "{\"n\":-Infinity}"
+    },
+    {
+      "name": "duplicate key",
+      "input": "{\"n\":1,\"n\":2}"
+    }
+  ],
+  "base64": [
+    {
+      "bytes_hex": "",
+      "base64": ""
+    },
+    {
+      "bytes_hex": "00",
+      "base64": "AA=="
+    },
+    {
+      "bytes_hex": "0001",
+      "base64": "AAE="
+    },
+    {
+      "bytes_hex": "000102",
+      "base64": "AAEC"
+    },
+    {
+      "bytes_hex": "fffefdfc",
+      "base64": "//79/A=="
+    }
+  ]
+}

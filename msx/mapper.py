@@ -1,11 +1,25 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import InitVar, dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, ClassVar, Protocol, TypedDict, cast
 
-from msx.boundary import TRACE_EVENT_MAP_BANK, TRACE_MAPPER
+from msx.boundary import (
+    BANK_NONE,
+    BANK_SRAM_PAGE,
+    BANK_WINDOW_16K,
+    BANK_WINDOWS_8K,
+    HALNOTE_SRAM_SIZE,
+    TRACE_EVENT_MAP_BANK,
+    TRACE_MAPPER,
+    WINDOW_NONE,
+    WINDOW_OPEN,
+    WINDOW_PAGE,
+    WINDOW_SRAM,
+    MapperId,
+)
+from msx.clock import CoreClock
 from msx.dac import EventDac
 from msx.snapshot_schema import (
     check_bool,
@@ -100,41 +114,41 @@ class MapperKind(str, Enum):
     RAM_MAPPER = "ram_mapper"
 
 
-# Debugger-facing display name per kind (msx/memory.py's debug_slot_content
-# "Cartridge <name>" line) -- an explicit table instead of deriving the name
-# from type(mapper).__name__ at display time, so the debugger doesn't depend
-# on Python class-name reflection. Values match each concrete class's prior
-# `type(mapper).__name__.replace("Mapper", "")` output exactly (unchanged
-# debugger output); update this table, not the class names, if it needs to
-# diverge in the future.
-_KIND_DISPLAY_NAME: dict[MapperKind, str] = {
-    MapperKind.FLAT: "Flat",
-    MapperKind.FIXED_PAGE: "FixedPage",
-    MapperKind.ASCII8: "Ascii8",
-    MapperKind.ASCII16: "Ascii16",
-    MapperKind.ASCII8_SRAM2: "Ascii8Sram2",
-    MapperKind.ASCII8_SRAM8: "Ascii8Sram8",
-    MapperKind.KOEI_SRAM32: "KoeiSRAM32",
-    MapperKind.GAME_MASTER2: "GameMaster2",
-    MapperKind.ASCII16_SRAM2: "Ascii16Sram2",
-    MapperKind.ASCII16_SRAM8: "Ascii16Sram8",
-    MapperKind.R_TYPE: "RType",
-    MapperKind.KONAMI: "Konami",
-    MapperKind.MAJUTSUSHI: "Majutsushi",
-    MapperKind.KONAMI_SCC: "KonamiSCC",
-    MapperKind.SCC_I_CART: "SCCICart",
-    MapperKind.HALNOTE: "Halnote",
-    MapperKind.FMPAC: "FmPac",
-    MapperKind.RAM_MAPPER: "RamMapper",
+# The core API's integer for each kind (msx/boundary.py MapperId, the
+# slot description's `mapper`): an explicit table, so the id does not come
+# from a name lookup. The host keeps the display names (host/debugger/slots.py).
+_KIND_ID: dict[MapperKind, MapperId] = {
+    MapperKind.FLAT: MapperId.FLAT,
+    MapperKind.FIXED_PAGE: MapperId.FIXED_PAGE,
+    MapperKind.ASCII8: MapperId.ASCII8,
+    MapperKind.ASCII16: MapperId.ASCII16,
+    MapperKind.ASCII8_SRAM2: MapperId.ASCII8_SRAM2,
+    MapperKind.ASCII8_SRAM8: MapperId.ASCII8_SRAM8,
+    MapperKind.KOEI_SRAM32: MapperId.KOEI_SRAM32,
+    MapperKind.GAME_MASTER2: MapperId.GAME_MASTER2,
+    MapperKind.ASCII16_SRAM2: MapperId.ASCII16_SRAM2,
+    MapperKind.ASCII16_SRAM8: MapperId.ASCII16_SRAM8,
+    MapperKind.R_TYPE: MapperId.R_TYPE,
+    MapperKind.KONAMI: MapperId.KONAMI,
+    MapperKind.MAJUTSUSHI: MapperId.MAJUTSUSHI,
+    MapperKind.KONAMI_SCC: MapperId.KONAMI_SCC,
+    MapperKind.SCC_I_CART: MapperId.SCC_I_CART,
+    MapperKind.HALNOTE: MapperId.HALNOTE,
+    MapperKind.FMPAC: MapperId.FMPAC,
+    MapperKind.RAM_MAPPER: MapperId.RAM_MAPPER,
 }
 
 
-def mapper_kind_display_name(kind: MapperKind) -> str:
-    """Human-readable name for a MapperKind, for debugger display strings."""
-    return _KIND_DISPLAY_NAME[kind]
+def mapper_id(kind: MapperKind) -> MapperId:
+    """The core API's MapperId of a MapperKind."""
+    return _KIND_ID[kind]
 
 
 class Mapper(Protocol):
+    # PORT-NOTE: one class per MapperKind (18) implements this Protocol,
+    #   and the loader picks one per slot at build time. A port uses one
+    #   tagged union keyed by MapperKind (Rust `enum Mapper`, Zig
+    #   `union(enum)`) and a switch in read/write, not a vtable.
     kind: ClassVar[MapperKind]
     def read(self, addr: int) -> int: ...
     def write(self, addr: int, value: int) -> None: ...
@@ -158,7 +172,7 @@ class Mapper(Protocol):
     def parse_state(self, obj: object, label: str) -> Mapping[str, object]: ...
     def apply_state(self, state: Mapping[str, object]) -> None: ...
     def restore(self, state: dict[str, object]) -> None: ...
-    def debug_bank_info(self, page: int) -> str | None: ...
+    def debug_bank(self, page: int) -> BankView: ...
     def reset(self) -> None: ...
     # The battery-backed SRAM the host persists, or None for a mapper without
     # one -- declared on the Protocol so a generic caller (e.g. the media
@@ -166,61 +180,63 @@ class Mapper(Protocol):
     def sram_medium(self) -> SramImage | None: ...
 
 
-def _rom_window(page: int, page_size: int, rom: bytes) -> int | str:
-    """A window's entry for _format_bank_info: the ROM page it maps, or
-    "open" when the page lies past the end of the ROM (it reads 0xFF)."""
+# One window of a page: a WINDOW_* kind and its value (a page index or an
+# SRAM offset).
+Window = tuple[int, int]
+
+
+@dataclass(frozen=True)
+class BankView:
+    """What a page's bank maps, as the slot description reports it: the
+    bank fields of msx/boundary.py SlotInfo, integers only (debug-monitor
+    "sl -- cartridge ROM mapper bank column")."""
+
+    bank: int = BANK_NONE
+    window_kinds: tuple[int, int] = (WINDOW_NONE, WINDOW_NONE)
+    window_values: tuple[int, int] = (0, 0)
+    sub_bank_count: int = 0
+    sub_banks: tuple[int, int] = (0, 0)
+    sub_offsets: tuple[int, int] = (0, 0)
+
+
+# A page with no bank (flat ROM, no window over the page).
+NO_BANK = BankView()
+
+
+def _rom_window(page: int, page_size: int, rom: bytes) -> Window:
+    """A window that maps ROM page `page`, or open bus when the page lies
+    past the end of the ROM (it reads 0xFF)."""
     if page * page_size >= len(rom):
-        return "open"
-    return page
+        return (WINDOW_OPEN, 0)
+    return (WINDOW_PAGE, page)
 
 
-def _sram_label(offset: int) -> str:
-    """A window's entry for _format_bank_info when it maps SRAM: the
-    window's start offset in the SRAM."""
-    return f"SRAM@{offset:04X}"
+def _sram_window(offset: int) -> Window:
+    """A window that maps the SRAM from `offset`."""
+    return (WINDOW_SRAM, offset)
 
 
-def format_bank_16k(entry: int | str) -> str:
-    """The text of one 16 KB window: `bank N @XXXXX-YYYYY` for page N, or
-    `bank <entry>` for a non-ROM entry (SRAM, open)."""
-    if isinstance(entry, str):
-        return f"bank {entry}"
-    start = entry * 0x4000
-    return f"bank {entry} @{start:05X}-{start + 0x3FFF:05X}"
-
-
-def _format_bank_info(windows: list[int | str], page: int) -> str | None:
-    """Describe what the mapper windows covering a CPU page (1=0x4000,
-    2=0x8000) map (debug-monitor "sl -- cartridge ROM mapper bank column").
-
-    `windows` holds one entry per window, resolved as the mapper's reads
-    resolve it: an int is the ROM (or SCC-I RAM) page the window maps, a
-    str is printed in its place (_sram_label, "open"). Two entries are two
-    16 KB windows (page 1 -> window 0, page 2 -> window 1); four are 8 KB
-    windows (page 1 -> windows 0 and 1, page 2 -> windows 2 and 3). Returns
-    None for a page outside the windows.
-    """
+def _bank_view(windows: list[Window], page: int) -> BankView:
+    """The windows of the mapper that cover a CPU page (1=0x4000,
+    2=0x8000), resolved as the mapper's reads resolve them. Two entries
+    are two 16 KB windows (page 1 -> window 0, page 2 -> window 1); four
+    are 8 KB windows (page 1 -> windows 0 and 1, page 2 -> windows 2 and
+    3). NO_BANK for a page outside the windows."""
     if len(windows) == 2:
         win = page - 1
         if win not in (0, 1):
-            return None
-        return format_bank_16k(windows[win])
+            return NO_BANK
+        kind, value = windows[win]
+        return BankView(BANK_WINDOW_16K, (kind, WINDOW_NONE), (value, 0))
     if len(windows) == 4:
         if page == 1:
-            wins = (0, 1)
+            first, second = windows[0], windows[1]
         elif page == 2:
-            wins = (2, 3)
+            first, second = windows[2], windows[3]
         else:
-            return None
-        parts = []
-        for w in wins:
-            entry = windows[w]
-            if isinstance(entry, str):
-                parts.append(f"w{w}={entry}")
-            else:
-                parts.append(f"w{w}=b{entry}@{entry * 0x2000:05X}")
-        return "  ".join(parts)
-    return None
+            return NO_BANK
+        return BankView(BANK_WINDOWS_8K, (first[0], second[0]), (first[1], second[1]))
+    return NO_BANK
 
 
 @dataclass
@@ -238,10 +254,10 @@ class BankTracingMapper:
     # TRACE_MAPPER is on.
     _trace: "TraceLog | None" = field(default=None, init=False, repr=False)
 
-    def debug_bank_info(self, page: int) -> str | None:
+    def debug_bank(self, page: int) -> BankView:
         """Default for a BankTracingMapper subclass with no bank to report;
         every current subclass overrides it."""
-        return None
+        return NO_BANK
 
     def reset(self) -> None:
         """No-op fallback for a BankTracingMapper subclass with genuinely no
@@ -327,8 +343,8 @@ class _NoStateMapperMixin:
     def restore(self, state: dict[str, object]) -> None:
         self.apply_state(self.parse_state(state, "state"))
 
-    def debug_bank_info(self, page: int) -> str | None:
-        return None
+    def debug_bank(self, page: int) -> BankView:
+        return NO_BANK
 
     def reset(self) -> None:
         pass
@@ -382,7 +398,7 @@ class _WindowedRomMapperMixin:
     fixed-size windows and a raw `_banks: list[int]` register per window.
 
     Factors out what were previously separate, near-identical copies of
-    `_num_pages`/`_select_page`/`_sync_window`/`debug_bank_info` on
+    `_num_pages`/`_select_page`/`_sync_window`/`debug_bank` on
     Ascii8Mapper and Ascii16Mapper -- differing only by `_MAPPER_PAGE_SIZE`
     -- so the openMSX `RomBlocks::setRom` two-tier resolution rationale in
     `_select_page` (see its own comment) is stated once, not restated
@@ -467,13 +483,13 @@ class _WindowedRomMapperMixin:
             # Page runs past the end of a short/truncated ROM: open bus.
             self._flat[dst + len(src) : dst + page_size] = b"\xff" * (page_size - len(src))
 
-    def debug_bank_info(self, page: int) -> str | None:
-        return _format_bank_info(self._debug_windows(), page)
+    def debug_bank(self, page: int) -> BankView:
+        return _bank_view(self._debug_windows(), page)
 
-    def _debug_windows(self) -> list[int | str]:
-        """Each window's _format_bank_info entry: the page _sync_window maps.
+    def _debug_windows(self) -> list[Window]:
+        """Each window as _bank_view takes it: the page _sync_window maps.
         The SRAM variants override it for a window that maps SRAM."""
-        windows: list[int | str] = []
+        windows: list[Window] = []
         for bank in self._banks:
             windows.append(
                 _rom_window(self._select_page(bank), self._MAPPER_PAGE_SIZE, self.rom)
@@ -742,11 +758,11 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
         block = self._banks[window] & self._sram_block_mask()
         return (block * _PAGE_8K + (addr - base)) & self._SRAM_MASK
 
-    def _debug_windows(self) -> list[int | str]:
+    def _debug_windows(self) -> list[Window]:
         windows = super()._debug_windows()
         for window in range(4):
             if self._window_is_sram[window]:
-                windows[window] = _sram_label(self._sram_offset(window, 0, 0))
+                windows[window] = _sram_window(self._sram_offset(window, 0, 0))
         return windows
 
     def _sync_window(self, window: int) -> None:
@@ -1055,15 +1071,15 @@ class GameMaster2Mapper(BankTracingMapper):
         for window in range(4):
             self._sync_window(window)
 
-    def debug_bank_info(self, page: int) -> str | None:
-        windows: list[int | str] = []
+    def debug_bank(self, page: int) -> BankView:
+        windows: list[Window] = []
         for window in range(4):
             if self._window_is_sram[window]:
-                windows.append(_sram_label(self._window_sram_half[window]))
+                windows.append(_sram_window(self._window_sram_half[window]))
             else:
                 page_no = (self._banks[window] & self._ROM_PAGE_MASK) % self._num_pages
                 windows.append(_rom_window(page_no, _PAGE_8K, self.rom))
-        return _format_bank_info(windows, page)
+        return _bank_view(windows, page)
 
     def reset(self) -> None:
         """Restore all four bank registers to their power-on pages
@@ -1142,11 +1158,11 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
         # selection read-only in practice, not a restriction here.
         return self._banks[window] == self._SRAM_SELECT
 
-    def _debug_windows(self) -> list[int | str]:
+    def _debug_windows(self) -> list[Window]:
         windows = super()._debug_windows()
         for window in range(2):
             if self._window_is_sram[window]:
-                windows[window] = _sram_label(0)
+                windows[window] = _sram_window(0)
         return windows
 
     def _sync_window(self, window: int) -> None:
@@ -1331,12 +1347,12 @@ class RTypeMapper(BankTracingMapper):
         self._bank = st["bank"]
         self._sync_window(1)
 
-    def debug_bank_info(self, page: int) -> str | None:
-        windows: list[int | str] = [
+    def debug_bank(self, page: int) -> BankView:
+        windows: list[Window] = [
             _rom_window(self._fixed_block, _PAGE_16K, self.rom),
             _rom_window(self._bank, _PAGE_16K, self.rom),
         ]
-        return _format_bank_info(windows, page)
+        return _bank_view(windows, page)
 
     def reset(self) -> None:
         """Restore the switchable window's bank register to its power-on
@@ -1460,11 +1476,11 @@ class KonamiMapper(BankTracingMapper):
         for window in range(4):
             self._sync_window(window)
 
-    def debug_bank_info(self, page: int) -> str | None:
-        windows: list[int | str] = []
+    def debug_bank(self, page: int) -> BankView:
+        windows: list[Window] = []
         for bank in self._banks:
             windows.append(_rom_window(bank, _PAGE_8K, self.rom))
-        return _format_bank_info(windows, page)
+        return _bank_view(windows, page)
 
     def reset(self) -> None:
         """Restore all four bank registers to their power-on pages
@@ -1503,9 +1519,9 @@ class MajutsushiMapper(KonamiMapper):
     the read-side mirror can differ between the two classes on real
     hardware either.
 
-    DAC writes are timestamped via _get_cycle callback and fed to an EventDac
-    (msx/dac.py), which places them at their sub-frame sample positions (same
-    role as openMSX's BlipBuffer delta).
+    DAC writes are timestamped with the clock record's cycle count and fed
+    to an EventDac (msx/dac.py), which places them at their sub-frame
+    sample positions (same role as openMSX's BlipBuffer delta).
     """
 
     kind: ClassVar[MapperKind] = MapperKind.MAJUTSUSHI
@@ -1513,9 +1529,9 @@ class MajutsushiMapper(KonamiMapper):
     # Last byte written to the DAC: the save-state value.
     _last_dac: int = field(default=_DAC_SILENCE, init=False, repr=False)
     pcm: EventDac = field(default_factory=EventDac, init=False, repr=False)
-    # The cycle count, wired by msx/machine_loader.py, that timestamps DAC
-    # writes.
-    _get_cycle: Callable[[], int] | None = field(default=None, init=False, repr=False)
+    # The emulated time (msx/clock.py) that timestamps DAC writes;
+    # msx/machine_loader.py gives the machine's record.
+    _clock: CoreClock = field(default_factory=CoreClock, init=False, repr=False)
 
     def reset(self) -> None:
         """super().reset() restores the bank registers (see
@@ -1528,10 +1544,9 @@ class MajutsushiMapper(KonamiMapper):
 
     def write(self, addr: int, value: int) -> None:
         if 0x5000 <= addr < 0x6000:
-            cycle = self._get_cycle() if self._get_cycle else 0
             value = value & 0xFF
             self._last_dac = value
-            self.pcm.write(cycle, _dac_level(value))
+            self.pcm.write(self._clock.cycle, _dac_level(value))
         else:
             super().write(addr, value)
 
@@ -1706,11 +1721,11 @@ class KonamiSCCMapper(BankTracingMapper):
         for window in range(4):
             self._sync_window(window)
 
-    def debug_bank_info(self, page: int) -> str | None:
-        windows: list[int | str] = []
+    def debug_bank(self, page: int) -> BankView:
+        windows: list[Window] = []
         for bank in self._banks:
             windows.append(_rom_window(bank, _PAGE_8K, self.rom))
-        return _format_bank_info(windows, page)
+        return _bank_view(windows, page)
 
     def reset(self) -> None:
         """Restore all four bank registers to their power-on pages
@@ -1910,20 +1925,16 @@ class SCCICart(BankTracingMapper):
             self._sync_window_base(window)
         self._set_mode_register(st["mode_register"])
 
-    def debug_bank_info(self, page: int) -> str | None:
+    def debug_bank(self, page: int) -> BankView:
         # RAM, not ROM: each window maps block `register & _SCCI_BANK_MASK`
-        # (_sync_window_base), so the offsets are RAM offsets.
-        windows: list[int | str] = []
+        # (_sync_window_base), so the page is a RAM block.
+        windows: list[Window] = []
         for bank in self._banks:
-            windows.append(bank & _SCCI_BANK_MASK)
-        return _format_bank_info(windows, page)
+            windows.append((WINDOW_PAGE, bank & _SCCI_BANK_MASK))
+        return _bank_view(windows, page)
 
 
 _HALNOTE_ROM_SIZE = 1048576   # 1 MB, 128 x 8 KB banks
-_HALNOTE_SRAM_SIZE = 16384    # 16 KB, two 8 KB windows at 0x0000-0x3FFF
-# Public alias for cross-module use (msx/machine_loader.py's HBI-J1 overlay
-# wiring), mirroring msx/fmpac.py's public SRAM_SIZE constant.
-HALNOTE_SRAM_SIZE = _HALNOTE_SRAM_SIZE
 _HALNOTE_SUBBANK_SIZE = 2048  # 2 KB JIS2 dictionary sub-mapper block
 _HALNOTE_SUBMAPPER_ROM_BASE = 524288  # 0x80000: upper half of the 1 MB ROM
 _HALNOTE_SRAM_ENABLE_BIT = 0x80    # bank-0 register bit 7
@@ -1984,7 +1995,7 @@ class HalnoteMapper(BankTracingMapper):
                 f"HalnoteMapper: expected a {_HALNOTE_ROM_SIZE}-byte ROM, "
                 f"got {len(self.rom)}"
             )
-        self.sram_image = SramImage.of(_HALNOTE_SRAM_SIZE, sram)
+        self.sram_image = SramImage.of(HALNOTE_SRAM_SIZE, sram)
         self._flat = bytearray(_WINDOW_BYTES)
         for window in range(4):
             self._sync_window(window)
@@ -2061,7 +2072,7 @@ class HalnoteMapper(BankTracingMapper):
         return {
             "banks": _parse_banks(state, label, 4),
             "subbanks": check_int_list(state["subbanks"], f"{label}.subbanks", 2, 0, 0xFF),
-            "sram": check_bytes(state["sram"], f"{label}.sram", _HALNOTE_SRAM_SIZE),
+            "sram": check_bytes(state["sram"], f"{label}.sram", HALNOTE_SRAM_SIZE),
         }
 
     def apply_state(self, state: Mapping[str, object]) -> None:
@@ -2078,17 +2089,19 @@ class HalnoteMapper(BankTracingMapper):
         for window in range(4):
             self._sync_window(window)
 
-    def debug_bank_info(self, page: int) -> str | None:
+    def debug_bank(self, page: int) -> BankView:
         if page == 0:
-            return "SRAM@0000-3FFF" if self._sram_enabled else None
-        windows: list[int | str] = []
+            # Page 0 is one 16 KB SRAM window.
+            return BankView(BANK_SRAM_PAGE) if self._sram_enabled else NO_BANK
+        windows: list[Window] = []
         for bank in self._banks:
             windows.append(_rom_window(bank & _HALNOTE_PAGE_MASK, _PAGE_8K, self.rom))
-        text = _format_bank_info(windows, page)
-        if page == 1 and self._submapper_enabled:
-            parts = []
-            for sub in self._subbanks:
-                offset = _HALNOTE_SUBMAPPER_ROM_BASE + sub * _HALNOTE_SUBBANK_SIZE
-                parts.append(f"b{sub}@{offset:05X}")
-            text = f"{text}  sub={','.join(parts)}"
-        return text
+        view = _bank_view(windows, page)
+        if page != 1 or not self._submapper_enabled:
+            return view
+        sub0, sub1 = self._subbanks
+        return BankView(
+            view.bank, view.window_kinds, view.window_values, 2, (sub0, sub1),
+            (_HALNOTE_SUBMAPPER_ROM_BASE + sub0 * _HALNOTE_SUBBANK_SIZE,
+             _HALNOTE_SUBMAPPER_ROM_BASE + sub1 * _HALNOTE_SUBBANK_SIZE),
+        )

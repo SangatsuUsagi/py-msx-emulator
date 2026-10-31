@@ -7,14 +7,14 @@ from msx.boundary import (
     TRACE_VDP,
     TraceEvent,
 )
+from msx.clock import CoreClock
 from msx.trace import TraceLog
 from msx.vdp.v9938 import V9938
 from msx.vdp.vdp import VDP
 
 
 def _trace(kinds: int = TRACE_VDP) -> TraceLog:
-    return TraceLog(kinds=kinds, _get_pc=lambda: 0x1234, _get_cycle=lambda: 9999,
-                    _get_frame=lambda: 3)
+    return TraceLog(kinds=kinds, _clock=CoreClock(cycle=9999, frame=3, instruction_pc=0x1234))
 
 
 def test_v9938_without_the_trace_operates_unchanged() -> None:
