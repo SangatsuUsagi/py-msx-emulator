@@ -332,9 +332,8 @@ def _rom(config: _ResolvedConfig, role: str) -> bytes:
 
 
 def _empty_subslots() -> list[Mapper | None]:
-    """A fresh (never shared) length-4 all-None sub-slot array -- the
-    default every build_machine()/_build_msx1()/_build_msx2() call site
-    falls back to when no expanded overlay is active on that slot."""
+    """A fresh (never shared) length-4 all-None sub-slot array: the value of a
+    slot with no expanded overlay."""
     return [None, None, None, None]
 
 
@@ -801,6 +800,8 @@ def _wire_post_construction_attrs(
         machine.ppi._clock = clock
     if dac is not None:
         dac._clock = clock
+    if machine.rtc is not None:
+        machine.rtc._clock = clock
     _wire_trace(machine)
     machine.fmpac = wiring.fmpac_device
     machine.kanji = wiring.kanji_device
@@ -885,13 +886,9 @@ def _build(machine_config: MachineConfig) -> "Machine":
             slots' extensions resolve to fmpac, or if both slots' expanded
             overlays declare a 'ram_mapper' or 'halnote' sub-slot.
     """
-    from msx.machine import Machine  # local import to avoid circular dependency
-
     config = _resolve(machine_config)
     spec = config.spec
     bios = _bios_roms(config)
-    main_bytes = bios.main_bytes
-    logo_bytes = bios.logo_bytes
 
     slot1 = _resolve_cartridge_slot(
         config.mapper1, config.cartridge1, config.media.get(slot_sram_id(1))
@@ -909,18 +906,11 @@ def _build(machine_config: MachineConfig) -> "Machine":
     # target slot, replacing whatever cartridge mapper was resolved above --
     # see _wire_extension_overlay.
     wiring = _wire_extension_overlay(config, mapper1_instance, mapper2_instance, scc)
-    mapper1_instance = wiring.mapper1_instance
-    mapper2_instance = wiring.mapper2_instance
-    scc = wiring.scc
-    slot1_sub_slot_enabled = wiring.slot1_sub_slot_enabled
-    mapper1_subslots = wiring.mapper1_subslots
-    slot2_sub_slot_enabled = wiring.slot2_sub_slot_enabled
-    mapper2_subslots = wiring.mapper2_subslots
     # Resolved after extension-overlay wiring (see _resolve_shared_dac):
     # an extension overlay replacing a slot's mapper (e.g. --extension1
     # fmpac over a Majutsushi cartridge) removes that slot's own DAC along
     # with it, and either slot's mapper can resolve to Majutsushi.
-    dac = _resolve_shared_dac(spec, mapper1_instance, mapper2_instance)
+    dac = _resolve_shared_dac(spec, wiring.mapper1_instance, wiring.mapper2_instance)
 
     input_state = InputLines()
     psg = PSG(_input=input_state)
@@ -936,7 +926,7 @@ def _build(machine_config: MachineConfig) -> "Machine":
     # slot 3's own RamMapper would use -- safe because _wire_extension_overlay
     # already rejected a RamMapper on both cartridge slots at once, and on a
     # slot alongside spec.has_ram_mapper being True.
-    for sub_mapper in (*mapper1_subslots, *mapper2_subslots):
+    for sub_mapper in (*wiring.mapper1_subslots, *wiring.mapper2_subslots):
         if _is_ram_mapper(sub_mapper):
             mm_s, mm_e = _io_range(spec, "memory_mapper_standard",
                                     _DEFAULT_IO_PORTS["memory_mapper_standard"])
@@ -944,41 +934,9 @@ def _build(machine_config: MachineConfig) -> "Machine":
             io.register_write(mm_s, mm_e, sub_mapper.write_port)
 
     if spec.generation == "msx2":
-        machine = _build_msx2(
-            config=config,
-            main_bytes=main_bytes,
-            logo_bytes=logo_bytes,
-            mapper1_instance=mapper1_instance,
-            mapper2_instance=mapper2_instance,
-            dac=dac,
-            scc=scc,
-            input_state=input_state,
-            psg=psg,
-            io=io,
-            machine_cls=Machine,
-            slot1_sub_slot_enabled=slot1_sub_slot_enabled,
-            mapper1_subslots=mapper1_subslots,
-            slot2_sub_slot_enabled=slot2_sub_slot_enabled,
-            mapper2_subslots=mapper2_subslots,
-        )
+        machine = _build_msx2(config, bios, wiring, dac, input_state, psg, io)
     else:
-        machine = _build_msx1(
-            spec=spec,
-            main_bytes=main_bytes,
-            logo_bytes=logo_bytes,
-            mapper1_instance=mapper1_instance,
-            mapper2_instance=mapper2_instance,
-            dac=dac,
-            scc=scc,
-            input_state=input_state,
-            psg=psg,
-            io=io,
-            machine_cls=Machine,
-            slot1_sub_slot_enabled=slot1_sub_slot_enabled,
-            mapper1_subslots=mapper1_subslots,
-            slot2_sub_slot_enabled=slot2_sub_slot_enabled,
-            mapper2_subslots=mapper2_subslots,
-        )
+        machine = _build_msx1(spec, bios, wiring, dac, input_state, psg, io)
 
     _wire_post_construction_attrs(machine, dac, wiring)
     machine._sram_table = _sram_table(machine)
@@ -1013,39 +971,30 @@ def _sram_table(machine: Machine) -> dict[MediaId, SramImage]:
 
 
 def _build_msx1(
-    *,
     spec: MachineSpec,
-    main_bytes: bytes,
-    logo_bytes: bytes | None,
-    mapper1_instance: Mapper,
-    mapper2_instance: Mapper,
+    bios: _BiosRoms,
+    wiring: _ExtensionWiring,
     dac: MajutsushiMapper | None,
-    scc: SCC | None,
     input_state: InputLines,
     psg: PSG,
     io: IOBus,
-    machine_cls: "type[Machine]",
-    slot1_sub_slot_enabled: bool = False,
-    mapper1_subslots: list[Mapper | None] | None = None,
-    slot2_sub_slot_enabled: bool = False,
-    mapper2_subslots: list[Mapper | None] | None = None,
 ) -> "Machine":
+    from msx.machine import Machine  # local import to avoid circular dependency
+
     slot0_ram, slot0_ram_page = _slot0_ram_buffer(spec)
     memory = Memory(
-        rom=main_bytes,
+        rom=bios.main_bytes,
         ram=bytearray(spec.ram_size_kb * 1024),
-        _mapper=mapper1_instance,
-        _mapper2=mapper2_instance,
+        _mapper=wiring.mapper1_instance,
+        _mapper2=wiring.mapper2_instance,
         slot_register=0x00,
-        extrom=logo_bytes,
+        extrom=bios.logo_bytes,
         slot0_ram=slot0_ram,
         slot0_ram_page=slot0_ram_page,
-        slot1_sub_slot_enabled=slot1_sub_slot_enabled,
-        _mapper1_subslots=mapper1_subslots if mapper1_subslots is not None
-        else _empty_subslots(),
-        slot2_sub_slot_enabled=slot2_sub_slot_enabled,
-        _mapper2_subslots=mapper2_subslots if mapper2_subslots is not None
-        else _empty_subslots(),
+        slot1_sub_slot_enabled=wiring.slot1_sub_slot_enabled,
+        _mapper1_subslots=wiring.mapper1_subslots,
+        slot2_sub_slot_enabled=wiring.slot2_sub_slot_enabled,
+        _mapper2_subslots=wiring.mapper2_subslots,
     )
     vdp = VDP()
     ppi = PPI(
@@ -1054,8 +1003,8 @@ def _build_msx1(
     _register_common_io(io, spec, vdp, psg, ppi, _DEFAULT_IO_PORTS["vdp_tms9918a"])
     cpu = Z80(read_byte=memory.read, write_byte=memory.write,
               m1_wait_states=spec.m1_wait_states)
-    return machine_cls(
-        cpu=cpu, vdp=vdp, memory=memory, io=io, psg=psg, scc=scc, dac=dac,
+    return Machine(
+        cpu=cpu, vdp=vdp, memory=memory, io=io, psg=psg, scc=wiring.scc, dac=dac,
         input=input_state,
         video_standard=spec.video_standard,
         keyboard_layout=spec.keyboard_type,
@@ -1093,23 +1042,16 @@ def _build_fdc(config: _ResolvedConfig) -> "FloppyDisk":
 
 
 def _build_msx2(
-    *,
     config: _ResolvedConfig,
-    main_bytes: bytes,
-    logo_bytes: bytes | None,
-    mapper1_instance: Mapper,
-    mapper2_instance: Mapper,
+    bios: _BiosRoms,
+    wiring: _ExtensionWiring,
     dac: MajutsushiMapper | None,
-    scc: SCC | None,
     input_state: InputLines,
     psg: PSG,
     io: IOBus,
-    machine_cls: "type[Machine]",
-    slot1_sub_slot_enabled: bool = False,
-    mapper1_subslots: list[Mapper | None] | None = None,
-    slot2_sub_slot_enabled: bool = False,
-    mapper2_subslots: list[Mapper | None] | None = None,
 ) -> "Machine":
+    from msx.machine import Machine  # local import to avoid circular dependency
+
     spec = config.spec
     sub_bytes = _rom(config, "sub") if spec.sub_rom_entry is not None else None
 
@@ -1128,12 +1070,12 @@ def _build_msx2(
     fdc_device = _build_fdc(config) if spec.fdc is not None else None
     slot0_ram, slot0_ram_page = _slot0_ram_buffer(spec)
     memory = Memory(
-        rom=main_bytes,
+        rom=bios.main_bytes,
         ram=ram_bytes,
-        _mapper=mapper1_instance,
-        _mapper2=mapper2_instance,
+        _mapper=wiring.mapper1_instance,
+        _mapper2=wiring.mapper2_instance,
         slot_register=0x00,
-        extrom=logo_bytes,
+        extrom=bios.logo_bytes,
         sub0_rom=sub_bytes,
         sub_slot_enabled=True,
         ram_mapper=ram_mapper,
@@ -1143,12 +1085,10 @@ def _build_msx2(
         fdc_subslot=spec.fdc_subslot,
         slot0_ram=slot0_ram,
         slot0_ram_page=slot0_ram_page,
-        slot1_sub_slot_enabled=slot1_sub_slot_enabled,
-        _mapper1_subslots=mapper1_subslots if mapper1_subslots is not None
-        else _empty_subslots(),
-        slot2_sub_slot_enabled=slot2_sub_slot_enabled,
-        _mapper2_subslots=mapper2_subslots if mapper2_subslots is not None
-        else _empty_subslots(),
+        slot1_sub_slot_enabled=wiring.slot1_sub_slot_enabled,
+        _mapper1_subslots=wiring.mapper1_subslots,
+        slot2_sub_slot_enabled=wiring.slot2_sub_slot_enabled,
+        _mapper2_subslots=wiring.mapper2_subslots,
     )
     vdp: V9938 | VDP = V9938() if spec.has_v9938 else VDP()
     rtc: RTC | None = None
@@ -1175,8 +1115,8 @@ def _build_msx2(
 
     cpu = Z80(read_byte=memory.read, write_byte=memory.write,
               m1_wait_states=spec.m1_wait_states)
-    machine = machine_cls(
-        cpu=cpu, vdp=vdp, memory=memory, io=io, psg=psg, scc=scc, dac=dac,
+    return Machine(
+        cpu=cpu, vdp=vdp, memory=memory, io=io, psg=psg, scc=wiring.scc, dac=dac,
         input=input_state,
         video_standard=spec.video_standard,
         keyboard_layout=spec.keyboard_type,
@@ -1184,7 +1124,3 @@ def _build_msx2(
         rtc=rtc,
         ppi=ppi,
     )
-    if rtc is not None:
-        rtc._clock = machine.clock
-        rtc._base_cycle = machine.clock.cycle
-    return machine

@@ -355,7 +355,7 @@ def _program_tone_noise_envelope(psg: PSG) -> None:
     psg.write_port(0xA1, 0x0E)  # envelope shape (continuing ramp)
 
 
-def test_snapshot_synth_and_restore_synth_round_trip() -> None:
+def test_snapshot_synth_and_apply_synth_state_round_trip() -> None:
     psg = PSG()
     _program_tone_noise_envelope(psg)
     psg.generate_samples(500)  # advance tone/noise/envelope counters
@@ -390,8 +390,8 @@ def test_a_state_load_discards_the_pending_events() -> None:
     assert psg.snapshot_synth() == reference.snapshot_synth()
 
 
-def test_restore_synth_with_missing_key_does_not_partially_mutate() -> None:
-    """restore_synth() parses the whole object before assigning any field,
+def test_a_synth_state_with_a_missing_key_does_not_partially_mutate() -> None:
+    """The state is parsed whole before any field is assigned,
     so a missing key fails before earlier fields are touched."""
     psg = PSG()
     _program_tone_noise_envelope(psg)
