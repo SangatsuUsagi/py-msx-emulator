@@ -773,18 +773,22 @@ def _upload_to_texture(
     # contiguous memmove is correct and fastest. Otherwise (driver row padding)
     # copy row-by-row: width*3 source bytes into each pitch-strided destination
     # row, so no source overrun and no padding is overwritten with pixel data.
+    #
+    # The frame goes through a ctypes array first: on PyPy, passing `bytes` to
+    # memmove costs about 2 ms per frame, against about 15 us for this copy.
     row_bytes = tex_w * 3
     dst_pitch = pitch.value
+    src = (ctypes.c_char * len(rgb_buf)).from_buffer_copy(rgb_buf)
     if dst_pitch == row_bytes:
-        ctypes.memmove(pixels_ptr, rgb_buf, len(rgb_buf))
+        ctypes.memmove(pixels_ptr, src, len(rgb_buf))
     else:
         dst_base = pixels_ptr.value
         assert dst_base is not None
+        src_base = ctypes.addressof(src)
         for row in range(tex_h):
-            src_off = row * row_bytes
             ctypes.memmove(
                 dst_base + row * dst_pitch,
-                rgb_buf[src_off:src_off + row_bytes],
+                src_base + row * row_bytes,
                 row_bytes,
             )
     sdl2.SDL_UnlockTexture(texture)
