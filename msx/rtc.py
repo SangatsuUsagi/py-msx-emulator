@@ -23,7 +23,13 @@ from typing import TypedDict
 
 from msx.boundary import RTC_CMOS_SIZE, RTC_DEFAULT_START, RtcTime
 from msx.clock import CPU_CLOCK_HZ, CoreClock
-from msx.snapshot_schema import SAFE_INT_MAX, check_int, check_int_list, check_object
+from msx.snapshot_schema import (
+    SAFE_INT_MAX,
+    SchemaError,
+    check_int,
+    check_int_list,
+    check_object,
+)
 from msx.sram import SramImage
 
 MODE_REG = 13
@@ -252,9 +258,9 @@ def check_start(start: list[int], label: str) -> None:
     year, month, day, hour, minute, second = start
     if not (0 <= year <= 9999 and 1 <= month <= 12 and 1 <= day <= 31
             and 0 <= hour <= 23 and 0 <= minute <= 59 and 0 <= second <= 59):
-        raise ValueError(f"{label}: invalid date/time {start}")
+        raise SchemaError(f"{label}: invalid date/time {start}")
     if _civil_from_days(_days_from_civil(year, month, day)) != (year, month, day):
-        raise ValueError(f"{label}: invalid date {year}-{month}-{day}")
+        raise SchemaError(f"{label}: invalid date {year}-{month}-{day}")
 
 
 def _days_from_civil(year: int, month: int, day: int) -> int:
