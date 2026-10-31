@@ -88,6 +88,10 @@ def _require_scc(scc: SCC | None) -> SCC:
     return scc
 
 
+# PORT-NOTE: the build dispatches on strings from the parsed document
+#   (mapper type here, `generation` and the FDC `controller` below). It
+#   runs once per build, not per instruction. A native core maps each
+#   string to an enum once, when it parses the document.
 # mapper_type -> builder. Each builder receives (cartridge, rom_bytes, sram,
 # scc): `cartridge` is the raw ROM (None when absent), `rom_bytes` the same
 # with None normalised to b"". FlatMapper keeps the None-able cartridge (it

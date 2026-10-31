@@ -27,6 +27,11 @@ class TraceLog:
     at build time. While
     TRACE_DEBUG is on, the CPU also fills the instruction history: the
     last TRACE_HISTORY_SIZE (pc, opcode) pairs, a ring of fixed lists.
+
+    PORT-NOTE: `events` grows to TRACE_CAPACITY, then `record` counts the
+    rest as lost. A native core keeps a fixed array of TRACE_CAPACITY + 1
+    records (the extra one for the TRACE_EVENT_LOST record of `drain`) and
+    a count. `record`'s default arguments become four explicit arguments.
     """
 
     kinds: int = 0
