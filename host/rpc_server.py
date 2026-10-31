@@ -203,8 +203,9 @@ class DebugServer:
         # emulator thread before _pause_event is set, read on the socket
         # thread after the wait, so the socket thread never calls the core.
         self._last_pause: dict[str, Any] = {}
-        # Breakpoint / watchpoint registries (id -> spec), owned here so the RPC
-        # surface is decoupled from the interactive debugger's REPL state.
+        # The RPC breakpoint / watchpoint ids (id -> spec). The core's set,
+        # shared with the command line and the REPL, is the source of truth:
+        # the methods add or remove only their own entry there.
         self._breakpoints: dict[int, int] = {}
         self._watchpoints: dict[int, tuple[int, int]] = {}
         self._next_bp_id = 0
@@ -494,41 +495,71 @@ class DebugServer:
         self._key_releases.append((time.monotonic() + duration_ms / 1000.0, row, bit))
 
     def alloc_breakpoint(self, address: int) -> int:
-        """Add a breakpoint and return its id. Raises an invalid-params
-        RpcError, keeping the others, when the core rejects it (a fifth
-        one)."""
+        """Add a breakpoint to the core's set and return its id. The core's
+        set is shared with the command line and the REPL, so only this
+        address is added. Raises an invalid-params RpcError, keeping the
+        set, when the core rejects it (a fifth one)."""
+        addrs = list(self._machine.breakpoints())
+        if address not in addrs:
+            addrs.append(address)
+        if self._machine.set_breakpoints(addrs) != STATUS_OK:
+            raise RpcError(ERR_INVALID_PARAMS, self._machine.last_error_text().decode("utf-8"))
         bp_id = self._next_bp_id
         self._next_bp_id += 1
         self._breakpoints[bp_id] = address
-        if self._machine.set_breakpoints(list(self._breakpoints.values())) != STATUS_OK:
-            del self._breakpoints[bp_id]
-            raise RpcError(ERR_INVALID_PARAMS, self._machine.last_error_text().decode("utf-8"))
         return bp_id
 
     def remove_breakpoint(self, bp_id: int) -> bool:
+        """Drop the id. Its address leaves the core's set unless another id
+        holds it."""
         if bp_id not in self._breakpoints:
             return False
-        del self._breakpoints[bp_id]
-        self._machine.set_breakpoints(list(self._breakpoints.values()))
+        address = self._breakpoints.pop(bp_id)
+        if address not in self._breakpoints.values():
+            addrs = [a for a in self._machine.breakpoints() if a != address]
+            self._machine.set_breakpoints(addrs)
         return True
 
     def alloc_watchpoint(self, address: int, kind: int) -> int:
-        """Add a watchpoint and return its id. Raises an invalid-params
-        RpcError, keeping the others, when the core rejects it (a fifth
-        one)."""
+        """Add a watchpoint to the core's set and return its id. The core
+        keeps one kind per address, so a set at a watched address ORs `kind`
+        into it. Raises an invalid-params RpcError, keeping the set, when
+        the core rejects it (a fifth one)."""
+        entries: list[tuple[int, int]] = []
+        found = False
+        for addr, old_kind in self._machine.watchpoints():
+            if addr == address:
+                entries.append((addr, old_kind | kind))
+                found = True
+            else:
+                entries.append((addr, old_kind))
+        if not found:
+            entries.append((address, kind))
+        if self._machine.set_watchpoints(entries) != STATUS_OK:
+            raise RpcError(ERR_INVALID_PARAMS, self._machine.last_error_text().decode("utf-8"))
         wp_id = self._next_wp_id
         self._next_wp_id += 1
         self._watchpoints[wp_id] = (address, kind)
-        if self._machine.set_watchpoints(list(self._watchpoints.values())) != STATUS_OK:
-            del self._watchpoints[wp_id]
-            raise RpcError(ERR_INVALID_PARAMS, self._machine.last_error_text().decode("utf-8"))
         return wp_id
 
     def remove_watchpoint(self, wp_id: int) -> bool:
+        """Drop the id. The core's kind at its address loses the bits no
+        other id at that address holds; an address with no bit left goes."""
         if wp_id not in self._watchpoints:
             return False
-        del self._watchpoints[wp_id]
-        self._machine.set_watchpoints(list(self._watchpoints.values()))
+        address, kind = self._watchpoints.pop(wp_id)
+        keep = 0
+        for addr, other_kind in self._watchpoints.values():
+            if addr == address:
+                keep |= other_kind
+        drop = kind & ~keep
+        entries: list[tuple[int, int]] = []
+        for addr, old_kind in self._machine.watchpoints():
+            if addr == address:
+                old_kind &= ~drop
+            if old_kind != 0:
+                entries.append((addr, old_kind))
+        self._machine.set_watchpoints(entries)
         return True
 
     @property
@@ -633,9 +664,11 @@ def _h_remove_breakpoint(server: DebugServer, params: dict[str, Any]) -> dict[st
 
 
 def _h_list_breakpoints(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
+    # active: the core still holds the address (the REPL may have removed it).
+    in_core = server.machine.breakpoints()
     return {
         "breakpoints": [
-            {"id": i, "address": hex16(a), "active": True}
+            {"id": i, "address": hex16(a), "active": a in in_core}
             for i, a in sorted(server.breakpoints.items())
         ]
     }
