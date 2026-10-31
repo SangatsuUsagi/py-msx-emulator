@@ -3,6 +3,7 @@ import pytest
 
 from msx.mapper import SCCICart
 from msx.scc import SCC
+from tests.factories import restore_state
 
 
 def _cart() -> SCCICart:
@@ -283,7 +284,7 @@ def test_snapshot_restore_round_trip() -> None:
     snap = cart.snapshot()
 
     fresh = SCCICart(scc=SCC(is_052539=True))
-    fresh.restore(snap)
+    restore_state(fresh, snap)
 
     assert bytes(fresh.ram) == bytes(cart.ram)
     assert fresh._banks == cart._banks
@@ -304,7 +305,7 @@ def test_restore_with_missing_mode_register_does_not_partially_mutate() -> None:
 
     del snap["mode_register"]
     with pytest.raises(ValueError):
-        cart.restore(snap)
+        restore_state(cart, snap)
 
     assert bytes(cart.ram) == pre_ram
     assert list(cart._banks) == pre_banks
@@ -314,7 +315,7 @@ def test_snapshot_on_blank_cart_round_trips() -> None:
     cart = _cart()
     snap = cart.snapshot()
     fresh = SCCICart(scc=SCC(is_052539=True))
-    fresh.restore(snap)
+    restore_state(fresh, snap)
     assert bytes(fresh.ram) == bytes(cart.ram)
     assert fresh._banks == cart._banks
     assert fresh._scc_window_base == 0x10000

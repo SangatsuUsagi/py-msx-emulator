@@ -29,7 +29,7 @@ __all__ = ["SCC", "SccState"]
 
 
 class SccState(TypedDict):
-    """Save-state schema for SCC.snapshot()/SCC.restore().
+    """Save-state schema for SCC.snapshot()/SCC.apply_state().
 
     Covers all of SCC's persistent state (waveform banks, frequency/volume/
     enable registers, and synthesis phase state) -- unlike PSG, SCC has no
@@ -222,12 +222,6 @@ class SCC:
                 state["clk_frac"], f"{label}.clk_frac", 0, AUDIO_SAMPLE_RATE - 1
             ),
         }
-
-    def restore(self, state: dict[str, object]) -> None:
-        """Restore chip state produced by snapshot(). Parses the whole
-        object first, so a rejected state leaves the chip unchanged.
-        """
-        self.apply_state(self.parse_state(state, "scc"))
 
     def apply_state(self, state: SccState) -> None:
         """Assign an already-parsed SccState (see parse_state)."""

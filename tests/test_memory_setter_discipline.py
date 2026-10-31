@@ -5,9 +5,10 @@ OpenSpec change): writing directly to one of its 8 page-routing-affecting
 fields (slot_register, sub_slot_reg, ram_mapper, sub0_rom, fdc,
 flat_ram_subslot, _mapper, _mapper2) from outside Memory's own class body
 no longer raises or invalidates anything -- it just silently leaves the
-page-routing cache stale. 5 of the 8 have a matching set_*() method
-(set_slot_register, set_ram_mapper, ...) callers must use instead; the
-remaining 3 (flat_ram_subslot, _mapper, _mapper2) have no setter at all --
+page-routing cache stale. 2 of the 8 have a matching set_*() method
+(set_slot_register, set_sub_slot_reg) callers must use instead; the
+remaining 6 (ram_mapper, sub0_rom, fdc, flat_ram_subslot, _mapper, _mapper2)
+have no setter at all --
 they're only ever set once, as Memory(...) constructor kwargs, so any
 assignment to them outside __init__ is itself the bug, not just a missed
 setter call.
@@ -81,8 +82,7 @@ def test_no_direct_assignment_to_memory_cache_invalidating_fields() -> None:
         "Direct assignment to a Memory page-routing field bypasses cache "
         "invalidation (Memory has no __setattr__ hook to catch this "
         "anymore) -- use the matching set_*() method instead (slot_register, "
-        "sub_slot_reg, ram_mapper, sub0_rom, fdc), or, for flat_ram_subslot/"
-        "_mapper/_mapper2 (no setter exists), pass it as a Memory(...) "
+        "sub_slot_reg), or, for the others (no setter exists), pass it as a Memory(...) "
         "constructor kwarg instead of reassigning post-construction:\n"
         + "\n".join(offenses)
     )

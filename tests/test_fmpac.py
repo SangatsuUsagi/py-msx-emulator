@@ -20,6 +20,7 @@ from msx.machine_loader import build_machine
 from msx.machine_spec import ExtensionOverlay, MachineLoadError, MachineSpec, RomEntry
 from msx.opll import Opll
 from msx.snapshot_schema import SchemaError
+from tests.factories import restore_state
 
 _ROOT = Path(__file__).resolve().parent.parent
 _CONFIG = _ROOT / "config"
@@ -304,7 +305,7 @@ def test_restore_with_missing_key_does_not_partially_mutate() -> None:
 
     del snap["r1fff"]
     with pytest.raises(SchemaError, match="r1fff"):
-        fmpac.restore(snap)
+        restore_state(fmpac, snap)
 
     assert fmpac.sram_image.data() == pre_sram
     assert fmpac._bank == pre_bank

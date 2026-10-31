@@ -139,9 +139,6 @@ class RamMapper:
         self.banks[:] = st["banks"]
         self.ram[:] = st["ram"]
 
-    def restore(self, state: dict[str, object]) -> None:
-        self.apply_state(self.parse_state(state, "state"))
-
     def debug_bank(self, page: int) -> BankView:
         """The bank visible at CPU page (0-3, i.e. addr >> 14), as one
         16 KB window.

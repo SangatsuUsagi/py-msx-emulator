@@ -12,6 +12,7 @@ Layout (per openMSX RomRType.cc):
 from __future__ import annotations
 
 from msx.mapper import RTypeMapper
+from tests.factories import restore_state
 
 # 4 pages of 16 KB. Pages have distinct fill bytes.
 _PAGE0 = bytes([0xAA] * 16384)
@@ -162,7 +163,7 @@ class TestRTypeSnapshotRestore:
         snap = m.snapshot()
 
         m2 = RTypeMapper(rom=_ROM_4P)
-        m2.restore(snap)
+        restore_state(m2, snap)
         assert m2._bank == 2
         assert m2.read(0x8000) == 0xCC
 

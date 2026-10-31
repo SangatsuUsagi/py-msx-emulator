@@ -16,7 +16,7 @@ from msx.mapper import (
     Ascii16Sram8Mapper,
     KoeiSRAM32Mapper,
 )
-from tests.factories import make_loaded_config
+from tests.factories import make_loaded_config, restore_state
 
 # 16 KB = 2 pages of 8 KB. ASCII8 SRAM enable bit = num_pages = 2.
 _ROM_16K = bytes(range(256)) * 64
@@ -264,11 +264,11 @@ class TestAscii8Sram8:
         m = Ascii8Sram8Mapper(rom=_ROM_16K)
         state = m.snapshot()
         state["sram"] = bytearray(b"\x5A" * 8192)
-        m.restore(dict(state))
+        restore_state(m, dict(state))
         assert m.sram_image.dirty is True
         assert m.sram_image.read(0) == 0x5A
         clean = Ascii8Sram8Mapper(rom=_ROM_16K)
-        clean.restore(dict(clean.snapshot()))  # same image: stays clean
+        restore_state(clean, dict(clean.snapshot()))  # same image: stays clean
         assert clean.sram_image.dirty is False
 
     def test_sram_shared_across_windows(self):
@@ -332,7 +332,7 @@ class TestKoeiSRAM32:
         snap = m.snapshot()
 
         m2 = KoeiSRAM32Mapper(rom=_ROM_16K)
-        m2.restore(snap)
+        restore_state(m2, snap)
         assert m2._banks == m._banks
         assert m2.read(0x4100) == 0x5A
 
@@ -708,7 +708,7 @@ class TestSnapshotRestore:
         snap = m.snapshot()
 
         m2 = Ascii8Sram2Mapper(rom=_ROM_16K)
-        m2.restore(snap)
+        restore_state(m2, snap)
         assert m2._banks == m._banks
         assert m2.read(0x8100) == 0x5A
 
@@ -719,7 +719,7 @@ class TestSnapshotRestore:
         snap = m.snapshot()
 
         m2 = Ascii16Sram2Mapper(rom=_ROM_32K)
-        m2.restore(snap)
+        restore_state(m2, snap)
         assert m2._banks == m._banks
         assert m2.read(0x8200) == 0x3C
 
@@ -729,7 +729,7 @@ class TestSnapshotRestore:
         m.write(0x8000, 0x11)
         snap = m.snapshot()
         m.write(0x8000, 0x22)         # mutate after snapshot
-        m.restore(snap)
+        restore_state(m, snap)
         assert m.read(0x8000) == 0x11
 
 

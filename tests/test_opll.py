@@ -30,6 +30,7 @@ from msx.opll import (
     Opll,
 )
 from msx.snapshot_schema import SchemaError
+from tests.factories import restore_state
 
 _LOUD_INSTRUMENT_VOL = 0x10  # instrument=1 (violin), vol=0 (loudest)
 
@@ -560,7 +561,7 @@ def test_restore_with_missing_key_does_not_partially_mutate() -> None:
     snap = dict(pre)
     del snap["resample_phase"]
     with pytest.raises(SchemaError, match="resample_phase"):
-        o.restore(snap)
+        restore_state(o, snap)
 
     assert o.snapshot() == pre
 

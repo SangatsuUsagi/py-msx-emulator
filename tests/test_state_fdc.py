@@ -16,7 +16,7 @@ from msx.fdc.tc8566af import TC8566AF
 from msx.fdc.wd2793 import WD2793
 from msx.machine_spec import FdcDef, MachineSpec, RomEntry
 from tests.disk_factories import dsk_image
-from tests.factories import load_state_file
+from tests.factories import load_state_file, restore_state
 
 _2DD = 737280
 _RGB_MSX2 = RgbFrame(256, 192, bytes(256 * 192 * 3))
@@ -260,7 +260,7 @@ def test_fdc_unwired_machine_rejects_fdc_state(tmp_path: Path, saves_dir: Path) 
 # ---------------------------------------------------------------------------
 
 def test_floppy_disk_state_drive_count_mismatch_rejected_before_restore() -> None:
-    """FloppyDiskState.restore() must reject a drive-count mismatch before
+    """restore_state(FloppyDiskState, ) must reject a drive-count mismatch before
     restoring the controller or any drive, not partway through the
     drive-restore loop."""
     drive = DiskDrive()
@@ -273,7 +273,7 @@ def test_floppy_disk_state_drive_count_mismatch_rejected_before_restore() -> Non
     snap["drives"] = list(snap["drives"]) + [dict(snap["drives"][0])]  # type: ignore[list-item]
 
     with pytest.raises(ValueError, match="(?i)drive count"):
-        state.restore(snap)
+        restore_state(state, snap)
 
     assert drive.track == 5
     assert controller.track_reg == 9

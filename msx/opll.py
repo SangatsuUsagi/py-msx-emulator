@@ -482,7 +482,7 @@ class _SlotState(TypedDict):
 
 
 class OpllState(TypedDict):
-    """Save-state schema for Opll.snapshot()/Opll.restore()."""
+    """Save-state schema for Opll.snapshot()/Opll.apply_state()."""
 
     reg: bytes
     patch_number: list[int]
@@ -1311,12 +1311,6 @@ class Opll:
                 d["resample_phase"], f"{label}.resample_phase", 0, _PHASE_PER_TICK - 1
             ),
         }
-
-    def restore(self, state: dict[str, object]) -> None:
-        """Restore chip state produced by snapshot(). Parses the whole
-        object first, so a rejected state leaves the chip unchanged.
-        """
-        self.apply_state(self.parse_state(state, "opll"))
 
     def apply_state(self, state: OpllState) -> None:
         """Assign an already-parsed OpllState (see parse_state)."""

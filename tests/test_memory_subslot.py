@@ -6,13 +6,16 @@ from msx.memory import Memory
 from msx.ram_mapper import RamMapper
 
 
-def _make_memory(slot_register: int = 0xD4, sub_slot_reg: int = 0x00) -> Memory:
+def _make_memory(
+    slot_register: int = 0xD4, sub_slot_reg: int = 0x00, sub0_rom: bytes | None = None
+) -> Memory:
     """Create a Memory with slot3/page3, sub_slot_enabled=True, and RamMapper."""
     rom = bytes(0x8000)  # 32 KB BIOS ROM (0x0000-0x7FFF)
     mem = Memory(
         rom=rom,
         ram=bytearray(32768),
         _mapper=FlatMapper(None),
+        sub0_rom=sub0_rom,
         slot_register=slot_register,
         ram_mapper=RamMapper(),
         sub_slot_reg=sub_slot_reg,
@@ -104,10 +107,8 @@ def test_subslot_read_ffff_no_intercept_when_disabled() -> None:
 
 def test_subslot0_read_from_sub0_rom() -> None:
     sub_rom = bytes([0x41, 0x42, 0x43] + [0xFF] * (0x4000 - 3))  # 16 KB
-    mem = _make_memory(slot_register=0xC0)  # page3=slot3; but we need page0=slot3
-    # Set page0=slot3: slot_register bits 1:0 = 11
-    mem.set_slot_register(0xC3)  # page3=slot3, page0=slot3
-    mem.set_sub0_rom(sub_rom)
+    # page3=slot3, page0=slot3 (slot_register bits 1:0 = 11)
+    mem = _make_memory(slot_register=0xC3, sub0_rom=sub_rom)
     mem.set_sub_slot_reg(0x00)  # page0 → sub-slot 0
 
     assert mem.read(0x0000) == 0x41
@@ -117,8 +118,7 @@ def test_subslot0_read_from_sub0_rom() -> None:
 
 def test_subslot0_write_ignored() -> None:
     sub_rom = bytearray([0x00] * 0x4000)
-    mem = _make_memory(slot_register=0xC3)
-    mem.set_sub0_rom(bytes(sub_rom))
+    mem = _make_memory(slot_register=0xC3, sub0_rom=bytes(sub_rom))
     mem.set_sub_slot_reg(0x00)
     mem.write(0x0000, 0xFF)
     assert mem.read(0x0000) == 0x00  # unchanged
@@ -127,8 +127,8 @@ def test_subslot0_write_ignored() -> None:
 def test_subslot0_address_out_of_range_returns_ff() -> None:
     sub_rom = bytes([0xAA] * 0x4000)
     # page1 = slot3, sub-slot 0 → but sub0_rom only covers 0x0000-0x3FFF
-    mem = _make_memory(slot_register=0xCC)  # page3=slot3, page2=slot3, page1=slot3, page0=slot0
-    mem.set_sub0_rom(sub_rom)
+    # page3=slot3, page2=slot3, page1=slot3, page0=slot0
+    mem = _make_memory(slot_register=0xCC, sub0_rom=sub_rom)
     mem.set_sub_slot_reg(0x00)  # all pages → sub-slot 0
     # Read at 0x4000 (page1) → sub-slot 0 but addr > 0x3FFF → 0xFF
     assert mem.read(0x4000) == 0xFF

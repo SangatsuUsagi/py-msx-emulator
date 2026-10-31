@@ -6,6 +6,7 @@ from __future__ import annotations
 import pytest
 
 from msx.mapper import HalnoteMapper
+from tests.factories import restore_state
 
 
 def _make_rom(page_marker: bool = True) -> bytearray:
@@ -198,7 +199,7 @@ def test_state_round_trips_through_snapshot_restore() -> None:
     state = cart.snapshot()
 
     fresh = _cart(rom)
-    fresh.restore(dict(state))
+    restore_state(fresh, dict(state))
 
     assert fresh.read(0x4000) == 5
     assert fresh.read(0x6000) == 10

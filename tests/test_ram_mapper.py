@@ -4,6 +4,7 @@ import pytest
 from msx.boundary import BANK_WINDOW_16K, WINDOW_NONE, WINDOW_PAGE
 from msx.mapper import NO_BANK, BankView
 from msx.ram_mapper import RamMapper
+from tests.factories import restore_state
 
 # ---------------------------------------------------------------------------
 # Buffer size and initial state
@@ -235,7 +236,7 @@ def test_snapshot_restore_round_trip() -> None:
     state = rm.snapshot()
 
     fresh = RamMapper(size_kb=256)
-    fresh.restore(state)
+    restore_state(fresh, state)
     assert fresh.banks == [1, 2, 3, 4]
     assert fresh.ram == rm.ram
 
@@ -243,13 +244,13 @@ def test_snapshot_restore_round_trip() -> None:
 def test_restore_rejects_wrong_bank_count() -> None:
     rm = RamMapper()
     with pytest.raises(ValueError):
-        rm.restore({"banks": [0, 0, 0], "ram": bytes(len(rm.ram))})
+        restore_state(rm, {"banks": [0, 0, 0], "ram": bytes(len(rm.ram))})
 
 
 def test_restore_rejects_wrong_ram_length() -> None:
     rm = RamMapper(size_kb=256)
     with pytest.raises(ValueError):
-        rm.restore({"banks": [0, 0, 0, 0], "ram": bytes(16384)})
+        restore_state(rm, {"banks": [0, 0, 0, 0], "ram": bytes(16384)})
 
 
 def test_debug_bank_describes_page_bank() -> None:
