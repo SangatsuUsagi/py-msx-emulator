@@ -294,7 +294,7 @@ _HOST_IMPORTS: dict[str, frozenset[str] | None] = {
     "msx.boundary": None,
     "msx.core_api": None,
     "msx.input": frozenset({"InputFrame"}),
-    "msx.machine_loader": frozenset({"create_machine"}),
+    "msx.machine_loader": frozenset({"create_machine", "release_machine"}),
     "msx.machine_spec": None,
     "msx.machine_config": None,
 }

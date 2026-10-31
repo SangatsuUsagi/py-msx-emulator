@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from host.media import DiskFiles
     from host.rpc_server import DebugServer
     from host.trace import TraceOutput
-    from msx.boundary import MediaId, RtcTime
+    from msx.boundary import RtcTime
     from msx.core_api import CoreApi
     from msx.machine_spec import AnyExtensionOverlay, MachineSpec
 
@@ -416,7 +416,7 @@ def _run_benchmark(
 def _cleanup(
     machine: "CoreApi | None", rpc_server: "DebugServer | None", log_file: TextIO | None,
     trace_file: TextIO | None, mapper_trace_file: TextIO | None,
-    sram_files: "dict[MediaId, Path]", disk_files: "DiskFiles",
+    sram_files: "dict[int, Path]", disk_files: "DiskFiles",
 ) -> None:
     """Tear down open resources and flush SRAM / disk writes on exit."""
     if rpc_server is not None:
@@ -432,6 +432,8 @@ def _cleanup(
         # FORMAT / file save) back to its file.
         from host.media import persist_dirty_media
         persist_dirty_media(machine, sram_files, disk_files)
+        from msx.machine_loader import release_machine
+        release_machine(machine)
 
 
 class _EffectiveOptions(NamedTuple):
@@ -720,7 +722,7 @@ def main() -> None:
     game_title = (lookup_title(cartridge) if cartridge else None) or "py-msx-emulator"
     machine = None
     rpc_server = None
-    sram_files: "dict[MediaId, Path]" = {}
+    sram_files: "dict[int, Path]" = {}
     from host.media import DiskFiles
     # The file of each drive's disk: one table for the debugger, the RPC
     # server, the frontend and the write-back on exit.

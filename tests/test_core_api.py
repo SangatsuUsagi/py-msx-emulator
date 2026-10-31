@@ -25,6 +25,7 @@ from msx.boundary import (
     TRACE_DEBUG,
     TRACE_EVENT_LOST,
     TRACE_EVENT_VDP_PORT99,
+    TRACE_LOST_MAX,
     TRACE_MAPPER,
     TRACE_VDP,
     VDP_KIND_TMS9918A,
@@ -40,6 +41,7 @@ from msx.boundary import (
 from msx.core_api import CoreApi
 from msx.input import InputFrame
 from msx.machine import Machine
+from msx.trace import TraceLog
 from tests.factories import make_machine, make_machine_msx2
 
 _ROM = bytes(32 * 1024)  # NOPs
@@ -637,3 +639,13 @@ def test_the_sprite_flag_rejects_a_value_other_than_0_and_1() -> None:
     assert m.set_sprites_hidden(2) == STATUS_BAD_ARGUMENT
     assert m.last_error_text() == b"set_sprites_hidden value 2 is not 0 or 1"
     assert m.sprites_hidden() == 0
+
+
+def test_the_lost_count_stops_at_the_int32_limit() -> None:
+    # machine-core "The lost count stops at the int32 limit".
+    log = TraceLog()
+    for _ in range(TRACE_CAPACITY):
+        log.record(TRACE_EVENT_LOST)
+    log.lost = TRACE_LOST_MAX
+    log.record(TRACE_EVENT_LOST)
+    assert log.drain()[-1].a == TRACE_LOST_MAX

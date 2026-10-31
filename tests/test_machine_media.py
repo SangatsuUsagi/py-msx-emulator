@@ -146,8 +146,8 @@ def test_media_ids_are_integers() -> None:
     ids = m.dirty_media()
     assert ids == [MediaId.SLOT1_SRAM]
     for media_id in ids:
-        assert type(int(media_id)) is int and isinstance(media_id, int)
-        assert MediaId(int(media_id)) is media_id
+        assert type(media_id) is int
+        assert MediaId(media_id) is MediaId.SLOT1_SRAM
     assert drive_media_id(0) is MediaId.DRIVE_A
     assert drive_media_id(3) is MediaId.DRIVE_D
     assert slot_sram_id(1) is MediaId.SLOT1_SRAM

@@ -214,3 +214,22 @@ def test_a_dirty_disk_is_written_to_its_own_file(tmp_path: Path) -> None:
     assert a.read_bytes()[3 * SECTOR_SIZE:4 * SECTOR_SIZE] == b"\x5A" * SECTOR_SIZE
     assert copy.read_bytes() == bytes(len(_2DD))
     assert MediaId.DRIVE_A not in m.dirty_media()
+
+
+def test_the_host_releases_the_machine_after_the_media(monkeypatch) -> None:
+    # machine-core "The host releases the machine after the media".
+    import importlib.util
+
+    import host.media
+    import msx.machine_loader
+
+    main_path = Path(__file__).parent.parent / "__main__.py"
+    spec = importlib.util.spec_from_file_location("_emulator_main_cleanup", main_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    calls: list[str] = []
+    monkeypatch.setattr(host.media, "persist_dirty_media", lambda *_a: calls.append("media"))
+    monkeypatch.setattr(msx.machine_loader, "release_machine", lambda _m: calls.append("release"))
+    module._cleanup(object(), None, None, None, None, {}, DiskFiles())
+    assert calls == ["media", "release"]
