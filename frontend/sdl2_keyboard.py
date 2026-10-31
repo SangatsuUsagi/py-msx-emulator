@@ -428,6 +428,7 @@ class SdlKeyboard:
         return _K_LSHIFT in self._held_keys or _K_RSHIFT in self._held_keys
 
     def key_down(self, key: int) -> None:
+        """Press an SDL key: its matrix cell and its keyboard-joystick line."""
         # SHIFT+"0" escape hatch (see _K_ZERO_SHIFT): redirected here rather
         # than in _matrix_map, since a static key->cell table can't express a
         # binding that depends on another key's current state. Latched into
@@ -446,6 +447,7 @@ class SdlKeyboard:
             self.input_state.keyboard_joystick_down(port, bit)
 
     def key_up(self, key: int) -> None:
+        """Release an SDL key: its matrix cell and its keyboard-joystick line."""
         matrix_key = key
         if key == _K_0 and self._zero_shift_redirect:
             matrix_key = _K_ZERO_SHIFT

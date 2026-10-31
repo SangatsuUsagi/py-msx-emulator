@@ -189,9 +189,8 @@ class Memory:
     # reassigned after construction (_mapper/_mapper2/flat_ram_subslot are
     # only ever set once, as Memory(...) constructor kwargs, so they have no
     # setter here). Callers outside this class must use these, not direct
-    # assignment -- this class has no __setattr__ hook (removed by the
-    # memory-explicit-setters OpenSpec change) to catch a stray
-    # `mem.field = value` the way it used to, so a direct assignment here
+    # assignment -- this class has no __setattr__ hook to catch a stray
+    # `mem.field = value`, so a direct assignment here
     # silently leaves the routing cache stale instead of raising or
     # invalidating anything. A regression test
     # (tests/test_memory_setter_discipline.py) statically scans for this
@@ -522,13 +521,13 @@ class Memory:
         # perf — see _rebuild_page_cache.
         if page == 3 and addr == 0xFFFF and self._page3_intercept_slot:
             if self._page3_intercept_slot == 3:
-                self.set_sub_slot_reg(value & 0xFF)
+                self.set_sub_slot_reg(value)
             elif self._page3_intercept_slot == 2:
-                self.set_slot2_sub_slot_reg(value & 0xFF)
+                self.set_slot2_sub_slot_reg(value)
             else:
                 # _page3_intercept_slot's only remaining value here is 1 --
                 # see _rebuild_page_cache, which never sets it to anything else.
-                self.set_slot1_sub_slot_reg(value & 0xFF)
+                self.set_slot1_sub_slot_reg(value)
             return
         self._page_write[page](addr, value)
 

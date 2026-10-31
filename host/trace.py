@@ -137,10 +137,12 @@ class TraceOutput:
         self._debug_file = file
 
     def set_vdp_output(self, stream: IO[str], name: str) -> None:
+        """Write VDP trace lines to `stream`, called `name` in messages."""
         self.vdp_out = stream
         self.vdp_name = name
 
     def set_map_output(self, stream: IO[str], name: str) -> None:
+        """Write mapper trace lines to `stream`, called `name` in messages."""
         self.map_out = stream
         self.map_name = name
 

@@ -720,8 +720,7 @@ shapes that the loader validates by hand (`DeviceEntryYaml`,
 `MachineEntryYaml`, `ExtensionOverlayYaml`, and their nested shapes). No
 schema library validates them. The closed sets of names (mappers, FDC
 controllers and connection styles, extension, sub-slot and I/O devices) are
-defined in `msx/machine_config.py`. The YAML loader imports them under its
-`_KNOWN_*`/`_SUPPORTED_*` names, and the core checks the same sets again when
+defined in `msx/machine_config.py`. The YAML loader imports them, and the core checks the same sets again when
 it parses the MachineConfig document.
 
 Each field in this section matches an explicit `.get()` call in the loader. A
@@ -936,7 +935,7 @@ io_device:
 
 This field has the same shape as the `io_device` of an extension overlay
 (below). It is a slot-independent global I/O device that the machine itself
-supplies. The loader validates it against the same `_KNOWN_IO_DEVICES` set,
+supplies. The loader validates it against the same `IO_DEVICES` set,
 which holds only `kanji_rom`. At present, no shipped machine YAML declares
 one. At present, only two extensions supply a `kanji_rom` device: `hbi_j1` and
 `msxdos2_512k_kanjirom` (`--extension1`/`--extension2`). Both do it through the
@@ -960,7 +959,7 @@ rom: {file: fmpac.rom, size_kb: 64}
 sram: {size_kb: 8, save_file: saves/sram/fmpac.sram}
 ```
 
-`device` must be `fmpac` or `scc_i_cart` (`_KNOWN_EXTENSION_DEVICES`). This is
+`device` must be `fmpac` or `scc_i_cart` (`EXTENSION_DEVICES`). This is
 a different namespace from the sub-slot devices of the expanded shape below,
 although both use the key `device`. `fmpac` needs a `rom:` block. `scc_i_cart`
 does not need one, because its RAM starts blank and the loader loads no file.
@@ -989,7 +988,7 @@ io_device:
 `subslots` is a necessary, non-empty mapping with keys `0`-`3`. It uses the
 same index range and the same `_check_subslot_index` as an MSX2 slot-3
 sub-slot. The `device` of each entry must be one of `halnote`, `flat_rom`,
-`ram_mapper`, `ascii8`, or `ascii16` (`_KNOWN_EXPANDED_SUBSLOT_DEVICES`):
+`ram_mapper`, `ascii8`, or `ascii16` (`SUBSLOT_DEVICES`):
 
 | `device` | Requires | Constructs |
 | --- | --- | --- |
@@ -1008,7 +1007,7 @@ conflicts with a machine that already has its own slot-3 RAM mapper
 (`has_ram_mapper=True`). The two mappers would use the same ports.
 
 The loader validates the optional top-level `io_device` against a *third*
-device namespace, `_KNOWN_IO_DEVICES = {kanji_rom}`. This namespace has no
+device namespace, `IO_DEVICES = {kanji_rom}`. This namespace has no
 overlap with the other two. `device: kanji_rom` is not valid in `subslots`, and
 `device: halnote` (or any other sub-slot device) is not valid in `io_device`.
 If a machine-level `io_device` and the `io_device` of an overlay both resolve

@@ -164,7 +164,7 @@ def test_ascii16_subslot_without_rom_block_rejected(tmp_path: Path) -> None:
 # ExpandedOverlayDeviceNamespacesAreDisjoint invariant): a sub-slot-only
 # device kind (ascii8) is unrecognized as an io_device, and an io_device-only
 # kind (kanji_rom) is unrecognized as a sub-slot -- _KNOWN_EXPANDED_SUBSLOT_
-# DEVICES and _KNOWN_IO_DEVICES share no members, so each parse call rejects
+# DEVICES and IO_DEVICES share no members, so each parse call rejects
 # the other namespace's kind the same way it rejects any unknown value.
 # ---------------------------------------------------------------------------
 

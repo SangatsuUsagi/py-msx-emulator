@@ -72,23 +72,21 @@ from msx.boundary import (
 
 # The closed vocabularies are defined once, in the core's document parser,
 # which enforces them too; the YAML loader checks the authored files against
-# the same sets under its historical names.
-from msx.machine_config import EXTENSION_DEVICES as _KNOWN_EXTENSION_DEVICES
-from msx.machine_config import EXTENSION_DEVICES_REQUIRING_ROM as _EXTENSION_DEVICES_REQUIRING_ROM
-from msx.machine_config import FDC_CONNECTION_STYLES as _SUPPORTED_FDC_STYLES
-from msx.machine_config import FDC_CONTROLLERS as _SUPPORTED_FDC_CONTROLLERS
-from msx.machine_config import FDC_PAIRS as _SUPPORTED_FDC_PAIRS
-from msx.machine_config import IO_DEVICES as _KNOWN_IO_DEVICES
-from msx.machine_config import IO_DEVICES_REQUIRING_ROM as _IO_DEVICES_REQUIRING_ROM
-from msx.machine_config import MAPPER_NAMES as _SUPPORTED_MAPPERS
-from msx.machine_config import SUBSLOT_DEVICES as _KNOWN_EXPANDED_SUBSLOT_DEVICES
+# the same sets.
 from msx.machine_config import (
-    SUBSLOT_DEVICES_REQUIRING_ROM as _EXPANDED_SUBSLOT_DEVICES_REQUIRING_ROM,
+    EXTENSION_DEVICES,
+    EXTENSION_DEVICES_REQUIRING_ROM,
+    FDC_CONNECTION_STYLES,
+    FDC_CONTROLLERS,
+    FDC_PAIRS,
+    IO_DEVICES,
+    IO_DEVICES_REQUIRING_ROM,
+    MAPPER_NAMES,
+    SUBSLOT_DEVICES,
+    SUBSLOT_DEVICES_REQUIRING_ROM,
+    SUBSLOT_DEVICES_REQUIRING_SIZE,
+    encode_machine_config,
 )
-from msx.machine_config import (
-    SUBSLOT_DEVICES_REQUIRING_SIZE as _EXPANDED_SUBSLOT_DEVICES_REQUIRING_SIZE,
-)
-from msx.machine_config import encode_machine_config
 from msx.machine_loader import create_machine
 from msx.machine_spec import (
     AnyExtensionOverlay,
@@ -135,7 +133,7 @@ def _resolve_mapper_type(mapper: str, cartridge: bytes | None) -> str:
         print("warning: cartridge not found in ROM database, using Mirrored mapper",
               file=sys.stderr)
         return "Mirrored"
-    if found not in _SUPPORTED_MAPPERS:
+    if found not in MAPPER_NAMES:
         print(f"warning: unsupported mapper type {found!r} from ROM database, "
               "using Mirrored mapper", file=sys.stderr)
         return "Mirrored"
@@ -537,22 +535,22 @@ def _parse_fdc(sub_val: SubSlotYaml, machine_id: str, sub_idx: int) -> FdcDef | 
         raise MachineLoadError(f"{context}: missing required 'rom' entry")
     disk_rom_entry = _parse_rom_entry(rom_data, context)
     controller = str(fdc_raw.get("controller", "wd2793")).lower()
-    if controller not in _SUPPORTED_FDC_CONTROLLERS:
+    if controller not in FDC_CONTROLLERS:
         raise MachineLoadError(
             f"{context}: unsupported controller {controller!r} "
-            f"(supported: {sorted(_SUPPORTED_FDC_CONTROLLERS)})"
+            f"(supported: {sorted(FDC_CONTROLLERS)})"
         )
     style = str(fdc_raw.get("connection_style", "sony")).lower()
-    if style not in _SUPPORTED_FDC_STYLES:
+    if style not in FDC_CONNECTION_STYLES:
         raise MachineLoadError(
             f"{context}: unsupported connection_style {style!r} "
-            f"(supported: {sorted(_SUPPORTED_FDC_STYLES)})"
+            f"(supported: {sorted(FDC_CONNECTION_STYLES)})"
         )
-    if (controller, style) not in _SUPPORTED_FDC_PAIRS:
+    if (controller, style) not in FDC_PAIRS:
         raise MachineLoadError(
             f"{context}: controller {controller!r} does not support "
             f"connection_style {style!r} "
-            f"(supported pairs: {sorted(_SUPPORTED_FDC_PAIRS)})"
+            f"(supported pairs: {sorted(FDC_PAIRS)})"
         )
     drives = int(fdc_raw.get("drives", 1))
     if drives <= 0:
@@ -881,7 +879,7 @@ def load_machine_spec(
             raise MachineLoadError(f"{machine_path}: io_device: expected a YAML mapping")
         io_device = _parse_expanded_device(
             io_device_raw, rom_base_dir, f"{machine_path}: io_device",
-            _KNOWN_IO_DEVICES, _IO_DEVICES_REQUIRING_ROM,
+            IO_DEVICES, IO_DEVICES_REQUIRING_ROM,
         )
 
     return MachineSpec(
@@ -927,7 +925,7 @@ def _parse_expanded_device(
 ) -> ExpandedSubslotDevice:
     """Parse one expanded-overlay device declaration (a sub-slot entry or
     the top-level io_device) -- resolved against its own known-device set
-    rather than _KNOWN_EXTENSION_DEVICES."""
+    rather than EXTENSION_DEVICES."""
     device = data.get("device")
     if not device:
         raise MachineLoadError(f"{context}: missing required field 'device'")
@@ -980,8 +978,8 @@ def _parse_expanded_extension_overlay(
             raise MachineLoadError(f"{path}: subslot {index}: expected a YAML mapping")
         subslots[index] = _parse_expanded_device(
             sub_data, rom_base_dir, f"{path}: subslot {index}",
-            _KNOWN_EXPANDED_SUBSLOT_DEVICES, _EXPANDED_SUBSLOT_DEVICES_REQUIRING_ROM,
-            _EXPANDED_SUBSLOT_DEVICES_REQUIRING_SIZE,
+            SUBSLOT_DEVICES, SUBSLOT_DEVICES_REQUIRING_ROM,
+            SUBSLOT_DEVICES_REQUIRING_SIZE,
         )
 
     ram_mapper_indices = [i for i, sub in subslots.items() if sub.device == "ram_mapper"]
@@ -999,7 +997,7 @@ def _parse_expanded_extension_overlay(
             raise MachineLoadError(f"{path}: io_device: expected a YAML mapping")
         io_device = _parse_expanded_device(
             io_device_raw, rom_base_dir, f"{path}: io_device",
-            _KNOWN_IO_DEVICES, _IO_DEVICES_REQUIRING_ROM,
+            IO_DEVICES, IO_DEVICES_REQUIRING_ROM,
         )
 
     return ExpandedExtensionOverlay(subslots=subslots, io_device=io_device)
@@ -1068,7 +1066,7 @@ def load_extension_overlay(
     rom_base_dir = project_root / rom_base
     resolved = _parse_expanded_device(
         raw, rom_base_dir, f"extension overlay '{path}'",
-        _KNOWN_EXTENSION_DEVICES, _EXTENSION_DEVICES_REQUIRING_ROM,
+        EXTENSION_DEVICES, EXTENSION_DEVICES_REQUIRING_ROM,
     )
     return ExtensionOverlay(
         device=resolved.device,
@@ -1223,7 +1221,7 @@ def _overlay_roms(
                 overlay.io_device, "expanded overlay io_device"
             )
     elif (overlay is not None and overlay.rom_entry is not None
-          and overlay.device in _EXTENSION_DEVICES_REQUIRING_ROM):
+          and overlay.device in EXTENSION_DEVICES_REQUIRING_ROM):
         # Only a device that uses its ROM reads one: an SCC-I fragment's
         # `rom:` block, if any, is ignored as the device has no ROM.
         roms[f"slot{slot}.ext"] = _load_device_rom(overlay, f"{overlay.device} extension")

@@ -42,6 +42,7 @@ REGS_PER_BLOCK = 13
 
 # Block 1, register 10: 12/24-hour select (bit 0 -- see _encode_hour).
 HOUR_MODE_REG = 10
+LEAP_YEAR_REG = 11  # block 1
 HOUR_MODE_24H = 0x1
 
 # Per-block write/read masks; 0-bits are ignored on write and read back as 0.
@@ -238,7 +239,7 @@ class RTC:
             month % 10, month // 10,
             rp_year % 10, rp_year // 10,
         ]
-        self._regs[1 * REGS_PER_BLOCK + 11] = (year - 1980) % 4
+        self._regs[1 * REGS_PER_BLOCK + LEAP_YEAR_REG] = (year - 1980) % 4
 
     def _encode_hour(self, hour: int) -> tuple[int, int]:
         """BCD-encode `hour` (0-23) into (units, tens) registers per block 1

@@ -166,10 +166,12 @@ class PauseState:
         self.reason: str = PauseReason.USER_REQUEST
 
     def set_paused(self, reason: str) -> None:
+        """Record a pause and why."""
         self.paused = True
         self.reason = reason
 
     def set_running(self) -> None:
+        """Record that emulation runs."""
         self.paused = False
 
 
@@ -222,14 +224,17 @@ class DebugServer:
 
     @property
     def pause_state(self) -> PauseState:
+        """The pause flag and reason."""
         return self._pause_state
 
     @property
     def machine(self) -> CoreApi:
+        """The core the server drives."""
         return self._machine
 
     @property
     def disk_files(self) -> DiskFiles:
+        """The file of each drive's disk."""
         return self._disk_files
 
     def apply_injected_input(self) -> None:
@@ -417,6 +422,7 @@ class DebugServer:
         }
 
     def require_paused(self) -> None:
+        """Raise an RpcError unless the emulator is paused."""
         if not self._pause_state.paused:
             raise RpcError(ERR_NEED_PAUSED, "emulator must be paused for this operation")
 
@@ -473,6 +479,7 @@ class DebugServer:
         self._key_releases = still_pending
 
     def schedule_key_release(self, row: int, bit: int, duration_ms: int) -> None:
+        """Release a key matrix cell after `duration_ms`, from drain()."""
         self._key_releases.append((time.monotonic() + duration_ms / 1000.0, row, bit))
 
     def alloc_breakpoint(self, address: int) -> int:
@@ -545,6 +552,7 @@ class DebugServer:
 
     @property
     def breakpoints(self) -> dict[int, int]:
+        """The RPC breakpoints: id -> address."""
         return self._breakpoints
 
     # -- handler registration ----------------------------------------------
