@@ -237,7 +237,7 @@ def test_fdd2_on_single_drive_machine_is_skipped_by_the_host(
     _make_roms(tmp_path)
     dsk = tmp_path / "b.dsk"
     dsk.write_bytes(bytes(_2DD))
-    config = load_machine_config(_fdc_spec(tmp_path), fdd2=dsk)
+    config = load_machine_config(_fdc_spec(tmp_path), fdd2=dsk).config
     assert [disk.drive for disk in config.disks] == []
     assert "only 1 drive" in capsys.readouterr().err
 
@@ -245,7 +245,7 @@ def test_fdd2_on_single_drive_machine_is_skipped_by_the_host(
 def test_build_rejects_a_disk_for_a_missing_drive(tmp_path: Path) -> None:
     # machine-loader "A disk for a missing drive is rejected".
     _make_roms(tmp_path)
-    config = load_machine_config(_fdc_spec(tmp_path))
+    config = load_machine_config(_fdc_spec(tmp_path)).config
     config.disks = (DiskMount(1, bytes(_2DD)),)
     with pytest.raises(MachineLoadError, match=r"disk for drive 1 but the machine has 1 drive"):
         build_machine(config)
@@ -253,7 +253,7 @@ def test_build_rejects_a_disk_for_a_missing_drive(tmp_path: Path) -> None:
 
 def test_two_disks_for_one_drive_are_rejected(tmp_path: Path) -> None:
     _make_roms(tmp_path)
-    config = load_machine_config(_fdc_spec(tmp_path))
+    config = load_machine_config(_fdc_spec(tmp_path)).config
     config.disks = (DiskMount(0, bytes(_2DD)), DiskMount(0, bytes(_2DD)))
     with pytest.raises(MachineLoadError, match="two disks for drive 0"):
         build_machine(config)
@@ -276,7 +276,7 @@ def test_the_images_are_flat_records(
     dsk.write_bytes(bytes(_2DD))
     config = load_machine_config(
         _fdc_spec(tmp_path), cartridge1=cartridge, mapper1="ASCII8SRAM2", fdd1=dsk
-    )
+    ).config
     for images in (config.roms, config.media, config.disks):
         assert isinstance(images, tuple) and images
     assert all(isinstance(rom, RomImage) for rom in config.roms)
@@ -311,7 +311,7 @@ def test_a_disk_of_a_bad_size_is_rejected(tmp_path: Path, size: int) -> None:
     from msx.machine_loader import create_machine
 
     _make_roms(tmp_path)
-    config = load_machine_config(_fdc_spec(tmp_path))
+    config = load_machine_config(_fdc_spec(tmp_path)).config
     config.disks = (DiskMount(0, bytes(size)),)
     result = create_machine(config)
     assert result.status == STATUS_BAD_CONFIG

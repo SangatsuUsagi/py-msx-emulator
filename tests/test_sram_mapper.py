@@ -16,7 +16,7 @@ from msx.mapper import (
     Ascii16Sram8Mapper,
     KoeiSRAM32Mapper,
 )
-from tests.factories import make_config
+from tests.factories import make_loaded_config
 
 # 16 KB = 2 pages of 8 KB. ASCII8 SRAM enable bit = num_pages = 2.
 _ROM_16K = bytes(range(256)) * 64
@@ -615,8 +615,8 @@ class TestMachineLoaderSramIntegration:
         sram_file.write_bytes(bytes([0xAB] * expected_size))
 
         monkeypatch.chdir(tmp_path)
-        config = make_config(rom=rom, cartridge=cartridge, mapper="ASCII8SRAM2")
-        machine = build_machine(config)
+        config = make_loaded_config(rom=rom, cartridge=cartridge, mapper="ASCII8SRAM2")
+        machine = build_machine(config.config)
         assert sram_paths(config)[MediaId.SLOT1_SRAM].name == f"{sha1}.sram"
         assert machine.memory._mapper.sram_image.read(0) == 0xAB
 
@@ -653,8 +653,8 @@ class TestMachineLoaderSramIntegration:
         sram_file.write_bytes(bytes([0xAB] * expected_size))
 
         monkeypatch.chdir(tmp_path)
-        config = make_config(rom=rom, cartridge2=cartridge2, mapper2="ASCII8SRAM2")
-        machine = build_machine(config)
+        config = make_loaded_config(rom=rom, cartridge2=cartridge2, mapper2="ASCII8SRAM2")
+        machine = build_machine(config.config)
         assert sram_paths(config)[MediaId.SLOT2_SRAM].name == f"{sha1}.sram"
         assert machine.memory._mapper2.sram_image.read(0) == 0xAB
         # Slot 1 (empty here) must not be perturbed by slot 2's SRAM load.
@@ -679,11 +679,11 @@ class TestMachineLoaderSramIntegration:
         cartridge = bytes(range(256)) * 32
         cartridge2 = bytes(range(256))[::-1] * 32  # distinct content -> distinct SHA1
         monkeypatch.chdir(tmp_path)
-        config = make_config(
+        config = make_loaded_config(
             rom=rom, cartridge=cartridge, mapper="ASCII8SRAM2",
             cartridge2=cartridge2, mapper2="GameMaster2",
         )
-        machine = build_machine(config)
+        machine = build_machine(config.config)
         paths = sram_paths(config)
         assert paths[MediaId.SLOT1_SRAM] != paths[MediaId.SLOT2_SRAM]
 

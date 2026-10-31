@@ -1144,13 +1144,14 @@ def _cartridge_sram_path(cartridge: bytes) -> Path:
 
 
 @dataclass
-class LoadedMachineConfig(MachineConfig):
-    """The MachineConfig load_machine_config() produces, plus host data that
+class LoadedMachineConfig:
+    """The MachineConfig load_machine_config() produces (`config`), plus host data that
     never reaches the core: the file each battery-backed medium is persisted
     in (see sram_paths) and the file of each disk in `disks`, by drive index
-    (the initial contents of the run's host.media.DiskFiles table). create_machine() reads only the
-    MachineConfig part."""
+    (the initial contents of the run's host.media.DiskFiles table). create_machine() takes
+    `config`."""
 
+    config: MachineConfig
     sram_files: dict[int, Path] = field(default_factory=dict)
     disk_files: dict[int, Path] = field(default_factory=dict)
 
@@ -1381,8 +1382,10 @@ def load_machine_config(
     )
     sram_files = _sram_paths(spec, carts)
     return LoadedMachineConfig(
-        document=document, roms=_rom_images(images), media=_load_media(sram_files, carts),
-        disks=disks, rtc_initial_time=rtc_initial_time,
+        config=MachineConfig(
+            document=document, roms=_rom_images(images), media=_load_media(sram_files, carts),
+            disks=disks, rtc_initial_time=rtc_initial_time,
+        ),
         sram_files=sram_files, disk_files=disk_files,
     )
 
@@ -1415,7 +1418,7 @@ def build_machine_from_spec(
         extension_overlay1=extension_overlay1, extension_overlay2=extension_overlay2,
         rtc_initial_time=rtc_initial_time,
     )
-    result = create_machine(config)
+    result = create_machine(config.config)
     if result.machine is None:
         raise MachineLoadError(result.error_text.decode("utf-8"))
     return result.machine

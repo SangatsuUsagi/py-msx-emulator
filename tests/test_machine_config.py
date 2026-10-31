@@ -68,7 +68,7 @@ def test_build_reads_no_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     monkeypatch.chdir(tmp_path)
     config = load_machine_config(
         _msx2_spec(), bios_override=_ROM, extrom_override=bytes(16 * 1024)
-    )
+    ).config
 
     def no_read(self: Path) -> bytes:
         raise AssertionError(f"build_machine read {self}")
@@ -92,7 +92,7 @@ def test_machine_properties_are_integers() -> None:
     from msx.boundary import KeyboardLayout, VideoStandard
 
     spec = _spec("cbios_msx1_jp")
-    machine = build_machine(load_machine_config(spec, **_overrides(spec)))
+    machine = build_machine(load_machine_config(spec, **_overrides(spec)).config)
     assert isinstance(machine.video_standard, int)
     assert isinstance(machine.keyboard_layout, int)
     assert machine.video_standard == VideoStandard.NTSC
@@ -169,7 +169,7 @@ def _overrides(spec) -> dict[str, bytes]:
 def _document(machine_id: str = "hb_f1xd", **kwargs: object) -> bytes:
     spec = _spec(machine_id)
     args = {**_overrides(spec), **kwargs}
-    return load_machine_config(spec, **args).document
+    return load_machine_config(spec, **args).config.document
 
 
 def _walk(node: object) -> list[object]:
@@ -232,7 +232,7 @@ def test_an_override_rom_is_referenced_by_its_own_sha1(
     bios = bytes(range(256)) * 128
     config = load_machine_config(
         _spec("cbios_msx1"), bios_override=bios, logo_override=bytes(16384)
-    )
+    ).config
     main = json.loads(config.document)["machine"]["main_rom"]
     assert main["sha1"] == hashlib.sha1(bios).hexdigest()
     assert main["size"] == len(bios)
@@ -267,7 +267,7 @@ def test_every_machine_round_trips_through_its_document(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, machine_id: str
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    config = load_machine_config(_spec(machine_id), **_overrides(_spec(machine_id)))
+    config = load_machine_config(_spec(machine_id), **_overrides(_spec(machine_id))).config
     document = config.document
     parsed = parse_machine_config(document)
     images_by_sha1 = {rom.sha1: rom.data for rom in config.roms}
@@ -288,7 +288,7 @@ def test_every_machine_round_trips_through_its_document(
 
 def _hb_f1xd_config(tmp_path: Path):
     spec = _spec("hb_f1xd")
-    return load_machine_config(spec, **_overrides(spec))
+    return load_machine_config(spec, **_overrides(spec)).config
 
 
 # ---------------------------------------------------------------------------
@@ -555,7 +555,7 @@ def test_an_scc_i_fragment_rom_block_is_ignored(
         rom_entry=RomEntry(file="missing_scc.rom", size_kb=64, pages=[]),
     )
     spec = _spec("hb_f1xd")
-    config = load_machine_config(spec, **_overrides(spec), extension_overlay2=overlay)
+    config = load_machine_config(spec, **_overrides(spec), extension_overlay2=overlay).config
     assert json.loads(config.document)["extensions"]["slot2"] == {
         "shape": "flat", "device": "scc_i_cart", "rom": None,
     }
@@ -571,7 +571,7 @@ def test_a_device_without_a_rom_file_to_read_is_a_load_error(
         _spec("hb_f1xd"), io_device=ExpandedSubslotDevice(device="kanji_rom")
     )
     with pytest.raises(MachineLoadError, match="machine io_device: no ROM file to read"):
-        load_machine_config(spec, **_overrides(spec))
+        load_machine_config(spec, **_overrides(spec)).config
 
 
 def test_a_ram_mapper_size_the_mapper_does_not_accept_is_rejected() -> None:

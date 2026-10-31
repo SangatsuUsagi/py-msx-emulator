@@ -68,7 +68,19 @@ def _target_fps_for(machine: CoreApi) -> float:
     """Real-time pacing target for this machine: 60 fps NTSC, 50 fps PAL
     (VideoStandard.target_fps of the core's int, which the frame timer
     paces in float)."""
-    return float(VideoStandard(machine.video_standard).target_fps)
+    try:
+        return float(VideoStandard(machine.video_standard).target_fps)
+    except ValueError:  # a value this host does not know: pace as NTSC
+        return float(VideoStandard.NTSC.target_fps)
+
+
+def _keyboard_layout(value: int) -> KeyboardLayout:
+    """The core's layout value, or INTERNATIONAL for one this host does not
+    know."""
+    try:
+        return KeyboardLayout(value)
+    except ValueError:
+        return KeyboardLayout.INTERNATIONAL
 
 
 class _InitSdlApi(Protocol):
@@ -1189,7 +1201,7 @@ def run(
 
     keyboard = SdlKeyboard(
         frame_input, resolve_keyboard_joy_map(keyboard_joystick or {}),
-        keyboard_layout=KeyboardLayout(machine.keyboard_layout),
+        keyboard_layout=_keyboard_layout(machine.keyboard_layout),
     )
 
     mouse: _HostMouse | None = None

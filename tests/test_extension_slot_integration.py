@@ -205,7 +205,7 @@ def test_fmpac_on_slot1_survives_scc_plus_on_slot2(tmp_path: Path) -> None:
         extension_overlay1=fmpac_overlay,
         extension_overlay2=ExtensionOverlay(device="scc_i_cart"),
     )
-    machine = build_machine(config)
+    machine = build_machine(config.config)
     assert machine.fmpac is not None
     assert sram_paths(config)[MediaId.FMPAC_SRAM] == fmpac_overlay.sram_save_path
     assert machine.sram_media()[MediaId.FMPAC_SRAM] is machine.fmpac.sram_image
@@ -223,7 +223,7 @@ def test_fmpac_on_slot2_survives_scc_plus_on_slot1(tmp_path: Path) -> None:
         extension_overlay1=ExtensionOverlay(device="scc_i_cart"),
         extension_overlay2=fmpac_overlay,
     )
-    machine = build_machine(config)
+    machine = build_machine(config.config)
     assert machine.fmpac is not None
     assert sram_paths(config)[MediaId.FMPAC_SRAM] == fmpac_overlay.sram_save_path
 
@@ -260,7 +260,7 @@ def test_fmpac_rom_that_is_not_64kb_is_rejected(tmp_path: Path) -> None:
     config = load_machine_config(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
         extension_overlay2=overlay,
-    )
+    ).config
     result = create_machine(config)
     assert result.status == STATUS_BAD_CONFIG
     assert result.machine is None
@@ -299,7 +299,7 @@ def test_fmpac_slot1_and_hbi_j1_slot2_sram_persist_independently(
         extension_overlay1=fmpac_overlay,
         extension_overlay2=_hbi_j1_overlay(hbi_dir),
     )
-    machine = build_machine(config)
+    machine = build_machine(config.config)
     assert machine.fmpac is not None
     assert sram_paths(config)[MediaId.FMPAC_SRAM] == fmpac_overlay.sram_save_path
     halnote = machine.memory._mapper2_subslots[0]
