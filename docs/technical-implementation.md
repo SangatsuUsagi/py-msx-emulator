@@ -664,7 +664,10 @@ independently select the visible segment in each CPU page:
 A write of a segment number to a register remaps that page immediately. The
 mapper masks the number with `bank_mask`: the smallest power of two that covers
 the segment count, minus 1 (7 for 128 KB). A read returns the segment number
-with the unused upper bits set to 1.
+with the unused upper bits set to 1. When the segment count is not a power of
+two, a masked number can be at or above the count. Such a number selects
+segment `number & (count - 1)`, as openMSX does (48 KB: number 3 selects
+segment 2).
 
 ---
 

@@ -228,21 +228,27 @@ Read all CPU registers (works in any state).
 **Params:** `{ "address": "0xC000" }`  
 **Result:** `{ "id": 0, "address": "0xC000", "active": true }`  
 **Errors:** `-32602` for a fifth breakpoint. The core holds at most four, and
-the four set stay.
+the four set stay. The core's set is shared with the command line and the
+debugger REPL, and the limit counts all of them. A breakpoint at an address
+the core already holds adds no entry.
 
 ---
 
 ### `debug.remove_breakpoint`
 
 **Params:** `{ "id": 0 }`  
-**Result:** `{ "removed": true }`
+**Result:** `{ "removed": true }`  
+The address leaves the core's set unless another id holds it. A debugger
+breakpoint at the same address goes too.
 
 ---
 
 ### `debug.list_breakpoints`
 
 **Params:** none  
-**Result:** `{ "breakpoints": [ { "id": 0, "address": "0xC000", "active": true } ] }`
+**Result:** `{ "breakpoints": [ { "id": 0, "address": "0xC000", "active": true } ] }`  
+`active` is `false` when the core no longer holds the address (for example,
+after `br` in the debugger REPL).
 
 ---
 
@@ -252,14 +258,17 @@ the four set stay.
 `mode`: `"r"` | `"w"` | `"rw"` (default `"rw"`)  
 **Result:** `{ "id": 0, "address": "0xE000", "mode": "rw", "active": true }`  
 **Errors:** `-32602` for a fifth watchpoint. The core holds at most four, and
-the four set stay.
+the four set stay. The core keeps one mode per address, so a watchpoint at a
+watched address adds its mode to that address.
 
 ---
 
 ### `debug.remove_watchpoint`
 
 **Params:** `{ "id": 0 }`  
-**Result:** `{ "removed": true }`
+**Result:** `{ "removed": true }`  
+The address loses the mode bits that no other id at that address holds. An
+address with no mode left leaves the core's set.
 
 ---
 

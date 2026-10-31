@@ -192,6 +192,14 @@ as the `ba`/`wa` limits of the [interactive debugger](debugger.md). A 5th
 `debug.set_*` call returns an invalid-params error (`-32602`), and the 4 set
 stay armed.
 
+The RPC methods share the machine's set with the `--break-point` and
+`--watch-point` options and the `ba`/`wa` commands. A set or remove changes
+only its own entry, and the 4-entry limit counts every entry. The machine
+keeps one entry per address. So a remove also clears a debugger entry at the
+same address, and a watchpoint set at a watched address adds its mode to the
+address. `active` in `debug.list_breakpoints` is `false` when the address is
+no longer set, for example after `br` in the debugger.
+
 ### Memory
 
 - **`memory.read`**: params `{ address, length? }` (default 16) →
