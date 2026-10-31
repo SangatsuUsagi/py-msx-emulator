@@ -5,6 +5,7 @@ import pytest
 
 from msx.boundary import AUDIO_SAMPLE_RATE
 from msx.scc import SCC
+from tests.factories import restore_state
 
 _SAMPLES_PER_FRAME = AUDIO_SAMPLE_RATE // 60  # an NTSC frame
 
@@ -316,7 +317,7 @@ def test_snapshot_and_restore_round_trip() -> None:
     scc.generate_samples(500)  # mutate further so restore is meaningfully exercised
     assert scc.snapshot() != snapshot
 
-    scc.restore(snapshot)
+    restore_state(scc, snapshot)
     assert scc.snapshot() == snapshot
 
 
@@ -331,7 +332,7 @@ def test_restore_with_missing_key_does_not_partially_mutate() -> None:
     snap = dict(pre)
     del snap["clk_frac"]
     with pytest.raises(ValueError, match="clk_frac"):
-        scc.restore(snap)
+        restore_state(scc, snap)
 
     assert scc.snapshot() == pre
 
@@ -341,7 +342,7 @@ def test_snapshot_on_silent_scc_round_trips() -> None:
     # sounding one.
     scc = SCC()
     snapshot = scc.snapshot()
-    scc.restore(snapshot)
+    restore_state(scc, snapshot)
     assert scc.snapshot() == snapshot
 
 

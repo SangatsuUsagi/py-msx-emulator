@@ -3,6 +3,7 @@ import pytest
 from msx.input import InputLines
 from msx.mouse import MouseDevice
 from msx.psg import PSG, PSG_CLOCK, JoystickPort, MouseSlot
+from tests.factories import restore_psg_synth
 
 
 def _press(lines: InputLines, port: int, bit: int) -> None:
@@ -364,7 +365,7 @@ def test_snapshot_synth_and_restore_synth_round_trip() -> None:
     psg.generate_samples(500)  # mutate further so restore is meaningfully exercised
     assert psg.snapshot_synth() != snapshot
 
-    psg.restore_synth(snapshot)
+    restore_psg_synth(psg, snapshot)
     assert psg.snapshot_synth() == snapshot
 
 
@@ -379,12 +380,12 @@ def test_a_state_load_discards_the_pending_events() -> None:
 
     psg = PSG()
     _program_tone_noise_envelope(psg)  # recorded as this frame's events
-    psg.restore_synth(loaded_state)
+    restore_psg_synth(psg, loaded_state)
     out = psg.generate_samples(500, frame_start=0, frame_end=1000)
 
     reference = PSG()
     reference.regs[:] = psg.regs
-    reference.restore_synth(loaded_state)
+    restore_psg_synth(reference, loaded_state)
     assert out == reference.generate_samples(500)
     assert psg.snapshot_synth() == reference.snapshot_synth()
 
@@ -400,7 +401,7 @@ def test_restore_synth_with_missing_key_does_not_partially_mutate() -> None:
 
     del snapshot["clk_frac"]
     with pytest.raises(ValueError, match="clk_frac"):
-        psg.restore_synth(snapshot)
+        restore_psg_synth(psg, snapshot)
 
     assert dict(psg.snapshot_synth()) == pre
 
@@ -410,5 +411,5 @@ def test_snapshot_synth_on_silent_psg_round_trips() -> None:
     # actively-generating one.
     psg = PSG()
     snapshot = psg.snapshot_synth()
-    psg.restore_synth(snapshot)
+    restore_psg_synth(psg, snapshot)
     assert psg.snapshot_synth() == snapshot

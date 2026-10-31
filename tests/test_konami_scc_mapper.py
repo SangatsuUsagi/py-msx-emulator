@@ -3,6 +3,7 @@ import pytest
 
 from msx.mapper import KonamiSCCMapper
 from msx.scc import SCC
+from tests.factories import restore_state
 
 _PAGE = 8192  # 8 KB
 
@@ -211,7 +212,7 @@ def test_snapshot_restore_roundtrips_banks_and_scc_mode(mapper: KonamiSCCMapper)
     snap = mapper.snapshot()
 
     other = KonamiSCCMapper(rom=_rom(8), scc=SCC())
-    other.restore(snap)
+    restore_state(other, snap)
     assert other._banks == mapper._banks
     assert other._scc_mode is True
 
@@ -226,7 +227,7 @@ def test_restore_with_missing_scc_mode_does_not_partially_mutate(
     pre_scc_mode = mapper._scc_mode
 
     with pytest.raises(ValueError):
-        mapper.restore({"banks": [1, 2, 3, 4]})
+        restore_state(mapper, {"banks": [1, 2, 3, 4]})
 
     assert list(mapper._banks) == pre_banks
     assert mapper._scc_mode == pre_scc_mode
@@ -237,7 +238,7 @@ def test_restore_rejects_negative_bank(mapper: KonamiSCCMapper) -> None:
     # make _sync_window slice self.rom with a negative start, which Python
     # wraps from the end of the ROM rather than raising.
     with pytest.raises(ValueError):
-        mapper.restore({"banks": [0, 1, 2, -1], "scc_mode": False})
+        restore_state(mapper, {"banks": [0, 1, 2, -1], "scc_mode": False})
 
 
 def test_restore_with_scc_mode_true_routes_reads_to_scc(mapper: KonamiSCCMapper) -> None:
@@ -248,7 +249,7 @@ def test_restore_with_scc_mode_true_routes_reads_to_scc(mapper: KonamiSCCMapper)
     snap = mapper.snapshot()
 
     other = KonamiSCCMapper(rom=_rom(8), scc=SCC())
-    other.restore(snap)
+    restore_state(other, snap)
     other.scc.write(0x00, 0x55)
     assert other.read(0x9800) == 0x55
 
@@ -262,7 +263,7 @@ def test_restore_with_scc_mode_false_routes_reads_to_rom(mapper: KonamiSCCMapper
 
     other = KonamiSCCMapper(rom=_rom(8), scc=SCC())
     other.write(0x9000, 0x3F)   # start `other` in SCC mode
-    other.restore(snap)
+    restore_state(other, snap)
     assert other.read(0x9800) == 2  # ROM page 2 byte, not routed to SCC
 
 

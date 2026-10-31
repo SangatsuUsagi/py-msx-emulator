@@ -26,6 +26,7 @@ from msx.fdc.tc8566af import (
 )
 from msx.snapshot_schema import SchemaError
 from tests.disk_factories import dsk_image
+from tests.factories import restore_state
 
 _2DD = 737280
 
@@ -312,6 +313,6 @@ def test_restore_with_missing_key_does_not_partially_mutate(tmp_path: Path) -> N
     snap = dict(pre)
     del snap["format_fill"]
     with pytest.raises(SchemaError, match="missing keys"):
-        tc.restore(snap)
+        restore_state(tc, snap)
 
     assert dict(tc.snapshot()) == pre

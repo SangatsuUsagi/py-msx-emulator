@@ -71,7 +71,7 @@ _VOL_TABLE: tuple[int, ...] = (
 
 
 class PsgSynthState(TypedDict):
-    """Save-state schema for PSG.snapshot_synth()/PSG.restore_synth().
+    """Save-state schema for PSG.snapshot_synth()/PSG.apply_synth_state().
 
     Covers only the internal tone/noise/envelope generator state; the
     register file (regs/latch) is captured directly as the snapshot's
@@ -268,13 +268,6 @@ class PSG:
                 state["clk_frac"], f"{label}.clk_frac", 0, AUDIO_SAMPLE_RATE - 1
             ),
         }
-
-    def restore_synth(self, state: dict[str, object]) -> None:
-        """Restore internal generator state produced by snapshot_synth().
-        Parses the whole object first, so a rejected state leaves the PSG
-        unchanged.
-        """
-        self.apply_synth_state(self.parse_synth_state(state, "psg.synth"))
 
     def apply_synth_state(self, state: PsgSynthState) -> None:
         """Assign an already-parsed PsgSynthState (see parse_synth_state).

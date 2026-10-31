@@ -184,11 +184,6 @@ class DiskDrive:
             "disk_sha1": disk_sha1,
         }
 
-    def restore(self, state: dict[str, object]) -> None:
-        """Restore head position after verifying the currently-mounted
-        image's identity matches the snapshot's (see parse_state())."""
-        self.apply_state(self.parse_state(state, "drive"))
-
     def apply_state(self, state: DiskDriveState) -> None:
         """Assign a state returned by parse_state()."""
         self.track = state["track"]

@@ -146,8 +146,8 @@ def test_legacy_subslot_all_four_pages_resolve_independently_at_once() -> None:
         slot_register=_ALL_SLOT3,
         ram_mapper=RamMapper(),
         sub_slot_enabled=True,
+        sub0_rom=sub_rom,
     )
-    mem.set_sub0_rom(sub_rom)
     mem.ram_mapper.write(0xC000, 0x77)  # pre-seed sub-slot 3 -> RAM mapper's own store
     # page0 -> sub-slot 0 (SUB ROM), page1 -> sub-slot 1 (reserved),
     # page2 -> sub-slot 2 (RAM mapper), page3 -> sub-slot 3 (RAM mapper).

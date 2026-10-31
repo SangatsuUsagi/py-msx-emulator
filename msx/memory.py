@@ -167,13 +167,8 @@ class Memory:
         """Enforce SlotThreeStrategyIsExclusive: ram_mapper/flat_ram_subslot
         are mutually exclusive slot-3 RAM strategies, and fdc requires one of
         the two (either satisfies it; an fdc may coexist with either RAM
-        strategy). Called from __post_init__ (once, at the end of
-        construction) and from set_ram_mapper/set_fdc (so a post-construction
-        reassignment of either can't silently desync the routing cache from
-        this invariant -- flat_ram_subslot itself is construction-time-fixed,
-        with no setter, so it can't cause the same desync) -- every caller
-        runs after the dataclass __init__ has finished, so all three fields
-        always exist by the time this runs.
+        strategy). Called once, from __post_init__: the three fields have no
+        setter.
         """
         ram_mapper = self.ram_mapper
         flat_ram_subslot = self.flat_ram_subslot
@@ -216,23 +211,6 @@ class Memory:
     def set_slot2_sub_slot_reg(self, value: int) -> None:
         self.slot2_sub_slot_reg = value
         self._page_cache_valid = False
-
-    def set_ram_mapper(self, value: "RamMapper | None") -> None:
-        self.ram_mapper = value
-        self._page_cache_valid = False
-        # ram_mapper participates in the slot-3 RAM strategy exclusivity
-        # check -- see _validate_slot3_strategy.
-        self._validate_slot3_strategy()
-
-    def set_sub0_rom(self, value: bytes | None) -> None:
-        self.sub0_rom = value
-        self._page_cache_valid = False
-
-    def set_fdc(self, value: "FloppyDisk | None") -> None:
-        self.fdc = value
-        self._page_cache_valid = False
-        # fdc requires flat_ram_subslot -- see _validate_slot3_strategy.
-        self._validate_slot3_strategy()
 
     def __post_init__(self) -> None:
         self._rom_len = len(self.rom)

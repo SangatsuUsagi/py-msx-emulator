@@ -34,6 +34,7 @@ from msx.mapper import (
 from msx.ram_mapper import RamMapper
 from msx.scc import SCC
 from msx.snapshot_schema import SchemaError
+from tests.factories import restore_state
 
 _PAGE_8K = 8192
 
@@ -257,7 +258,7 @@ def test_json_decoded_snapshot_parses_and_restores(name: str) -> None:
     assert m.parse_state(decoded, "state") == m.snapshot()
     fresh = _STATEFUL[name]()
     fresh.reset()
-    fresh.restore(decoded)
+    restore_state(fresh, decoded)
     assert fresh.snapshot() == m.snapshot()
 
 
@@ -298,7 +299,7 @@ def test_malformed_state_rejected_and_restore_leaves_mapper_unchanged(name: str)
             m.parse_state(bad, "state")
         before = m.snapshot()
         with pytest.raises(ValueError):
-            m.restore(bad)
+            restore_state(m, bad)
         assert m.snapshot() == before, f"{name}: {case} changed the mapper"
 
 
@@ -320,18 +321,18 @@ def test_error_message_names_field_path() -> None:
 def test_stateless_mapper_accepts_only_empty_object(name: str) -> None:
     m = _STATELESS[name]()
     assert m.parse_state({}, "state") == {}
-    m.restore({})
+    restore_state(m, {})
     for bad in ({"banks": [0, 0, 0, 0]}, [], None):
         with pytest.raises(SchemaError):
             m.parse_state(bad, "state")
     with pytest.raises(ValueError):
-        m.restore({"banks": [0]})
+        restore_state(m, {"banks": [0]})
 
 
 def _assert_rejected_unchanged(m: Any, bad: dict[str, object]) -> None:
     before = m.snapshot()
     with pytest.raises(ValueError):
-        m.restore(bad)
+        restore_state(m, bad)
     assert m.snapshot() == before
 
 
@@ -346,14 +347,14 @@ def test_gamemaster2_sram_half_must_be_0_or_0x1000() -> None:
     snap = _copy(m.snapshot())
     snap["sram_half"] = 0x1000
     snap["window_sram_half"] = [0x1000, 0, 0x1000, 0]
-    m.restore(snap)
+    restore_state(m, snap)
     assert m._sram_half == 0x1000
 
 
 def test_rtype_bank_above_0x17_rejected() -> None:
     m = _rtype()
     _assert_rejected_unchanged(m, {"bank": 0x18})
-    m.restore({"bank": 0x17})
+    restore_state(m, {"bank": 0x17})
     assert m._bank == 0x17
 
 
@@ -368,7 +369,7 @@ def test_majutsushi_missing_last_dac_leaves_banks_unchanged() -> None:
     m = _majutsushi()
     pre_banks = list(m._banks)
     with pytest.raises(ValueError):
-        m.restore({"banks": [0, 1, 2, 3]})
+        restore_state(m, {"banks": [0, 1, 2, 3]})
     assert list(m._banks) == pre_banks
 
 
@@ -379,7 +380,7 @@ def test_scci_non_int_mode_register_leaves_ram_unchanged() -> None:
     snap["ram"] = bytearray(len(pre_ram))
     snap["mode_register"] = "x"
     with pytest.raises(ValueError):
-        m.restore(snap)
+        restore_state(m, snap)
     assert bytes(m.ram) == pre_ram
 
 

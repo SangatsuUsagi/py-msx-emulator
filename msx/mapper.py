@@ -177,7 +177,6 @@ class Mapper(Protocol):
     # `apply_state(MapperState)`.
     def parse_state(self, obj: object, label: str) -> Mapping[str, object]: ...
     def apply_state(self, state: Mapping[str, object]) -> None: ...
-    def restore(self, state: dict[str, object]) -> None: ...
     def debug_bank(self, page: int) -> BankView: ...
     def reset(self) -> None: ...
     # The battery-backed SRAM the host persists, or None for a mapper without
@@ -291,12 +290,6 @@ class BankTracingMapper:
         """Overridden by every concrete subclass with its own state schema."""
         raise NotImplementedError
 
-    def restore(self, state: dict[str, object]) -> None:
-        """parse_state + apply_state in one call -- shared by every
-        BankTracingMapper subclass, since only parse_state/apply_state
-        themselves differ per mapper, never how restore composes them."""
-        self.apply_state(self.parse_state(state, "state"))
-
 
 _GM2_SRAM_HALVES: tuple[int, ...] = (0, 0x1000)
 
@@ -345,9 +338,6 @@ class _NoStateMapperMixin:
 
     def apply_state(self, state: Mapping[str, object]) -> None:
         pass
-
-    def restore(self, state: dict[str, object]) -> None:
-        self.apply_state(self.parse_state(state, "state"))
 
     def debug_bank(self, page: int) -> BankView:
         return NO_BANK

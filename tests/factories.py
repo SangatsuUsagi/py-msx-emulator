@@ -71,6 +71,16 @@ def _msx2_spec() -> MachineSpec:
     )
 
 
+def restore_state(producer: object, state: object, label: str = "state") -> None:
+    """parse_state then apply_state, as load_state runs them for one producer."""
+    producer.apply_state(producer.parse_state(state, label))  # type: ignore[attr-defined]
+
+
+def restore_psg_synth(psg: object, state: object) -> None:
+    """The PSG generator state's parse_state then apply_state."""
+    psg.apply_synth_state(psg.parse_synth_state(state, "psg.synth"))  # type: ignore[attr-defined]
+
+
 def make_loaded_config(
     rom: bytes,
     cartridge: bytes | None = None,

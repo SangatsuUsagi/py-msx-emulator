@@ -7,6 +7,7 @@ from __future__ import annotations
 import pytest
 
 from msx.mapper import GameMaster2Mapper
+from tests.factories import restore_state
 
 _PAGE = 0x2000  # 8 KB
 
@@ -134,7 +135,7 @@ class TestSnapshotRestore:
         snap = m.snapshot()
 
         m2 = GameMaster2Mapper(rom=_ROM_128K)
-        m2.restore(snap)
+        restore_state(m2, snap)
         assert m2.sram_image.read(0x100) == 0x99
 
     def test_restore_with_missing_key_does_not_partially_mutate(self):
@@ -155,7 +156,7 @@ class TestSnapshotRestore:
 
         del snap["sram_enabled"]
         with pytest.raises(ValueError):
-            m.restore(snap)
+            restore_state(m, snap)
 
         assert list(m._banks) == pre_banks
         assert m._sram_half == pre_sram_half
@@ -171,7 +172,7 @@ class TestSnapshotRestore:
         snap = m.snapshot()
 
         m2 = GameMaster2Mapper(rom=_ROM_128K)
-        m2.restore(snap)
+        restore_state(m2, snap)
         assert m2.read(0x6010) == _rom_byte(7, 0x10)
         assert m2.read(0x8100) == 0x5A
 
@@ -182,7 +183,7 @@ class TestSnapshotRestore:
         snap = m.snapshot()
         m.write(0x8000, 0x04)  # mutate: window 2 back to ROM
         m.sram_image.write(0x100, 0xFF)
-        m.restore(snap)
+        restore_state(m, snap)
         assert m.read(0x8100) == 0x3C
 
 
