@@ -47,6 +47,8 @@ class FmPacState(TypedDict):
 _WINDOW_BASE = 0x4000
 _WINDOW_SIZE = 0x4000
 _BANK_SIZE = 0x4000
+# The ROM is four 16 KB banks; the machine build rejects another size.
+FMPAC_ROM_SIZE = 4 * _BANK_SIZE
 
 # Window-relative (address & 0x3FFF) offsets of the fixed registers.
 _OFF_MAGIC_LO = 0x1FFE

@@ -246,6 +246,27 @@ def test_fmpac_on_both_slots_rejected(tmp_path: Path) -> None:
         )
 
 
+def test_fmpac_rom_that_is_not_64kb_is_rejected(tmp_path: Path) -> None:
+    # cart-fmpac "A ROM that is not 64 KB is rejected".
+    from msx.boundary import STATUS_BAD_CONFIG
+    from msx.machine_loader import create_machine
+
+    (tmp_path / "fmpac.rom").write_bytes(bytes(0x2000))
+    overlay = ExtensionOverlay(
+        device="fmpac", rom_base_dir=tmp_path,
+        rom_entry=RomEntry(file="fmpac.rom", size_kb=8, pages=[]),
+        sram_save_path=tmp_path / "fmpac.sram",
+    )
+    config = load_machine_config(
+        _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
+        extension_overlay2=overlay,
+    )
+    result = create_machine(config)
+    assert result.status == STATUS_BAD_CONFIG
+    assert result.machine is None
+    assert b"8192 bytes" in result.error_text
+
+
 # ---------------------------------------------------------------------------
 # Cross-slot SRAM independence: an FM-PAC on slot 1 and HBI-J1's halnote
 # cartridge on slot 2, each with its own battery-backed SRAM, persisting

@@ -53,6 +53,11 @@ class RamMapper:
             configured bank count (`bit_ceil(num_banks) - 1`, matching
             openMSX's `MSXMemoryMapperBase` segment masking) rather than a
             bit width fixed at 3 bits.
+        _seg_offset: Physical offset of the bank each register value
+            (0-0xFF) selects. A masked value at or above the bank count
+            selects `value & (num_banks - 1)` (openMSX
+            MSXMemoryMapperBase::segmentOffset), so a bank count that is not
+            a power of two never reads past `ram`.
     """
 
     # Persisted entirely through the generic save-state mechanism
@@ -66,6 +71,7 @@ class RamMapper:
     # ~bank_mask & 0xFF, precomputed for read_port (constant for the instance's
     # lifetime; avoids recomputing the inverse mask on every port read).
     _read_port_or_mask: int = field(init=False, default=0)
+    _seg_offset: list[int] = field(init=False, repr=False, default_factory=list)
 
     def __post_init__(self) -> None:
         if self.size_kb <= 0 or self.size_kb % 16 != 0:
@@ -78,6 +84,12 @@ class RamMapper:
         # docstring's bank_mask entry).
         self.bank_mask = (1 << (num_banks - 1).bit_length()) - 1
         self._read_port_or_mask = ~self.bank_mask & 0xFF
+        self._seg_offset = []
+        for value in range(0x100):
+            bank = value & self.bank_mask
+            if bank >= num_banks:
+                bank &= num_banks - 1
+            self._seg_offset.append(bank * _BANK_SIZE)
 
     def reset(self) -> None:
         """Restore power-on/reset bank state. RAM contents are retained,
@@ -90,8 +102,7 @@ class RamMapper:
 
     def _phys(self, addr: int) -> int:
         page = (addr & 0xFFFF) >> 14
-        bank = self.banks[page] & self.bank_mask
-        return bank * _BANK_SIZE + (addr & 0x3FFF)
+        return self._seg_offset[self.banks[page]] | (addr & 0x3FFF)
 
     def read(self, addr: int) -> int:
         return self.ram[self._phys(addr)]
@@ -141,5 +152,5 @@ class RamMapper:
         """
         if not 0 <= page <= 3:
             return NO_BANK
-        bank = self.banks[page] & self.bank_mask
+        bank = self._seg_offset[self.banks[page]] // _BANK_SIZE
         return BankView(BANK_WINDOW_16K, (WINDOW_PAGE, WINDOW_NONE), (bank, 0))

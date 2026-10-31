@@ -33,7 +33,7 @@ from msx.boundary import (
     subslot_sram_id,
 )
 from msx.cpu.z80 import Z80
-from msx.fmpac import FmPac
+from msx.fmpac import FMPAC_ROM_SIZE, FmPac
 from msx.input import InputLines
 from msx.io import IOBus
 from msx.kanji import KanjiRom
@@ -233,19 +233,23 @@ def _checked_image(images: dict[str, bytes], role: str, ref: RomRef) -> bytes:
 
 
 def _media_by_id(config: MachineConfig) -> dict[MediaId, bytes]:
-    """The medium images by id, rejecting a second record for one id and a
-    drive id (disks travel in MachineConfig.disks)."""
+    """The medium images by id, rejecting a second record for one id, a
+    drive id (disks travel in MachineConfig.disks) and an id that is no
+    MediaId. An id given as a plain int is read as the MediaId of that
+    value."""
     media: dict[MediaId, bytes] = {}
     for image in config.media:
-        if image.media_id in DRIVE_MEDIA_IDS:
+        mid = int(image.media_id)
+        if mid in DRIVE_MEDIA_IDS:
             raise MachineLoadError(
-                f"MachineConfig has a medium image for {image.media_id.name}, a drive id"
+                f"MachineConfig has a medium image for {MediaId(mid).name}, a drive id"
             )
-        if image.media_id in media:
-            raise MachineLoadError(
-                f"MachineConfig has two medium images for {image.media_id.name}"
-            )
-        media[image.media_id] = image.data
+        if mid < 0 or mid > MediaId.RTC_CMOS:
+            raise MachineLoadError(f"MachineConfig has a medium image for unknown id {mid}")
+        media_id = MediaId(mid)
+        if media_id in media:
+            raise MachineLoadError(f"MachineConfig has two medium images for {media_id.name}")
+        media[media_id] = image.data
     return media
 
 
@@ -519,7 +523,8 @@ def _wire_flat_overlay(
             `scc_i_cart` is selected while a KonamiSCC cartridge mapper or
             another slot's `scc_i_cart` already resolved a chip (see
             above), or if `fmpac` is selected while the other cartridge
-            slot's `fmpac` extension already resolved one.
+            slot's `fmpac` extension already resolved one, or if the
+            FM-PAC ROM is not FMPAC_ROM_SIZE bytes.
     """
     spec = config.spec
     fmpac_device: FmPac | None = None
@@ -530,9 +535,15 @@ def _wire_flat_overlay(
                 "cartridge slots at once: real hardware has one FM-PAC "
                 "cartridge, and Machine has a single fmpac field"
             )
+        fmpac_rom = _rom(config, f"slot{slot}.ext")
+        if len(fmpac_rom) != FMPAC_ROM_SIZE:
+            raise MachineLoadError(
+                f"{spec.machine_id}: the FM-PAC ROM is {len(fmpac_rom)} bytes, "
+                f"not {FMPAC_ROM_SIZE}"
+            )
         fmpac_sram = config.media.get(MediaId.FMPAC_SRAM)
         fmpac_device = FmPac(
-            rom=_rom(config, f"slot{slot}.ext"),
+            rom=fmpac_rom,
             opll=Opll(),
             sram=fmpac_sram,
         )
