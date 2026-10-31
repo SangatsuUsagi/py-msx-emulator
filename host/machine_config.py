@@ -148,15 +148,21 @@ class _DeviceDef:
     raw: dict[str, Any]
 
 
+# RAM sizes a machine YAML may leave out.
+_DEFAULT_MSX1_RAM_KB = 32
+_DEFAULT_RAM_MAPPER_KB = 128
+_DEFAULT_FLAT_RAM_KB = 64
+
+
 @dataclass
 class _Slot3Msx2:
     """Resolved MSX2 slot 3 layout (named to avoid a positional tuple)."""
     sub_rom: RomEntry | None = None
     sub_rom_subslot: int = 0
     has_ram_mapper: bool = False
-    ram_mapper_size_kb: int = 128
+    ram_mapper_size_kb: int = _DEFAULT_RAM_MAPPER_KB
     flat_ram_subslot: int | None = None
-    flat_ram_size_kb: int = 64
+    flat_ram_size_kb: int = _DEFAULT_FLAT_RAM_KB
     fdc: FdcDef | None = None
     fdc_subslot: int = 0
 
@@ -512,7 +518,7 @@ def _parse_slot0(
 
 def _parse_slot3_msx1(slot3: Slot3Msx1Yaml) -> int:
     """Return flat RAM size in KB for an MSX1 slot 3 declaration."""
-    return int(slot3.get("size_kb", 32))
+    return int(slot3.get("size_kb", _DEFAULT_MSX1_RAM_KB))
 
 
 def _parse_fdc(sub_val: SubSlotYaml, machine_id: str, sub_idx: int) -> FdcDef | None:
@@ -619,17 +625,17 @@ def _parse_slot3_msx2(slot3: Slot3Msx2Yaml, machine_id: str) -> _Slot3Msx2:
                     result.fdc_subslot = sub_idx
             if sub_val.get("mapper") == "standard":
                 result.has_ram_mapper = True
-                result.ram_mapper_size_kb = int(sub_val.get("size_kb", 128))
+                result.ram_mapper_size_kb = int(sub_val.get("size_kb", _DEFAULT_RAM_MAPPER_KB))
                 _check_ram_mapper_size_kb(
                     f"machine '{machine_id}' slot 3 sub-slot {sub_idx}",
                     result.ram_mapper_size_kb,
                 )
             elif sub_val.get("type") == "ram":
                 result.flat_ram_subslot = sub_idx
-                result.flat_ram_size_kb = int(sub_val.get("size_kb", 64))
+                result.flat_ram_size_kb = int(sub_val.get("size_kb", _DEFAULT_FLAT_RAM_KB))
     elif slot3.get("mapper") == "standard":
         result.has_ram_mapper = True
-        result.ram_mapper_size_kb = int(slot3.get("size_kb", 128))
+        result.ram_mapper_size_kb = int(slot3.get("size_kb", _DEFAULT_RAM_MAPPER_KB))
         _check_ram_mapper_size_kb(f"machine '{machine_id}' slot 3", result.ram_mapper_size_kb)
 
     _validate_slot3(f"machine '{machine_id}' slot 3", result)
@@ -685,6 +691,39 @@ class _BuiltinDevices(NamedTuple):
     io_ports: dict[str, tuple[int, int]]
 
 
+def _device_option(dev: _DeviceDef, overrides: object, key: str, default: object) -> object:
+    """A device option: the device YAML's value, or the machine's override."""
+    if isinstance(overrides, dict) and key in overrides:
+        return overrides[key]
+    return dev.raw.get(key, default)
+
+
+def _parse_ppi8255(
+    dev: _DeviceDef, entry: BuiltinDeviceEntryYaml, machine_path: Path
+) -> tuple[KeyboardLayout, PpiControlRead]:
+    """The keyboard layout and control-port read mode of a ppi8255 entry."""
+    overrides = entry.get("overrides")
+    kt = str(_device_option(dev, overrides, "keyboard_type", "int")).lower()
+    if kt not in ("int", "jp"):
+        raise MachineLoadError(
+            f"{machine_path}: ppi8255 keyboard_type must be 'int' or 'jp', got {kt!r}"
+        )
+    if "control_readback" in dev.raw or (
+        isinstance(overrides, dict) and "control_readback" in overrides
+    ):
+        raise MachineLoadError(
+            f"{machine_path}: ppi8255 control_readback was replaced by "
+            "control_read (control, open_bus or bus_latch)"
+        )
+    cr = _device_option(dev, overrides, "control_read", PpiControlRead.CONTROL.value)
+    valid = [m.value for m in PpiControlRead]
+    if cr not in valid:
+        raise MachineLoadError(
+            f"{machine_path}: ppi8255 control_read must be one of {valid}, got {cr!r}"
+        )
+    return KeyboardLayout.from_spelling(kt), PpiControlRead(str(cr))
+
+
 def _parse_builtin_devices(
     raw: MachineEntryYaml,
     device_registry: dict[str, _DeviceDef],
@@ -720,34 +759,7 @@ def _parse_builtin_devices(
         elif ref_str == "rtc_rp5c01":
             has_rtc = True
         elif ref_str == "ppi8255":
-            # Keyboard layout: device-YAML default, optionally overridden per machine.
-            kt = dev.raw.get("keyboard_type", "int")
-            overrides = entry.get("overrides")
-            if isinstance(overrides, dict) and "keyboard_type" in overrides:
-                kt = overrides["keyboard_type"]
-            kt = str(kt).lower()
-            if kt not in ("int", "jp"):
-                raise MachineLoadError(
-                    f"{machine_path}: ppi8255 keyboard_type must be 'int' or 'jp', got {kt!r}"
-                )
-            keyboard_type = KeyboardLayout.from_spelling(kt)
-            if "control_readback" in dev.raw or (
-                isinstance(overrides, dict) and "control_readback" in overrides
-            ):
-                raise MachineLoadError(
-                    f"{machine_path}: ppi8255 control_readback was replaced by "
-                    "control_read (control, open_bus or bus_latch)"
-                )
-            cr = dev.raw.get("control_read", PpiControlRead.CONTROL.value)
-            if isinstance(overrides, dict) and "control_read" in overrides:
-                cr = overrides["control_read"]
-            valid = [m.value for m in PpiControlRead]
-            if cr not in valid:
-                raise MachineLoadError(
-                    f"{machine_path}: ppi8255 control_read must be one of {valid}, "
-                    f"got {cr!r}"
-                )
-            ppi_control_read = PpiControlRead(cr)
+            keyboard_type, ppi_control_read = _parse_ppi8255(dev, entry, machine_path)
         ports_raw: Any = dev.raw.get("io_ports")
         if isinstance(ports_raw, list) and len(ports_raw) >= 1:
             device_io_ports[ref_str] = (int(ports_raw[0]), int(ports_raw[-1]))
@@ -840,32 +852,16 @@ def load_machine_spec(
             f"{machine_path}: slot 0 has no main ROM (content with pages [0] or [1])"
         )
 
-    sub_rom_entry: RomEntry | None = None
-    sub_rom_subslot = 0
-    has_ram_mapper = False
-    ram_mapper_size_kb = 128
-    ram_size_kb = 32
-    flat_ram_subslot: int | None = None
-    flat_ram_size_kb = 64
-    fdc: FdcDef | None = None
-    fdc_subslot = 0
-
     slot3: dict[str, Any] = primary.get(3, {})
     if not isinstance(slot3, dict):
         slot3 = {}
 
+    ram_size_kb = _DEFAULT_MSX1_RAM_KB
+    s3 = _Slot3Msx2()
     if generation == "msx2":
         # Same reasoning as the msx1 branch's cast below: slot3 is already
         # confirmed dict-shaped, shared with _parse_slot3_msx1's dict[str, Any].
         s3 = _parse_slot3_msx2(cast(Slot3Msx2Yaml, slot3), machine_id)
-        sub_rom_entry = s3.sub_rom
-        sub_rom_subslot = s3.sub_rom_subslot
-        has_ram_mapper = s3.has_ram_mapper
-        ram_mapper_size_kb = s3.ram_mapper_size_kb
-        flat_ram_subslot = s3.flat_ram_subslot
-        flat_ram_size_kb = s3.flat_ram_size_kb
-        fdc = s3.fdc
-        fdc_subslot = s3.fdc_subslot
     else:
         # slot3 is already confirmed dict-shaped above; TypedDict is a plain
         # dict at runtime, so this is a widening/narrowing view of the same
@@ -896,9 +892,9 @@ def load_machine_spec(
         main_rom_entry=main_rom_entry,
         logo_rom_entry=logo_rom_entry,
         slot0_ram_entry=slot0_ram_entry,
-        sub_rom_entry=sub_rom_entry,
-        has_ram_mapper=has_ram_mapper,
-        ram_mapper_size_kb=ram_mapper_size_kb,
+        sub_rom_entry=s3.sub_rom,
+        has_ram_mapper=s3.has_ram_mapper,
+        ram_mapper_size_kb=s3.ram_mapper_size_kb,
         ram_size_kb=ram_size_kb,
         has_v9938=has_v9938,
         has_rtc=has_rtc,
@@ -907,11 +903,11 @@ def load_machine_spec(
         device_io_ports=device_io_ports,
         video_standard=video_standard,
         m1_wait_states=m1_wait_states,
-        flat_ram_subslot=flat_ram_subslot,
-        flat_ram_size_kb=flat_ram_size_kb,
-        sub_rom_subslot=sub_rom_subslot,
-        fdc=fdc,
-        fdc_subslot=fdc_subslot,
+        flat_ram_subslot=s3.flat_ram_subslot,
+        flat_ram_size_kb=s3.flat_ram_size_kb,
+        sub_rom_subslot=s3.sub_rom_subslot,
+        fdc=s3.fdc,
+        fdc_subslot=s3.fdc_subslot,
         io_device=io_device,
     )
 
