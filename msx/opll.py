@@ -1124,6 +1124,72 @@ class Opll:
         self._noise = noise
         return total
 
+    def _is_idle(self) -> bool:
+        """Whether the chip is silent and stays silent until a register
+        write: the test register is 0, every channel output that
+        _update_output writes in the current mode is 0 (0-5, then 6-8 for
+        melody or 9-13 for rhythm; the others keep an old value that
+        neither path touches), and every slot is in RELEASE or SUSTAIN at
+        EG_MUTE with no update request and a zero output history. In that
+        state _update_output keeps every
+        slot's envelope where it is (the decay step is capped at EG_MUTE,
+        and neither state has a transition) and gives 0, and only the
+        counters, the phase generators and the noise move -- what
+        _idle_tick does. A key-off moves only the carrier to RELEASE; a
+        modulator that has decayed to EG_MUTE stays in SUSTAIN."""
+        if self._test_flag != 0:
+            return False
+        out = self._ch_out
+        for i in range(6):
+            if out[i] != 0:
+                return False
+        mode_outputs = range(9, 14) if self._rhythm_mode else range(6, 9)
+        for i in mode_outputs:
+            if out[i] != 0:
+                return False
+        for slot in self._slot:
+            if slot.eg_out != _EG_MUTE:
+                return False
+            if slot.eg_state != _RELEASE and slot.eg_state != _SUSTAIN:
+                return False
+            if slot.update_requests != 0:
+                return False
+            if slot.output[0] != 0 or slot.output[1] != 0:
+                return False
+        return True
+
+    def _idle_tick(self) -> int:
+        """One native tick of a chip in the _is_idle state: the same state
+        change as _update_output there, without synthesizing the silent
+        voices. Returns 0.
+
+        KEEP IN SYNC with _update_output and _update_slots: the LFO and the
+        short-noise signal as there, the envelope counter, the phase
+        generator of _update_slots (the test register is 0, so no phase
+        reset) and the 14 + 2 + 2 noise LFSR shifts. tests/test_opll.py runs
+        this and _update_output side by side.
+        """
+        self._update_ampm()
+        self._update_short_noise()
+        self._eg_counter += 1
+        pm_col = (self._pm_phase >> 10) & 7
+        slots = self._slot
+        for i in range(18):
+            slot = slots[i]
+            patch = slot.patch
+            pm = _PM_TABLE[(slot.fnum >> 6) & 7][pm_col] if patch.PM else 0
+            pg_delta = ((slot.fnum & 0x1FF) * 2 + pm) * _ML_TABLE[patch.ML]
+            pg_phase = (slot.pg_phase + (pg_delta << slot.blk >> 2)) & (_DP_WIDTH - 1)
+            slot.pg_phase = pg_phase
+            slot.pg_out = pg_phase >> _DP_BASE_BITS
+        noise = self._noise
+        for _ in range(18):
+            if noise & 1:
+                noise ^= 0x800200
+            noise >>= 1
+        self._noise = noise
+        return 0
+
     # ------------------------------------------------------- sample generation
 
     def generate_samples(self, n: int) -> bytearray:
@@ -1140,12 +1206,15 @@ class Opll:
         # an output sample subtracts CPU_CLOCK_HZ. It stays in
         # [0, _PHASE_PER_TICK), the range parse_state accepts.
         phase = self._resample_phase
+        # Register writes come only between calls, so a chip that is silent
+        # now stays silent for the whole call (see _is_idle).
+        tick = self._idle_tick if self._is_idle() else self._update_output
         for i in range(n):
             acc = 0
             cnt = 0
             while CPU_CLOCK_HZ > phase:
                 phase += _PHASE_PER_TICK
-                acc += self._update_output()
+                acc += tick()
                 cnt += 1
             phase -= CPU_CLOCK_HZ
             raw = (acc // cnt) if cnt else 0

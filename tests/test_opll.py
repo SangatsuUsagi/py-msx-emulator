@@ -607,3 +607,62 @@ def test_a_phase_outside_the_range_is_rejected(phase: object) -> None:
     state["resample_phase"] = phase
     with pytest.raises(SchemaError, match="resample_phase"):
         o.parse_state(state, "opll")
+
+
+# ---------------------------------------------------------------------------
+# Idle path (generate_samples on a silent chip)
+# ---------------------------------------------------------------------------
+
+def _released_chip(*, rhythm: bool) -> Opll:
+    """A chip that played a vibrato note on a percussive user patch, then
+    released it until silent. fnum != 0 and PM on, so the idle path must
+    still advance the phase generators and the vibrato LFO."""
+    o = Opll()
+    # User patch: PM on for both operators, percussive EG (type bit clear),
+    # AR/DR/SL/RR 0xF so both operators reach EG_MUTE.
+    o.write_reg(0x00, 0x41)
+    o.write_reg(0x01, 0x41)
+    for reg in (0x04, 0x05, 0x06, 0x07):
+        o.write_reg(reg, 0xFF)
+    if rhythm:
+        o.write_reg(0x0E, 0x20)  # rhythm mode, no drum keyed
+    for ch in range(6 if rhythm else 9):
+        o.write_reg(0x30 + ch, 0x00)  # instrument 0 (user), loudest
+        o.write_reg(0x10 + ch, 0x50 + ch)
+        o.write_reg(0x20 + ch, 0x17)  # key on, block 3, fnum bit 8 set
+    for _ in range(20):
+        o.generate_samples(735)
+    for ch in range(9):
+        o.write_reg(0x20 + ch, 0x07)  # key off, fnum kept
+    for _ in range(40):
+        o.generate_samples(735)
+        if o._is_idle():
+            return o
+    raise AssertionError("the chip did not become idle")
+
+
+@pytest.mark.parametrize("rhythm", [False, True])
+def test_idle_tick_matches_the_full_tick(rhythm: bool) -> None:
+    idle = _released_chip(rhythm=rhythm)
+    full = _released_chip(rhythm=rhythm)
+    assert idle.snapshot() == full.snapshot()
+    for _ in range(3000):
+        assert idle._idle_tick() == full._update_output() == 0
+        assert idle.snapshot() == full.snapshot()
+    assert full._is_idle()
+
+
+def test_a_fresh_chip_is_idle_after_its_first_call() -> None:
+    # reset() requests every slot's update; the first call commits them.
+    o = Opll()
+    assert not o._is_idle()
+    assert _max_abs(o.generate_samples(735)) == 0
+    assert o._is_idle()
+
+
+def test_a_key_on_after_a_silent_call_takes_the_full_path() -> None:
+    o = _released_chip(rhythm=False)
+    assert _max_abs(o.generate_samples(735)) == 0
+    _key_on(o, 0)
+    assert not o._is_idle()
+    assert _max_abs(o.generate_samples(735)) > 0
