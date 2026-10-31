@@ -92,7 +92,11 @@ class MouseDevice:
     _cur_y_rel: int = field(default=0, init=False)
     _status: int = field(default=_STATUS_DEFAULT, init=False)
     _last_pin8: int = field(default=0, init=False)
-    _last_cycle: int = field(default=0, init=False)
+    # Cycles since the last pin-8 change are _base_age + (cycle - _base_cycle).
+    # Two fields, so a restored age above the clock's count needs no base below
+    # zero (an unsigned clock in a native core).
+    _base_cycle: int = field(default=0, init=False)
+    _base_age: int = field(default=0, init=False)
 
     def read(self) -> int:
         # Phase encoding makes the nibble selection a plain mod-4 group: 0=X
@@ -115,9 +119,10 @@ class MouseDevice:
         # only on a pin-8 level change, so a same-level write after the
         # timeout still resyncs to PHASE_YLOW2 (Mouse.cc's write() checks
         # the elapsed time before inspecting the value).
-        if cycle - self._last_cycle > _MOUSE_TIMEOUT_CYCLES:
+        if self._base_age + (cycle - self._base_cycle) > _MOUSE_TIMEOUT_CYCLES:
             self._phase = PHASE_YLOW2
-        self._last_cycle = cycle
+        self._base_cycle = cycle
+        self._base_age = 0
         if value == self._last_pin8:
             return
         self._last_pin8 = value
@@ -181,7 +186,7 @@ class MouseDevice:
             "cur_y_rel": self._cur_y_rel,
             "status": self._status,
             "last_pin8": self._last_pin8,
-            "last_cycle_age": cycle - self._last_cycle,
+            "last_cycle_age": self._base_age + (cycle - self._base_cycle),
         }
 
     def parse_state(self, obj: object, label: str) -> MouseState:
@@ -222,4 +227,5 @@ class MouseDevice:
         self._cur_y_rel = state["cur_y_rel"]
         self._status = state["status"]
         self._last_pin8 = state["last_pin8"]
-        self._last_cycle = cycle - state["last_cycle_age"]
+        self._base_cycle = cycle
+        self._base_age = state["last_cycle_age"]

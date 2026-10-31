@@ -666,3 +666,22 @@ def test_a_key_on_after_a_silent_call_takes_the_full_path() -> None:
     _key_on(o, 0)
     assert not o._is_idle()
     assert _max_abs(o.generate_samples(735)) > 0
+
+
+def test_the_envelope_counter_wraps_at_32_bits() -> None:
+    # machine-state "The envelope counter wraps".
+    o = Opll()
+    o._eg_counter = 0xFFFFFFFF
+    o._update_output()
+    assert o._eg_counter == 0
+    o._eg_counter = 0xFFFFFFFF
+    o._idle_tick()
+    assert o._eg_counter == 0
+
+
+def test_a_counter_past_32_bits_is_rejected() -> None:
+    # machine-state "A counter past 32 bits is rejected".
+    state = dict(Opll().snapshot())
+    state["eg_counter"] = 0x100000000
+    with pytest.raises(SchemaError, match="eg_counter"):
+        Opll().parse_state(state, "opll")

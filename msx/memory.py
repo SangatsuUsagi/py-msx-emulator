@@ -589,10 +589,10 @@ class Memory:
             return self.slot1_sub_slot_enabled, self._mapper1_subslots, self._mapper
         return self.slot2_sub_slot_enabled, self._mapper2_subslots, self._mapper2
 
-    def _describe_slot12(self, primary: int, secondary: int | None) -> tuple[int, int]:
+    def _describe_slot12(self, primary: int, secondary: int) -> tuple[int, int]:
         """(content, mapper id as a plain int) of cartridge slot 1 or 2."""
         sub_slot_enabled, subslots, mapper = self._cartridge_slot_state(primary)
-        if sub_slot_enabled and secondary is not None:
+        if sub_slot_enabled and secondary != -1:
             sub_mapper = subslots[secondary]
             if sub_mapper is None:
                 return SLOT_CONTENT_CARTRIDGE_EMPTY, -1
@@ -601,26 +601,26 @@ class Memory:
             return SLOT_CONTENT_CARTRIDGE_EMPTY, -1
         return SLOT_CONTENT_CARTRIDGE, int(mapper_id(mapper.kind))
 
-    def _describe_slot3(self, secondary: int | None, page: int | None) -> int:
+    def _describe_slot3(self, secondary: int, page: int) -> int:
         flat_sub = self.flat_ram_subslot
         if flat_sub is not None:
             # Data-driven layout (e.g. FS-A1F): mirror
             # _resolve_slot3_read_leaf's precedence -- SUB ROM at page 0
             # of sub_rom_subslot, FDC at fdc_page of fdc_subslot, flat
-            # RAM in flat_sub, open bus elsewhere. `page is None` (the
+            # RAM in flat_sub, open bus elsewhere. Page -1 (the
             # `st` tree view, one line per sub-slot) matches the
             # page-0/fdc_page role regardless of page, same as the
             # legacy branch below always describing sub-slot 0 as ROM.
             if (
                 secondary == self.sub_rom_subslot
                 and self.sub0_rom is not None
-                and page in (0, None)
+                and page in (0, -1)
             ):
                 return SLOT_CONTENT_SUB_ROM
             if (
                 secondary == self.fdc_subslot
                 and self.fdc is not None
-                and page in (self.fdc_page, None)
+                and page in (self.fdc_page, -1)
             ):
                 return SLOT_CONTENT_FDC
             if secondary == flat_sub:
@@ -636,11 +636,10 @@ class Memory:
             return SLOT_CONTENT_RAM
         return SLOT_CONTENT_EMPTY
 
-    def describe_slot(
-        self, primary: int, secondary: int | None, page: int | None
-    ) -> SlotInfo:
+    def describe_slot(self, primary: int, secondary: int, page: int) -> SlotInfo:
         """What a slot/sub-slot holds, its bank at `page` and its size, for
-        the core API's slot description (debug-monitor `sl`/`st`)."""
+        the core API's slot description (debug-monitor `sl`/`st`). -1 means no
+        sub-slot and no page, as in the core API."""
         mapper = -1
         if primary == 0:
             content = SLOT_CONTENT_MAIN_ROM
@@ -655,29 +654,28 @@ class Memory:
             bank.sub_banks, bank.sub_offsets,
         )
 
-    def _slot_bank(
-        self, primary: int, secondary: int | None, page: int | None
-    ) -> BankView:
+    def _slot_bank(self, primary: int, secondary: int, page: int) -> BankView:
         """The bank at `page` for the `sl` active-slot view."""
-        if primary == 3 and secondary in (2, 3) and page is not None:
+        if primary == 3 and secondary in (2, 3) and page != -1:
             rm = self.ram_mapper
             if rm is not None:
-                return BankView(BANK_SEGMENT, (WINDOW_PAGE, WINDOW_NONE), (rm.banks[page], 0))
+                segment = rm.debug_bank(page).window_values[0]
+                return BankView(BANK_SEGMENT, (WINDOW_PAGE, WINDOW_NONE), (segment, 0))
         if primary not in (1, 2):
             return NO_BANK
         sub_slot_enabled, subslots, mapper = self._cartridge_slot_state(primary)
-        if sub_slot_enabled and secondary is not None:
-            if page is None:
+        if sub_slot_enabled and secondary != -1:
+            if page == -1:
                 return NO_BANK
             sub_mapper = subslots[secondary]
             if sub_mapper is None:
                 return NO_BANK
             return sub_mapper.debug_bank(page)
-        if page is not None:
+        if page != -1:
             return mapper.debug_bank(page)
         return NO_BANK
 
-    def _slot_size_kb(self, primary: int, secondary: int | None) -> int:
+    def _slot_size_kb(self, primary: int, secondary: int) -> int:
         """Size in KB (e.g. 32) for the `st` tree view, or 0 for none."""
         if primary == 0:
             return len(self.rom) // 1024

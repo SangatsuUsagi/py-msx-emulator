@@ -70,6 +70,11 @@ if TYPE_CHECKING:
 HANG_PC_REPEAT_THRESHOLD: int = 1000
 
 
+# PORT-NOTE: Machine owns every device. A reference that one device holds to
+# another (the trace log, the input lines, the SCC, the Majutsushi mapper as
+# `dac`, the FM-PAC in a slot and in `fmpac`) does not own it and lives no longer
+# than the Machine, as CoreClock's readers do (msx/clock.py). In Rust, these are
+# indices or a borrow of the Machine; in C++ and Zig, plain pointers.
 @dataclass
 class Machine:
     cpu: Z80
@@ -112,7 +117,7 @@ class Machine:
     # run_frame() keeps the frame position. _resume_skip_pc is the PC whose
     # breakpoint test the first instruction of the next run skips.
     _stop_pending: bool = field(default=False, init=False, repr=False)
-    _resume_skip_pc: int | None = field(default=None, init=False, repr=False)
+    _resume_skip_pc: int = field(default=-1, init=False, repr=False)  # -1: none
     _breakpoints: frozenset[int] = field(default_factory=frozenset, repr=False)
     _watch_read: frozenset[int] = field(default_factory=frozenset, repr=False)
     _watch_write: frozenset[int] = field(default_factory=frozenset, repr=False)
@@ -120,15 +125,17 @@ class Machine:
     _pc_repeat: int = field(default=0, init=False, repr=False)
     # Crash-signature auto-break conditions (debugger bh/bs).
     _break_halt_di: bool = field(default=False, init=False, repr=False)
-    _sp_range: tuple[int, int] | None = field(default=None, init=False, repr=False)
+    _sp_low: int = field(default=-1, init=False, repr=False)  # -1: no SP range
+    _sp_high: int = field(default=-1, init=False, repr=False)
     _halt_di_seen: bool = field(default=False, init=False, repr=False)
     _sp_out_seen: bool = field(default=False, init=False, repr=False)
     # Targeted execution control (debugger g/so); one-shot, cleared on hit.
-    _temp_breakpoint: int | None = field(default=None, init=False, repr=False)
-    _stepout_sp: int | None = field(default=None, init=False, repr=False)
+    # -1: not set, here and in _frame_breakpoint.
+    _temp_breakpoint: int = field(default=-1, init=False, repr=False)
+    _stepout_sp: int = field(default=-1, init=False, repr=False)
     # One-shot run-to-frame breakpoint (debugger 'gf'); checked once per
     # run_frame() call, not per instruction — see set_frame_breakpoint.
-    _frame_breakpoint: int | None = field(default=None, init=False, repr=False)
+    _frame_breakpoint: int = field(default=-1, init=False, repr=False)
     # The most recent stop (last_stop()), cleared at the start of each
     # step_frame() and step() call.
     _stop: StopInfo = field(default_factory=StopInfo, init=False, repr=False)
@@ -447,8 +454,7 @@ class Machine:
         (-1, -1) disables. Returns STATUS_OK, or STATUS_BAD_ARGUMENT, keeping
         the range, for an end outside 0x0000-0xFFFF (one -1 included) or a
         low end above the high end."""
-        rng: tuple[int, int] | None = None
-        if (low, high) != (-1, -1):
+        if low != -1 or high != -1:
             for value in (low, high):
                 if value < 0 or value > 0xFFFF:
                     return self._fail(
@@ -457,8 +463,8 @@ class Machine:
                 return self._fail(
                     STATUS_BAD_ARGUMENT,
                     f"SP range low 0x{low:04X} above high 0x{high:04X}")
-            rng = (low, high)
-        self._sp_range = rng
+        self._sp_low = low
+        self._sp_high = high
         self._sp_out_seen = False
         self._error_text = b""
         return STATUS_OK
@@ -470,7 +476,7 @@ class Machine:
         if addr != -1 and (addr < 0 or addr > 0xFFFF):
             return self._fail(
                 STATUS_BAD_ARGUMENT, f"run-to address 0x{addr:X} outside 0x0000-0xFFFF")
-        self._temp_breakpoint = None if addr == -1 else addr
+        self._temp_breakpoint = addr
         self._error_text = b""
         return STATUS_OK
 
@@ -491,7 +497,7 @@ class Machine:
         for a frame below -1 or above 2^63 - 1 (the C int64_t)."""
         if frame < -1 or frame > 0x7FFF_FFFF_FFFF_FFFF:
             return self._fail(STATUS_BAD_ARGUMENT, f"frame {frame} is outside -1 to 2^63 - 1")
-        self._frame_breakpoint = None if frame == -1 else frame
+        self._frame_breakpoint = frame
         self._error_text = b""
         return STATUS_OK
 
@@ -501,9 +507,9 @@ class Machine:
             self._step_one
             or bool(self._breakpoints)
             or self._break_halt_di
-            or self._sp_range is not None
-            or self._temp_breakpoint is not None
-            or self._stepout_sp is not None
+            or self._sp_low != -1
+            or self._temp_breakpoint != -1
+            or self._stepout_sp != -1
             # Watchpoints need the per-instruction loop so a hit can return at the
             # instruction boundary instead of running to frame end.
             # NOTE: mere RPC attachment does NOT force the debug loop — a bare
@@ -528,16 +534,16 @@ class Machine:
                     return True
             else:
                 self._halt_di_seen = False
-        if self._sp_range is not None:
+        if self._sp_low != -1:
             sp = cpu.registers.SP
-            if sp < self._sp_range[0] or sp > self._sp_range[1]:
+            if sp < self._sp_low or sp > self._sp_high:
                 if not self._sp_out_seen:
                     self._sp_out_seen = True
                     return True
             else:
                 self._sp_out_seen = False
-        if self._stepout_sp is not None and cpu.registers.SP > self._stepout_sp:
-            self._stepout_sp = None
+        if self._stepout_sp != -1 and cpu.registers.SP > self._stepout_sp:
+            self._stepout_sp = -1
             return True
         return False
 
@@ -550,8 +556,8 @@ class Machine:
         the loop, so the value holds for the whole call."""
         return (
             self._break_halt_di
-            or self._sp_range is not None
-            or self._stepout_sp is not None
+            or self._sp_low != -1
+            or self._stepout_sp != -1
         )
 
     def set_watchpoints(self, entries: list[tuple[int, int]]) -> int:
@@ -726,11 +732,8 @@ class Machine:
             return self._bad_slot(f"no sub-slot {secondary}")
         if page != -1 and not 0 <= page <= 3:
             return self._bad_slot(f"no page {page}")
-        # The Memory helpers take None for "no sub-slot" and "no page".
-        sec = None if secondary == -1 else secondary
-        pg = None if page == -1 else page
         self._error_text = b""
-        return self.memory.describe_slot(primary, sec, pg)
+        return self.memory.describe_slot(primary, secondary, page)
 
     def _bad_slot(self, message: str) -> SlotInfo:
         self._fail(STATUS_BAD_ARGUMENT, message)
@@ -936,7 +939,7 @@ class Machine:
             total = self._run_lines(vdp9938, line, lpf, total)
             if self._stop_pending:
                 return self._keep_stopped_frame(total)
-        self._resume_skip_pc = None
+        self._resume_skip_pc = -1
         self._frame_active = False
         self.vdp.increment_frame()
         self._mix_frame_audio(self._frame_start_cycle)
@@ -944,14 +947,14 @@ class Machine:
         self._frame_result = bytearray()
         # Frame breakpoint (debugger 'gf'): once per frame, after the frame
         # is complete, so the stop reports a complete frame.
-        if self._frame_breakpoint is not None and self.vdp.frame_count == self._frame_breakpoint:
-            self._frame_breakpoint = None
+        if self._frame_breakpoint != -1 and self.vdp.frame_count == self._frame_breakpoint:
+            self._frame_breakpoint = -1
             self._enter_break(STOP_BREAKPOINT)
         return result
 
     def _keep_stopped_frame(self, total: int) -> bytearray:
         """Record where a stopped frame continues; return no video."""
-        self._resume_skip_pc = None
+        self._resume_skip_pc = -1
         self._frame_line = self._stop_line
         self._frame_total = total
         return bytearray()
@@ -1106,10 +1109,10 @@ class Machine:
                 elif pc == self._resume_skip_pc:
                     # First instruction after a stop or a step: run it
                     # without the breakpoint test.
-                    self._resume_skip_pc = None
+                    self._resume_skip_pc = -1
                 elif pc in self._breakpoints or pc == self._temp_breakpoint:
                     if pc == self._temp_breakpoint:
-                        self._temp_breakpoint = None
+                        self._temp_breakpoint = -1
                     self._enter_break(STOP_BREAKPOINT)
                     clock.cycle += line_cycles
                     self._stop_line = line

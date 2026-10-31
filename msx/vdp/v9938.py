@@ -477,6 +477,10 @@ class V9938:
     # machine loop is a slot load, not a descriptor call. Updated only in
     # update_irq()/reset(); read-only by convention for external consumers.
     irq: bool = field(default=False, init=False, repr=False)
+    # PORT-NOTE: a fixed array holds this log. Each entry takes at least one OUT
+    # (R#17 indirect writes through port 0x9B), and the fastest OUT takes 11
+    # T-states, so a PAL frame (71364 T-states) has at most 6488 entries. The
+    # log is cleared once per frame.
     _reg_write_log: list[_RegChange | _PaletteChange] = field(
         default_factory=list, init=False, repr=False
     )

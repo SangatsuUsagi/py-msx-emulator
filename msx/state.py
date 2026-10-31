@@ -976,7 +976,7 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
     machine.vdp.read_buf = vdp.read_buffer
     if vdp9938 is None:
         assert isinstance(machine.vdp, VDP)
-        machine.vdp.latch = vdp.latch
+        machine.vdp.restore_latch(vdp.latch)
     else:
         assert vdp.v9938 is not None  # parse_snapshot requires it for MSX2
         vdp9938.restore_state(vdp.v9938)
