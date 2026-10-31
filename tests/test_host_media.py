@@ -237,3 +237,18 @@ def test_the_host_releases_the_machine_after_the_media(monkeypatch) -> None:
     monkeypatch.setattr(msx.machine_loader, "release_machine", lambda _m: calls.append("release"))
     module._cleanup(object(), None, None, None, None, {}, DiskFiles())
     assert calls == ["media", "release"]
+
+
+def test_a_swap_makes_the_directory_of_the_outgoing_file(tmp_path: Path) -> None:
+    # host.media._write_back: a dirty disk goes back even when its directory
+    # is gone.
+    m = _fdc_machine()
+    files = DiskFiles()
+    (tmp_path / "gone").mkdir()
+    a = _dsk(tmp_path / "gone" / "a.dsk")
+    swap_disk(m, files, 0, a)
+    m.fdc.drives[0].image.write_sector(5, b"\xAB" * SECTOR_SIZE)
+    a.unlink()
+    a.parent.rmdir()
+    swap_disk(m, files, 0, None)
+    assert a.read_bytes()[5 * SECTOR_SIZE:6 * SECTOR_SIZE] == b"\xAB" * SECTOR_SIZE

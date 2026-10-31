@@ -19,6 +19,8 @@ from typing import Any
 
 import yaml
 
+from host.key_names import JOY_FUNCTION_BITS
+
 CONFIG_FILENAME = "py_emulator.yaml"
 
 # Built-in defaults — the single source of truth for values that are not set by
@@ -90,9 +92,7 @@ GAMEPAD_FUNCTION_KEYS: tuple[str, ...] = tuple(_GAMEPAD_FUNCTIONS)
 
 # MSX Joy1 functions configurable under keyboard_joystick.buttons. The
 # frontend keyboard maps each to its port bit and default key(s).
-_KEYBOARD_JOY_FUNCTIONS: tuple[str, ...] = (
-    "up", "down", "left", "right", "trigger_a", "trigger_b",
-)
+_KEYBOARD_JOY_FUNCTIONS: tuple[str, ...] = tuple(JOY_FUNCTION_BITS)
 
 # Keyboard key names accepted by keyboard_joystick.buttons: letters, digits,
 # arrows, comma and period. The SDL2 frontend translates each name to a key

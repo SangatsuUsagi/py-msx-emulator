@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
-from host.debugger.disasm import byte_reader, disassemble
+from host.debugger.disasm import byte_reader, disassemble, instruction_bytes
 from host.debugger.slots import slot_bank_text, slot_content_text
 from host.debugger.stop import sigint_interrupts, watch_hit_line
 from host.media import DiskFiles, swap_disk
@@ -46,7 +46,7 @@ def _format_disasm(read: Callable[[int], int], addr: int) -> tuple[str, int]:
     prefix (PC=..., ADDR:, => ...).
     """
     mnem, size = disassemble(read, addr)
-    raw_bytes = " ".join(f"{read((addr + i) & 0xFFFF):02X}" for i in range(size))
+    raw_bytes = instruction_bytes(read, addr, size)
     return f"{raw_bytes:<12}  {mnem}", size
 
 

@@ -210,8 +210,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 
 class _ResolvedPaths(NamedTuple):
-    cart_path: Path | None
-    slot2_path: Path | None
     fdd1_paths: list[Path]
     fdd2_path: Path | None
     cartridge: bytes | None
@@ -251,7 +249,7 @@ def _resolve_paths(
 
     cartridge = cart_path.read_bytes() if cart_path else None
     cartridge2 = slot2_path.read_bytes() if slot2_path else None
-    return _ResolvedPaths(cart_path, slot2_path, fdd1_paths, fdd2_path, cartridge, cartridge2)
+    return _ResolvedPaths(fdd1_paths, fdd2_path, cartridge, cartridge2)
 
 
 def _check_identical_cartridges(cartridge: bytes | None, cartridge2: bytes | None) -> None:

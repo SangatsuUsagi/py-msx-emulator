@@ -74,6 +74,15 @@ def media_paths(
     return paths
 
 
+def _write_back(machine: CoreApi, media_id: int, path: Path) -> None:
+    """Write a dirty medium to its file and clear its dirty flag. The id came
+    from dirty_media(), so the bytes are there."""
+    data = machine.read_media(media_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    machine.mark_persisted(media_id)
+
+
 def persist_dirty_media(
     machine: CoreApi,
     sram_paths: Mapping[int, Path] | None = None,
@@ -90,10 +99,7 @@ def persist_dirty_media(
         path = paths.get(media_id)
         if path is None:
             continue
-        data = machine.read_media(media_id)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(data)
-        machine.mark_persisted(media_id)
+        _write_back(machine, media_id, path)
 
 
 def swap_disk(
@@ -112,9 +118,7 @@ def swap_disk(
     if outgoing_path is not None:
         media_id = int(drive_media_id(drive))
         if media_id in machine.dirty_media():
-            # The id came from dirty_media(), so the bytes are there.
-            outgoing_path.write_bytes(machine.read_media(media_id))
-            machine.mark_persisted(media_id)
+            _write_back(machine, media_id, outgoing_path)
     if medium is None:
         status = machine.eject_disk(drive)
     else:
