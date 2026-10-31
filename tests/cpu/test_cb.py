@@ -8,7 +8,7 @@ def make_cpu(rom: list[int]) -> Z80:
     mem = Memory(
         rom=bytes(rom + [0] * (32768 - len(rom))),
         ram=bytearray(32768),
-        _mapper=FlatMapper(None),
+        mapper1=FlatMapper(None),
     )
     return Z80(read_byte=mem.read, write_byte=mem.write)
 
@@ -87,7 +87,7 @@ def test_bit7_ix_with_bit_set_sets_sign_flag() -> None:
     rom = bytes([0xDD, 0xCB, 0x02, 0x7E] + [0] * 32764)  # BIT 7,(IX+2)
     ram = bytearray(32768)
     ram[0x4002] = 0x80  # 0xC002 -> ram[addr - 0x8000]; bit 7 set
-    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    mem = Memory(rom=rom, ram=ram, mapper1=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.IX = 0xC000
     cpu.step()
@@ -101,7 +101,7 @@ def test_bit7_ix_with_bit_set_sets_sign_flag() -> None:
 def test_bit7_ix_with_bit_clear_clears_sign_sets_zero() -> None:
     rom = bytes([0xDD, 0xCB, 0x02, 0x7E] + [0] * 32764)  # BIT 7,(IX+2)
     ram = bytearray(32768)  # 0xC002 reads back 0x00
-    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    mem = Memory(rom=rom, ram=ram, mapper1=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.IX = 0xC000
     cpu.step()
@@ -114,7 +114,7 @@ def test_ddcb_rlc_echoes_into_named_register() -> None:
     rom = bytes([0xDD, 0xCB, 0x03, 0x00] + [0] * 32764)  # RLC (IX+3),B
     ram = bytearray(32768)
     ram[0x4003] = 0x81  # 0xC003 -> ram[addr - 0x8000]
-    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    mem = Memory(rom=rom, ram=ram, mapper1=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.IX = 0xC000
     cpu.step()
@@ -126,7 +126,7 @@ def test_fdcb_res_echoes_into_named_register() -> None:
     rom = bytes([0xFD, 0xCB, 0x05, 0x9A] + [0] * 32764)  # RES 3,(IY+5),D
     ram = bytearray(32768)
     ram[0x4005] = 0xFF  # 0xC005 -> ram[addr - 0x8000]
-    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    mem = Memory(rom=rom, ram=ram, mapper1=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.IY = 0xC000
     cpu.step()
@@ -137,7 +137,7 @@ def test_fdcb_res_echoes_into_named_register() -> None:
 def test_ddcb_set_with_register_field_6_writes_memory_only() -> None:
     rom = bytes([0xDD, 0xCB, 0x02, 0xC6] + [0] * 32764)  # SET 0,(IX+2)
     ram = bytearray(32768)
-    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    mem = Memory(rom=rom, ram=ram, mapper1=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.IX = 0xC000
     cpu.registers.B = cpu.registers.C = cpu.registers.D = 0x00
@@ -154,7 +154,7 @@ def test_ddcb_bit_does_not_echo_or_write_memory() -> None:
     rom = bytes([0xDD, 0xCB, 0x00, 0x69] + [0] * 32764)  # BIT 5,(IX+0),C
     ram = bytearray(32768)
     ram[0x4000] = 0x20  # bit 5 set
-    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    mem = Memory(rom=rom, ram=ram, mapper1=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.IX = 0xC000
     cpu.registers.C = 0x77
@@ -206,7 +206,7 @@ def test_rlc_hl_reads_and_writes_memory() -> None:
     rom = bytes([0xCB, 0x06] + [0] * 32766)  # RLC (HL)
     ram = bytearray(32768)
     ram[0x4000] = 0x85  # 0xC000
-    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    mem = Memory(rom=rom, ram=ram, mapper1=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.HL = 0xC000
     cpu.step()
@@ -353,7 +353,7 @@ def test_set_7_hl_sets_bit_no_flags_affected() -> None:
     rom = bytes([0xCB, 0xFE] + [0] * 32766)  # SET 7, (HL)
     ram = bytearray(32768)
     ram[0x4000] = 0x00  # 0xC000
-    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    mem = Memory(rom=rom, ram=ram, mapper1=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.HL = 0xC000
     stale = F.FLAG_S | F.FLAG_Z | F.FLAG_H | F.FLAG_PV | F.FLAG_N | F.FLAG_C
@@ -378,7 +378,7 @@ def test_ddcb_sra_preserves_sign_bit() -> None:
     rom = bytes([0xDD, 0xCB, 0x02, 0x2E] + [0] * 32764)  # SRA (IX+2)
     ram = bytearray(32768)
     ram[0x4002] = 0x81  # 0xC002
-    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    mem = Memory(rom=rom, ram=ram, mapper1=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.IX = 0xC000
     cpu.step()
@@ -392,7 +392,7 @@ def test_fdcb_sll_forces_bit0_set() -> None:
     rom = bytes([0xFD, 0xCB, 0x01, 0x36] + [0] * 32764)  # SLL (IY+1)
     ram = bytearray(32768)
     ram[0x4001] = 0x00  # 0xC001
-    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    mem = Memory(rom=rom, ram=ram, mapper1=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.IY = 0xC000
     cpu.step()
@@ -409,7 +409,7 @@ def test_ddcb_rl_rotates_through_carry() -> None:
     rom = bytes([0xDD, 0xCB, 0x00, 0x16] + [0] * 32764)  # RL (IX+0)
     ram = bytearray(32768)
     ram[0x4000] = 0x76  # 0xC000
-    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    mem = Memory(rom=rom, ram=ram, mapper1=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.IX = 0xC000
     cpu.registers.F = F.FLAG_C
@@ -425,7 +425,7 @@ def test_ddcb_bit_nonseven_set_does_not_set_sign() -> None:
     rom = bytes([0xDD, 0xCB, 0x00, 0x6E] + [0] * 32764)  # BIT 5,(IX+0)
     ram = bytearray(32768)
     ram[0x4000] = 0x20  # bit 5 set
-    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    mem = Memory(rom=rom, ram=ram, mapper1=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.IX = 0xC000
     cpu.registers.F = 0

@@ -52,7 +52,7 @@ def test_a_component_built_alone_keeps_its_own_clock_record() -> None:
     psg.write_port(0xA1, 0x0F)
     assert psg._events == [(0, 8, 0x0F)]
 
-    mem = Memory(rom=bytes(32768), ram=bytearray(32768), _mapper=FlatMapper(None))
+    mem = Memory(rom=bytes(32768), ram=bytearray(32768), mapper1=FlatMapper(None))
     ppi = PPI(memory=mem)
     ppi.write_port(0xAA, 0x80)
     assert ppi.click._events[0][0] == 0

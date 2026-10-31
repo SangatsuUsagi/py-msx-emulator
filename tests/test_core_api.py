@@ -338,7 +338,7 @@ def test_a_trace_kind_that_is_off_records_nothing() -> None:
     m.io.write_port(0x99, 0x80)
     m.io.read_port(0xA8)
     m.memory.write(0x7000, 3)  # window 1 -> bank 3
-    assert m.memory._mapper.debug_bank(2).window_values[0] == 3
+    assert m.memory.mapper1.debug_bank(2).window_values[0] == 3
     assert m.drain_trace() == ()
 
 

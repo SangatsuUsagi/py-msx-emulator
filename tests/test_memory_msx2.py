@@ -16,7 +16,7 @@ def _make_mem(**kwargs) -> Memory:
     defaults = dict(
         rom=bytes(32768),
         ram=bytearray(32768),
-        _mapper=FlatMapper(None),
+        mapper1=FlatMapper(None),
         slot_register=_MSX1_SLOTS,
     )
     defaults.update(kwargs)

@@ -254,8 +254,8 @@ def _hbi_j1_machine(tmp_path: Path, name: str = "m") -> Machine:
 def test_build_machine_expands_slot2_with_halnote_and_flat_rom(tmp_path: Path) -> None:
     machine = _hbi_j1_machine(tmp_path)
     assert machine.memory.slot2_sub_slot_enabled is True
-    assert isinstance(machine.memory._mapper2_subslots[0], HalnoteMapper)
-    assert isinstance(machine.memory._mapper2_subslots[1], FixedPageMapper)
+    assert isinstance(machine.memory.mapper2_subslots[0], HalnoteMapper)
+    assert isinstance(machine.memory.mapper2_subslots[1], FixedPageMapper)
     assert isinstance(machine.kanji, KanjiRom)
 
 
@@ -293,8 +293,8 @@ def test_build_machine_expands_slot2_on_msx2_alongside_slot3(tmp_path: Path) -> 
         extension_overlay2=_hbi_j1_overlay(rom_dir),
     )
     assert machine.memory.slot2_sub_slot_enabled is True
-    assert isinstance(machine.memory._mapper2_subslots[0], HalnoteMapper)
-    assert isinstance(machine.memory._mapper2_subslots[1], FixedPageMapper)
+    assert isinstance(machine.memory.mapper2_subslots[0], HalnoteMapper)
+    assert isinstance(machine.memory.mapper2_subslots[1], FixedPageMapper)
     assert isinstance(machine.kanji, KanjiRom)
     # Slot 3's own sub-slot dispatch (the RAM mapper) is unaffected.
     assert machine.memory.ram_mapper is not None
@@ -318,8 +318,8 @@ def test_build_machine_expands_slot1_with_halnote_and_flat_rom(tmp_path: Path) -
     machine = _hbi_j1_machine_slot1(tmp_path)
     assert machine.memory.slot1_sub_slot_enabled is True
     assert machine.memory.slot2_sub_slot_enabled is False
-    assert isinstance(machine.memory._mapper1_subslots[0], HalnoteMapper)
-    assert isinstance(machine.memory._mapper1_subslots[1], FixedPageMapper)
+    assert isinstance(machine.memory.mapper1_subslots[0], HalnoteMapper)
+    assert isinstance(machine.memory.mapper1_subslots[1], FixedPageMapper)
     assert isinstance(machine.kanji, KanjiRom)
 
 
@@ -352,11 +352,11 @@ def test_reset_restores_power_on_slot1_sub_slot_register(tmp_path: Path) -> None
 def test_reset_restores_halnote_mapper_power_on_state_on_slot1(tmp_path: Path) -> None:
     # Mirrors test_reset_restores_halnote_mapper_power_on_state below, with
     # the HalnoteMapper wired into slot 1 instead of slot 2 -- Machine.reset()
-    # reaches it via _mapper1_subslots' per-sub-slot loop the same way it
-    # reaches _mapper2_subslots' (allium/halnote-mapper.allium's Reset rule
+    # reaches it via mapper1_subslots' per-sub-slot loop the same way it
+    # reaches mapper2_subslots' (allium/halnote-mapper.allium's Reset rule
     # is not slot-specific).
     machine = _hbi_j1_machine_slot1(tmp_path)
-    halnote = machine.memory._mapper1_subslots[0]
+    halnote = machine.memory.mapper1_subslots[0]
     assert isinstance(halnote, HalnoteMapper)
     halnote.write(0x8FFF, 0x0A)  # bank 2 -> page 10
     halnote.write(0x4FFF, 0x85)  # bank 0 -> page 5, SRAM enabled
@@ -382,7 +382,7 @@ def test_reset_restores_halnote_mapper_power_on_state(tmp_path: Path) -> None:
     # calls a present HalnoteMapper's reset(), restoring bank/sub-bank
     # registers and both enable flags to their construction defaults.
     machine = _hbi_j1_machine(tmp_path)
-    halnote = machine.memory._mapper2_subslots[0]
+    halnote = machine.memory.mapper2_subslots[0]
     assert isinstance(halnote, HalnoteMapper)
     halnote.write(0x8FFF, 0x0A)  # bank 2 -> page 10
     halnote.write(0x4FFF, 0x85)  # bank 0 -> page 5, SRAM enabled
@@ -478,7 +478,7 @@ def test_build_machine_loads_existing_halnote_sram(tmp_path: Path) -> None:
         extension_overlay2=overlay,
     )
 
-    cart = machine.memory._mapper2_subslots[0]
+    cart = machine.memory.mapper2_subslots[0]
     assert isinstance(cart, HalnoteMapper)
     cart.write(0x4FFF, 0x80)  # enable SRAM at bank 0's top bit
     assert cart.read(0x0000) == 0xEE
@@ -511,7 +511,7 @@ def test_build_machine_flat_overlay_leaves_expanded_fields_unset(tmp_path: Path)
     assert machine.memory.slot2_sub_slot_enabled is False
     assert not any(
         isinstance(sub, HalnoteMapper)
-        for sub in (*machine.memory._mapper1_subslots, *machine.memory._mapper2_subslots)
+        for sub in (*machine.memory.mapper1_subslots, *machine.memory.mapper2_subslots)
     )
     assert machine.kanji is None
 
@@ -523,7 +523,7 @@ def test_build_machine_no_overlay_leaves_expanded_fields_unset(tmp_path: Path) -
     assert machine.memory.slot2_sub_slot_enabled is False
     assert not any(
         isinstance(sub, HalnoteMapper)
-        for sub in (*machine.memory._mapper1_subslots, *machine.memory._mapper2_subslots)
+        for sub in (*machine.memory.mapper1_subslots, *machine.memory.mapper2_subslots)
     )
     assert machine.kanji is None
 
@@ -614,7 +614,7 @@ def test_roundtrip_preserves_halnote_sram_and_banks(saves_dir: Path, tmp_path: P
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
         extension_overlay2=overlay,
     )
-    cart = machine.memory._mapper2_subslots[0]
+    cart = machine.memory.mapper2_subslots[0]
     assert isinstance(cart, HalnoteMapper)
     cart.write(0x4FFF, 0x85)  # SRAM enabled, bank 0 -> page 5
     cart.write(0x0000, 0xAB)  # SRAM byte
@@ -652,7 +652,7 @@ def test_loading_hbi_j1_state_into_plain_machine_raises(
     saves_dir: Path, tmp_path: Path
 ) -> None:
     hbi_machine = _hbi_j1_machine(tmp_path, name="hbi")
-    cart = hbi_machine.memory._mapper2_subslots[0]
+    cart = hbi_machine.memory.mapper2_subslots[0]
     assert isinstance(cart, HalnoteMapper)
     cart.write(0x4FFF, 0x85)
     cart.write(0x0000, 0xAB)
@@ -742,7 +742,7 @@ def test_roundtrip_preserves_halnote_sram_and_banks_on_slot1(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
         extension_overlay1=overlay,
     )
-    cart = machine.memory._mapper1_subslots[0]
+    cart = machine.memory.mapper1_subslots[0]
     assert isinstance(cart, HalnoteMapper)
     cart.write(0x4FFF, 0x85)  # SRAM enabled, bank 0 -> page 5
     cart.write(0x0000, 0xAB)  # SRAM byte

@@ -55,7 +55,7 @@ _BANK_TRACING_MAPPER_SUBCLASSES: tuple[type[Mapper], ...] = (
 )
 
 # Every concrete Mapper(Protocol)-conforming class, including FmPac (which
-# structurally satisfies Mapper via machine.memory._mapper2, see
+# structurally satisfies Mapper via machine.memory.mapper2, see
 # msx/machine_loader.py, even though it is not one of the ROM-mapper-family
 # classes msx/state.py's mapper_kind identity check applies to).
 _ALL_MAPPER_CLASSES: tuple[type[Mapper], ...] = (

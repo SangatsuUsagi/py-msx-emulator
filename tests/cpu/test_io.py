@@ -7,7 +7,7 @@ def make_cpu(rom: list[int]) -> tuple[Z80, list[tuple[int, int]], list[int]]:
     mem = Memory(
         rom=bytes(rom + [0] * (32768 - len(rom))),
         ram=bytearray(32768),
-        _mapper=FlatMapper(None),
+        mapper1=FlatMapper(None),
     )
     writes: list[tuple[int, int]] = []
     reads: list[int] = [0x42]
@@ -61,7 +61,7 @@ def _cpu_capturing_read_port(rom: list[int]) -> tuple[Z80, list[int]]:
     mem = Memory(
         rom=bytes(rom + [0] * (32768 - len(rom))),
         ram=bytearray(32768),
-        _mapper=FlatMapper(None),
+        mapper1=FlatMapper(None),
     )
     ports: list[int] = []
 

@@ -819,7 +819,7 @@ def _wire_trace(machine: "Machine") -> None:
     machine.io._trace = trace
     trace.sources = TRACE_VDP | TRACE_DEBUG
     mem = machine.memory
-    for mp in (mem._mapper, mem._mapper2):
+    for mp in (mem.mapper1, mem.mapper2):
         if isinstance(mp, BankTracingMapper):
             mp._trace = trace
             trace.sources |= TRACE_MAPPER
@@ -955,8 +955,8 @@ def _sram_table(machine: Machine) -> dict[MediaId, SramImage]:
         table[MediaId.RTC_CMOS] = machine.rtc.cmos
     memory = machine.memory
     slots = (
-        (1, memory._mapper, memory._mapper1_subslots),
-        (2, memory._mapper2, memory._mapper2_subslots),
+        (1, memory.mapper1, memory.mapper1_subslots),
+        (2, memory.mapper2, memory.mapper2_subslots),
     )
     for slot, mapper, subslots in slots:
         image = mapper.sram_medium()
@@ -986,16 +986,16 @@ def _build_msx1(
     memory = Memory(
         rom=bios.main_bytes,
         ram=bytearray(spec.ram_size_kb * 1024),
-        _mapper=wiring.mapper1_instance,
-        _mapper2=wiring.mapper2_instance,
+        mapper1=wiring.mapper1_instance,
+        mapper2=wiring.mapper2_instance,
         slot_register=0x00,
         extrom=bios.logo_bytes,
         slot0_ram=slot0_ram,
         slot0_ram_page=slot0_ram_page,
         slot1_sub_slot_enabled=wiring.slot1_sub_slot_enabled,
-        _mapper1_subslots=wiring.mapper1_subslots,
+        mapper1_subslots=wiring.mapper1_subslots,
         slot2_sub_slot_enabled=wiring.slot2_sub_slot_enabled,
-        _mapper2_subslots=wiring.mapper2_subslots,
+        mapper2_subslots=wiring.mapper2_subslots,
     )
     vdp = VDP()
     ppi = PPI(
@@ -1073,8 +1073,8 @@ def _build_msx2(
     memory = Memory(
         rom=bios.main_bytes,
         ram=ram_bytes,
-        _mapper=wiring.mapper1_instance,
-        _mapper2=wiring.mapper2_instance,
+        mapper1=wiring.mapper1_instance,
+        mapper2=wiring.mapper2_instance,
         slot_register=0x00,
         extrom=bios.logo_bytes,
         sub0_rom=sub_bytes,
@@ -1087,9 +1087,9 @@ def _build_msx2(
         slot0_ram=slot0_ram,
         slot0_ram_page=slot0_ram_page,
         slot1_sub_slot_enabled=wiring.slot1_sub_slot_enabled,
-        _mapper1_subslots=wiring.mapper1_subslots,
+        mapper1_subslots=wiring.mapper1_subslots,
         slot2_sub_slot_enabled=wiring.slot2_sub_slot_enabled,
-        _mapper2_subslots=wiring.mapper2_subslots,
+        mapper2_subslots=wiring.mapper2_subslots,
     )
     vdp: V9938 | VDP = V9938() if spec.has_v9938 else VDP()
     rtc: RTC | None = None

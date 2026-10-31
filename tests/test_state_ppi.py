@@ -20,7 +20,7 @@ from tests.factories import _msx1_spec, make_machine
 
 
 def _ppi() -> PPI:
-    memory = Memory(rom=bytes(0x8000), ram=bytearray(0x8000), _mapper=FlatMapper(None))
+    memory = Memory(rom=bytes(0x8000), ram=bytearray(0x8000), mapper1=FlatMapper(None))
     return PPI(memory=memory)
 
 

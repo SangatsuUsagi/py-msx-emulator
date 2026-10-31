@@ -42,7 +42,7 @@ def _make_memory_with_ram_mapper(
     return Memory(
         rom=bytes(32768),
         ram=bytearray(32768),
-        _mapper=FlatMapper(None),
+        mapper1=FlatMapper(None),
         slot_register=_ALL_SLOT3,
         sub_slot_enabled=True,
         sub0_rom=sub0_rom,
@@ -117,7 +117,7 @@ def test_sub_rom_and_fdc_in_independent_subslots_with_mapper() -> None:
     mem = Memory(
         rom=bytes(32768),
         ram=bytearray(32768),
-        _mapper=FlatMapper(None),
+        mapper1=FlatMapper(None),
         slot_register=_ALL_SLOT3,
         sub_slot_enabled=True,
         sub0_rom=sub_rom,
@@ -144,7 +144,7 @@ def test_fdc_requires_a_ram_strategy() -> None:
         Memory(
             rom=bytes(32768),
             ram=bytearray(32768),
-            _mapper=FlatMapper(None),
+            mapper1=FlatMapper(None),
             slot_register=_ALL_SLOT3,
             sub_slot_enabled=True,
             fdc=_StubFdc(),  # type: ignore[arg-type]
@@ -162,7 +162,7 @@ def test_sub_rom_subslot_1_without_image_still_falls_through_to_ram_on_read() ->
     mem = Memory(
         rom=bytes(32768),
         ram=bytearray(32768),
-        _mapper=FlatMapper(None),
+        mapper1=FlatMapper(None),
         slot_register=_ALL_SLOT3,
         sub_slot_enabled=True,
         sub0_rom=None,
@@ -179,7 +179,7 @@ def test_fdc_with_ram_mapper_does_not_raise() -> None:
     Memory(
         rom=bytes(32768),
         ram=bytearray(32768),
-        _mapper=FlatMapper(None),
+        mapper1=FlatMapper(None),
         slot_register=_ALL_SLOT3,
         sub_slot_enabled=True,
         fdc=_StubFdc(),  # type: ignore[arg-type]

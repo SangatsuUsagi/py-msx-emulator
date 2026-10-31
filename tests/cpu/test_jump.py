@@ -10,7 +10,7 @@ def make_cpu(rom: list[int]) -> Z80:
     mem = Memory(
         rom=bytes(rom + [0] * (32768 - len(rom))),
         ram=bytearray(32768),
-        _mapper=FlatMapper(None),
+        mapper1=FlatMapper(None),
     )
     return Z80(read_byte=mem.read, write_byte=mem.write)
 
@@ -75,7 +75,7 @@ def test_djnz_no_branch() -> None:
 def test_call_ret() -> None:
     rom = bytes([0xCD, 0x06, 0x00] + [0x00] * 3 + [0xC9] + [0] * 32761)
     ram = bytearray(32768)
-    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    mem = Memory(rom=rom, ram=ram, mapper1=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.SP = 0xFFFF
     cpu.step()  # CALL 0x0006
@@ -168,7 +168,7 @@ def test_ret_cc_taken_pops_and_uses_taken_cycles() -> None:
     ram = bytearray(32768)
     ram[0x7FFE] = 0x00  # 0xFFFE
     ram[0x7FFF] = 0x30  # 0xFFFF
-    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    mem = Memory(rom=rom, ram=ram, mapper1=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.F = F.FLAG_Z  # Z true
     cpu.registers.SP = 0xFFFE

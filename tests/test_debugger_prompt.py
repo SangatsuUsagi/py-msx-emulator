@@ -527,8 +527,8 @@ def _make_slot_memory(
     return Memory(
         rom=b"\x00" * 32768,
         ram=bytearray(0x2000),
-        _mapper=FlatMapper(None),
-        _mapper2=FlatMapper(None),
+        mapper1=FlatMapper(None),
+        mapper2=FlatMapper(None),
         slot_register=slot_register,
         sub_slot_enabled=sub_slot_enabled,
         sub_slot_reg=sub_slot_reg,
@@ -536,11 +536,11 @@ def _make_slot_memory(
         ram_mapper=RamMapper() if with_ram_mapper else None,
         slot1_sub_slot_enabled=slot1_sub_slot_enabled,
         slot1_sub_slot_reg=slot1_sub_slot_reg,
-        _mapper1_subslots=mapper1_subslots if mapper1_subslots is not None
+        mapper1_subslots=mapper1_subslots if mapper1_subslots is not None
         else [None, None, None, None],
         slot2_sub_slot_enabled=slot2_sub_slot_enabled,
         slot2_sub_slot_reg=slot2_sub_slot_reg,
-        _mapper2_subslots=mapper2_subslots if mapper2_subslots is not None
+        mapper2_subslots=mapper2_subslots if mapper2_subslots is not None
         else [None, None, None, None],
     )
 
@@ -624,8 +624,8 @@ class TestSlotActive:
 
     def test_sl_slot2_subslot_shows_its_own_mapper_content(self, capsys):
         """Regression test: an expanded slot 2 (e.g. --extension hbi_j1) must
-        report each page's actual sub-slot mapper via `_mapper2_subslots`,
-        not the flat `_mapper2` (which would misreport "Cartridge (empty)"
+        report each page's actual sub-slot mapper via `mapper2_subslots`,
+        not the flat `mapper2` (which would misreport "Cartridge (empty)"
         regardless of what's really mapped in)."""
         from msx.mapper import FlatMapper as _FlatMapper
 
@@ -896,7 +896,7 @@ class TestSlotRomMapperBank:
 
     def test_sl_bank_uses_rom_mapper_for_cartridge(self):
         from msx.mapper import Ascii16Mapper
-        mem = Memory(rom=b"\x00", ram=bytearray(1), _mapper=Ascii16Mapper(self._rom16(8)))
+        mem = Memory(rom=b"\x00", ram=bytearray(1), mapper1=Ascii16Mapper(self._rom16(8)))
         assert _slot_bank(mem, 1, None, 2) == "bank 0 @00000-03FFF"
 
     # -- debug-monitor "sl -- cartridge ROM mapper bank column": the text
@@ -915,7 +915,7 @@ class TestSlotRomMapperBank:
         from msx.mapper import RTypeMapper
         rtype = RTypeMapper(self._rom16(24))
         rtype.write(0x4000, 2)
-        mem = Memory(rom=b"\x00", ram=bytearray(1), _mapper=rtype)
+        mem = Memory(rom=b"\x00", ram=bytearray(1), mapper1=rtype)
         assert _slot_bank(mem, 1, None, 1) == "bank 23 @5C000-5FFFF"
         assert _slot_bank(mem, 1, None, 2) == "bank 2 @08000-0BFFF"
 
@@ -925,7 +925,7 @@ class TestSlotRomMapperBank:
         m = FmPac(self._rom16(4), Opll())
         m.write(0x7FF7, 1)  # bank register
         assert _bank(m, 1) == "bank 1 @04000-07FFF"
-        mem = Memory(rom=b"\x00", ram=bytearray(1), _mapper=m)
+        mem = Memory(rom=b"\x00", ram=bytearray(1), mapper1=m)
         assert _slot_bank(mem, 1, None, 1) == "bank 1 @04000-07FFF"
         m.write(0x5FFE, 0x4D)  # SRAM unlock
         m.write(0x5FFF, 0x69)
@@ -986,7 +986,7 @@ class TestSlotRomMapperBank:
         from msx.ram_mapper import RamMapper
         rm = RamMapper()
         rm.banks[3] = 2
-        mem = Memory(rom=b"\x00", ram=bytearray(1), _mapper=FlatMapper(None), ram_mapper=rm)
+        mem = Memory(rom=b"\x00", ram=bytearray(1), mapper1=FlatMapper(None), ram_mapper=rm)
         assert _slot_bank(mem, 3, 2, 3) == "seg=2"
 
     def test_sl_bank_shows_the_segment_a_short_mapper_maps(self):
@@ -994,17 +994,17 @@ class TestSlotRomMapperBank:
         from msx.ram_mapper import RamMapper
         rm = RamMapper(size_kb=48)
         rm.write_port(0xFC, 0x03)
-        mem = Memory(rom=b"\x00", ram=bytearray(1), _mapper=FlatMapper(None), ram_mapper=rm)
+        mem = Memory(rom=b"\x00", ram=bytearray(1), mapper1=FlatMapper(None), ram_mapper=rm)
         assert _slot_bank(mem, 3, 2, 0) == "seg=2"
 
     def test_sl_bank_dash_for_bios(self):
-        mem = Memory(rom=b"\x00", ram=bytearray(1), _mapper=FlatMapper(None))
+        mem = Memory(rom=b"\x00", ram=bytearray(1), mapper1=FlatMapper(None))
         assert _slot_bank(mem, 0, None, 0) == "-"
 
     def test_slot_size_kb_reflects_configured_ram_mapper_size(self):
         from msx.ram_mapper import RamMapper
         rm = RamMapper(size_kb=256)
-        mem = Memory(rom=b"\x00", ram=bytearray(1), _mapper=FlatMapper(None), ram_mapper=rm)
+        mem = Memory(rom=b"\x00", ram=bytearray(1), mapper1=FlatMapper(None), ram_mapper=rm)
         assert mem.describe_slot(3, 2, -1).size_kb == 256
 
 

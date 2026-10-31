@@ -30,14 +30,14 @@ def _run(machine) -> int:
 # ---------------------------------------------------------------------------
 
 def test_main_ram_range_msx1_flat_32k() -> None:
-    mem = Memory(rom=bytes(32768), ram=bytearray(32768), _mapper=FlatMapper(None))
+    mem = Memory(rom=bytes(32768), ram=bytearray(32768), mapper1=FlatMapper(None))
     assert mem.main_ram_range() == (0x8000, 0xFFFF)
 
 
 def test_main_ram_range_mapper_full_space() -> None:
     mem = Memory(
         rom=bytes(32768), ram=bytearray(32768),
-        _mapper=FlatMapper(None), ram_mapper=RamMapper(),
+        mapper1=FlatMapper(None), ram_mapper=RamMapper(),
     )
     assert mem.main_ram_range() == (0x0000, 0xFFFF)
 
@@ -48,7 +48,7 @@ def test_main_ram_range_falls_back_to_slot0_ram_when_slot3_empty() -> None:
     the degenerate (0x10000, 0xFFFF) it would otherwise compute."""
     mem = Memory(
         rom=bytes(32768), ram=bytearray(0),
-        _mapper=FlatMapper(None), slot0_ram=bytearray(0x4000), slot0_ram_page=3,
+        mapper1=FlatMapper(None), slot0_ram=bytearray(0x4000), slot0_ram_page=3,
     )
     assert mem.main_ram_range() == (0xC000, 0xFFFF)
 

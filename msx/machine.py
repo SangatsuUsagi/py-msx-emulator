@@ -214,7 +214,7 @@ class Machine:
         present), VDP, FDC (if present), Kanji ROM (if present), PPI (if
         present), the primary/secondary slot registers, the RAM mapper (if
         present, in either its slot-3 or its expanded-slot-2-sub-slot
-        placement), and every `Mapper` -- `memory._mapper`, `memory._mapper2`,
+        placement), and every `Mapper` -- `memory.mapper1`, `memory.mapper2`,
         and every non-`None` entry of an expanded slot's per-sub-slot array
         (this also covers a present Halnote cartridge, which only ever lives
         in one of those sub-slot entries). Memory/VRAM contents are retained.
@@ -244,15 +244,15 @@ class Machine:
         self.memory.set_slot2_sub_slot_reg(0x00)
         if self.memory.ram_mapper is not None:
             self.memory.ram_mapper.reset()
-        self.memory._mapper.reset()
-        self.memory._mapper2.reset()
+        self.memory.mapper1.reset()
+        self.memory.mapper2.reset()
         # A HalnoteMapper (when present) is always one of these sub-slot
         # entries -- _wire_expanded_overlay is the only place that ever
         # constructs one (EXTENSION_DEVICES, the flat overlay's device
         # allow-list in msx/machine_config.py, lacks "halnote") -- so this
         # loop resets it exactly once. Slot 1's own sub-slots (openspec/changes/
         # slot1-slot2-symmetrization) get the identical treatment.
-        for sub_mapper in (*self.memory._mapper1_subslots, *self.memory._mapper2_subslots):
+        for sub_mapper in (*self.memory.mapper1_subslots, *self.memory.mapper2_subslots):
             if sub_mapper is not None:
                 sub_mapper.reset()
         self._drop_frame()

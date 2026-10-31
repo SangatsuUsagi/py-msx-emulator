@@ -46,7 +46,7 @@ def test_dirty_cartridge_sram_is_written_to_its_sha1_path(
     monkeypatch.chdir(tmp_path)
     config = make_loaded_config(rom=_ROM, cartridge=_CART, mapper="ASCII8SRAM2")
     m = build_machine(config.config)
-    mapper = m.memory._mapper
+    mapper = m.memory.mapper1
     assert isinstance(mapper, Ascii8Sram2Mapper)
     mapper.write(0x7000, mapper._sram_enable_bit())
     mapper.write(0x8000, 0x5A)
@@ -70,7 +70,7 @@ def test_non_sram_mapper_writes_nothing(
     monkeypatch.chdir(tmp_path)
     config = make_loaded_config(rom=_ROM, cartridge=_CART, mapper="ASCII8")
     m = build_machine(config.config)
-    m.memory._mapper.write(0x6000, 1)
+    m.memory.mapper1.write(0x6000, 1)
     persist_dirty_media(m, sram_paths(config))
     assert not (tmp_path / "saves").exists()
 
