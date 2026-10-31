@@ -17,6 +17,7 @@ import pytest
 
 from host.debugger.stop import handle_stop
 from host.rpc_server import DebugServer
+from msx.boundary import WATCH_READ, WATCH_WRITE
 from tests.factories import make_machine, make_machine_msx2
 
 
@@ -183,6 +184,40 @@ def test_a_fifth_watchpoint_is_an_error(rig) -> None:
     resp = client.call("debug.set_watchpoint", {"address": "0xC400", "mode": "w"})
     assert resp["error"]["code"] == -32602
     assert [addr for addr, _kind in machine.watchpoints()] == [0xC000, 0xC100, 0xC200, 0xC300]
+
+
+def test_command_line_breakpoints_and_watchpoints_stay(rig) -> None:
+    # remote-socket-rpc "Command-line breakpoints and watchpoints stay".
+    machine, _srv, client = rig
+    machine.set_breakpoints([0x4000])
+    machine.set_watchpoints([(0xE000, WATCH_READ | WATCH_WRITE)])
+    bp = client.result("debug.set_breakpoint", {"address": "0xC000"})
+    wp = client.result("debug.set_watchpoint", {"address": "0xD000", "mode": "w"})
+    assert machine.breakpoints() == (0x4000, 0xC000)
+    assert machine.watchpoints() == ((0xD000, WATCH_WRITE), (0xE000, WATCH_READ | WATCH_WRITE))
+    client.result("debug.remove_breakpoint", {"id": bp["id"]})
+    client.result("debug.remove_watchpoint", {"id": wp["id"]})
+    assert machine.breakpoints() == (0x4000,)
+    assert machine.watchpoints() == ((0xE000, WATCH_READ | WATCH_WRITE),)
+
+
+def test_a_breakpoint_removed_in_the_repl_is_inactive(rig) -> None:
+    # remote-socket-rpc "A breakpoint removed in the REPL is inactive".
+    machine, _srv, client = rig
+    bp = client.result("debug.set_breakpoint", {"address": "0xC000"})
+    machine.set_breakpoints([])  # what the REPL's `br C000` does
+    listed = client.result("debug.list_breakpoints")["breakpoints"]
+    assert listed == [{"id": bp["id"], "address": "0xC000", "active": False}]
+
+
+def test_a_shared_watchpoint_keeps_the_other_ids_bits(rig) -> None:
+    # Two ids at one address: removing one keeps the other's kind.
+    machine, _srv, client = rig
+    r = client.result("debug.set_watchpoint", {"address": "0xD000", "mode": "r"})
+    client.result("debug.set_watchpoint", {"address": "0xD000", "mode": "w"})
+    assert machine.watchpoints() == ((0xD000, WATCH_READ | WATCH_WRITE),)
+    client.result("debug.remove_watchpoint", {"id": r["id"]})
+    assert machine.watchpoints() == ((0xD000, WATCH_WRITE),)
 
 
 # ── Memory ───────────────────────────────────────────────────────────────────
