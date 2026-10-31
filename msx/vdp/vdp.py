@@ -111,13 +111,18 @@ def _channel_tables_indexed(lut16: list[bytes]) -> tuple[bytes, bytes, bytes]:
     """Three 256-byte (R, G, B) translate tables for a 16-entry RGB24 LUT.
 
     Table index i maps through (i & 0x0F), folding the 4-bit palette-index mask
-    into the table so bytes.translate needs no separate masking step.
+    into the table so bytes.translate needs no separate masking step: each
+    table is its 16 entries repeated 16 times.
     """
-    return (
-        bytes(lut16[i & 0x0F][0] for i in range(256)),
-        bytes(lut16[i & 0x0F][1] for i in range(256)),
-        bytes(lut16[i & 0x0F][2] for i in range(256)),
-    )
+    r = bytearray(16)
+    g = bytearray(16)
+    b = bytearray(16)
+    for i in range(16):
+        rgb = lut16[i]
+        r[i] = rgb[0]
+        g[i] = rgb[1]
+        b[i] = rgb[2]
+    return (bytes(r) * 16, bytes(g) * 16, bytes(b) * 16)
 
 
 def _translate_rgb24(src: bytearray, channels: tuple[bytes, bytes, bytes]) -> bytes:
