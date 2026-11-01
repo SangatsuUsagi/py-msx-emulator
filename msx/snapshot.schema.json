@@ -1,11 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "py-msx-emulator machine snapshot, format 20",
+  "title": "py-msx-emulator machine snapshot, format 22",
   "description": "The save-state layout written by msx/state.py save_state(): RFC 8785 (JCS) canonical JSON, integers only (within +-(2^53 - 1)), byte blobs as padded RFC 4648 base64 strings. Every property is required; null means the machine has no such part. Lengths that depend on the machine (RAM, VRAM, SRAM sizes) and cross-field rules are checked by the loader, not here.",
   "type": "object",
   "properties": {
     "format_version": {
-      "const": 21
+      "const": 22
     },
     "machine_type": {
       "enum": [
@@ -82,6 +82,16 @@
           "type": "null"
         }
       ]
+    },
+    "printer": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Printer"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "required": [
@@ -93,6 +103,7 @@
     "memory",
     "mouse",
     "ppi",
+    "printer",
     "psg",
     "rtc",
     "scc",
@@ -1475,6 +1486,26 @@
         "bus_latch",
         "control",
         "port_c"
+      ],
+      "additionalProperties": false
+    },
+    "Printer": {
+      "type": "object",
+      "properties": {
+        "data": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "strobe": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "required": [
+        "data",
+        "strobe"
       ],
       "additionalProperties": false
     },

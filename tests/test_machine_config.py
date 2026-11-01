@@ -102,9 +102,9 @@ def test_machine_properties_are_integers() -> None:
 # The canonical documents' SHA-256, recorded before the video standard and
 # the keyboard layout became integer enums: their text spellings did not change.
 _DOCUMENT_SHA256 = {
-    "cbios_msx1_eu": "5a331a17c716dc351ff29a63bb4bd9cca6d0f377a02fcf79fa1b3b944a4eb6ce",
-    "cbios_msx1_jp": "cf2862c23ba6c8e1f021ce233a60d36940dbafbcd2c9f50a7201fdd128649091",
-    "hb_f1xd": "ce921d1109ca7a20f43015f19e7cb63427e4e8842840a1449309c1bd7bd45cde",
+    "cbios_msx1_eu": "97a27f506f9c319c51fbc8d290c7dd50d844e271b73650a1b35b453831f75e8e",
+    "cbios_msx1_jp": "e021757fb173df591afdb11295511ce884ee0859f219789ad24329595cf39910",
+    "hb_f1xd": "3e20d54c2386f78638747a60793056c4ceac2fedc5e0c3a2a0990767eb027f1f",
 }
 
 
@@ -118,6 +118,7 @@ def test_the_canonical_document_spells_the_enums_as_text(machine_id: str) -> Non
     parsed = parse_machine_config(document).spec
     assert parsed.video_standard.spelling == machine["video_standard"]
     assert parsed.keyboard_type.spelling == machine["keyboard_layout"]
+    assert parsed.printer_port.value == machine["printer_port"]
 
 
 def test_machine_keyboard_layout_defaults_to_international() -> None:
@@ -191,7 +192,7 @@ def test_the_same_inputs_give_the_same_document_bytes(
     first = _document(cartridge1=_CART, mapper1="ASCII8")
     second = _document(cartridge1=_CART, mapper1="ASCII8")
     assert first == second
-    assert json.loads(first)["format_version"] == 1
+    assert json.loads(first)["format_version"] == 2
 
 
 def test_run_inputs_do_not_change_the_document(

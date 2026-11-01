@@ -127,7 +127,9 @@ if TYPE_CHECKING:
 #   cpu.ei_pending (the one-instruction delay after EI) was added later
 #   without a version bump. See
 #   openspec/changes/archive/2026-10-31-fix-review-bugs.
-CURRENT_FORMAT_VERSION: int = 21
+# Version 22: printer added -- the printer port's data latch and STROBE, None
+#   when the machine has no port. See openspec/changes/add-parallel-port.
+CURRENT_FORMAT_VERSION: int = 22
 
 _SHA256_HEX_LEN = 64
 
@@ -285,6 +287,12 @@ class PpiSnapshot:
 
 
 @dataclass
+class PrinterSnapshot:
+    data: int
+    strobe: int
+
+
+@dataclass
 class MachineSnapshot:
     format_version: int
     machine_type: str  # "msx1" or "msx2"
@@ -305,6 +313,8 @@ class MachineSnapshot:
     fdc: dict[str, object] | None
     rtc: dict[str, object] | None
     mouse: dict[str, object] | None
+    # None when the machine has no printer port.
+    printer: PrinterSnapshot | None
 
 
 # --- internal helpers ---------------------------------------------------------
@@ -366,6 +376,13 @@ def _ppi_snapshot(machine: "Machine") -> PpiSnapshot | None:
     return PpiSnapshot(
         port_c=state["port_c"], control=state["control"], bus_latch=state["bus_latch"]
     )
+
+
+def _printer_snapshot(machine: "Machine") -> PrinterSnapshot | None:
+    if machine.printer is None:
+        return None
+    state = machine.printer.snapshot_state()
+    return PrinterSnapshot(data=state["data"], strobe=state["strobe"])
 
 
 def _check_optional_wiring(
@@ -537,6 +554,7 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
         fdc=_fdc_to_dict(machine),
         rtc=_rtc_to_dict(machine),
         mouse=_mouse_to_dict(machine),
+        printer=_printer_snapshot(machine),
     )
 
 
@@ -560,6 +578,7 @@ _SLOTS_KEYS = _keys_of(SlotsSnapshot)
 _VDP_KEYS = _keys_of(VdpSnapshot)
 _PSG_KEYS = _keys_of(PsgSnapshot)
 _PPI_KEYS = _keys_of(PpiSnapshot)
+_PRINTER_KEYS = _keys_of(PrinterSnapshot)
 
 _TMS_VRAM_SIZE = 0x4000
 _V9938_VRAM_SIZE = 0x20000
@@ -733,6 +752,16 @@ def _parse_ppi(value: object) -> PpiSnapshot | None:
     )
 
 
+def _parse_printer(value: object) -> PrinterSnapshot | None:
+    if value is None:
+        return None
+    obj = check_object(value, "printer", _PRINTER_KEYS)
+    return PrinterSnapshot(
+        data=check_int(obj["data"], "printer.data", 0, 0xFF),
+        strobe=check_int(obj["strobe"], "printer.strobe", 0, 1),
+    )
+
+
 def _check_top_level_keys(data: dict[str, object]) -> None:
     """Refuse a file whose top-level keys are not the layout's: an unknown
     or a missing key."""
@@ -803,6 +832,8 @@ def parse_snapshot(decoded: object) -> MachineSnapshot:
         rtc = check_optional_object(data["rtc"], "rtc")
         field_name = "mouse"
         mouse = check_optional_object(data["mouse"], "mouse")
+        field_name = "printer"
+        printer = _parse_printer(data["printer"])
     except SchemaError as exc:
         raise StateLoadError(field_name, exc) from exc
     return MachineSnapshot(
@@ -819,6 +850,7 @@ def parse_snapshot(decoded: object) -> MachineSnapshot:
         fdc=fdc,
         rtc=rtc,
         mouse=mouse,
+        printer=printer,
     )
 
 
@@ -875,6 +907,7 @@ def _validate_snapshot(machine: "Machine", snap: MachineSnapshot) -> _ParsedProd
     _check_optional_wiring("RTC", machine.rtc is not None, snap.rtc)
     _check_optional_wiring("mouse", machine.psg.mouse is not None, snap.mouse)
     _check_optional_wiring("PPI", machine.ppi is not None, snap.ppi)
+    _check_optional_wiring("printer port", machine.printer is not None, snap.printer)
     parsed = _parse_producer_objects(machine, snap)
     # Last of the identity checks: the specific ones above and in the
     # producers (FDC kind, mounted disks) name what differs; this one catches
@@ -1054,6 +1087,8 @@ def _apply_sound_and_io(
     mouse = machine.psg.mouse
     if mouse is not None and parsed.mouse is not None:
         mouse.apply_state(parsed.mouse, machine.cycle_count)
+    if machine.printer is not None and snap.printer is not None:
+        machine.printer.apply_state({"data": snap.printer.data, "strobe": snap.printer.strobe})
 
 
 def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:

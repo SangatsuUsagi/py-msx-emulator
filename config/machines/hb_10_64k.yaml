@@ -39,5 +39,8 @@ builtin_devices:
     overrides: { keyboard_type: jp, control_read: bus_latch }
   - ref: vdp_tms9918a
   - ref: psg_ay8910
+  - ref: printer_port
+    # Port decode (openMSX).
+    overrides: { form: plain }
 
 default_extensions: []

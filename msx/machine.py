@@ -53,6 +53,7 @@ from msx.mapper import MajutsushiMapper
 from msx.memory import Memory
 from msx.mouse import TRIGGER_A_BIT, TRIGGER_B_BIT, MouseDevice
 from msx.ppi import PPI
+from msx.printer import PrinterPort
 from msx.psg import PSG, JoystickPort
 from msx.scc import SCC
 from msx.snapshot_schema import SnapshotError
@@ -97,6 +98,7 @@ class Machine:
     fmpac: "FmPac | None" = field(default=None, repr=False)
     kanji: KanjiRom | None = field(default=None, repr=False)
     ppi: PPI | None = field(default=None, repr=False)
+    printer: PrinterPort | None = field(default=None, repr=False)
     rtc: "RTC | None" = field(default=None, repr=False)
     input: InputLines = field(default_factory=InputLines)
     # Per-frame audio mix, produced by run_frame() and read with take_audio().
@@ -212,8 +214,8 @@ class Machine:
     def reset(self) -> int:
         """Full power-on reset: CPU, PSG, SCC (if present), FM-PAC (if
         present), VDP, FDC (if present), Kanji ROM (if present), PPI (if
-        present), the primary/secondary slot registers, the RAM mapper (if
-        present, in either its slot-3 or its expanded-slot-2-sub-slot
+        present), the printer port (if present), the primary/secondary slot
+        registers, the RAM mapper (if present, in either its slot-3 or its expanded-slot-2-sub-slot
         placement), and every `Mapper` -- `memory.mapper1`, `memory.mapper2`,
         and every non-`None` entry of an expanded slot's per-sub-slot array
         (this also covers a present Halnote cartridge, which only ever lives
@@ -237,6 +239,8 @@ class Machine:
             self.kanji.reset()
         if self.ppi is not None:
             self.ppi.reset()
+        if self.printer is not None:
+            self.printer.reset()
         # Power-on slot state: all pages select slot 0 (matches construction).
         self.memory.set_slot_register(0x00)
         self.memory.set_sub_slot_reg(0x00)

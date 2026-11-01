@@ -5,7 +5,7 @@
   "type": "object",
   "properties": {
     "format_version": {
-      "const": 1
+      "const": 2
     },
     "machine": {
       "$ref": "#/$defs/Machine"
@@ -320,6 +320,13 @@
             "bus_latch"
           ]
         },
+        "printer_port": {
+          "enum": [
+            "none",
+            "plain",
+            "s1985"
+          ]
+        },
         "has_v9938": {
           "type": "boolean"
         },
@@ -537,6 +544,7 @@
         "main_rom",
         "name",
         "ppi_control_read",
+        "printer_port",
         "ram_mapper_size_kb",
         "ram_size_kb",
         "slot0_ram",

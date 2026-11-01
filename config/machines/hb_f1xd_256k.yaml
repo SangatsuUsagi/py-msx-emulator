@@ -64,6 +64,9 @@ builtin_devices:
   - ref: vdp_v9938
     overrides: { vram_kb: 128 }
   - ref: psg_ay8910
+  - ref: printer_port
+    # Port decode (openMSX).
+    overrides: { form: s1985 }
   - ref: rtc_rp5c01
   - ref: memory_mapper_standard
 

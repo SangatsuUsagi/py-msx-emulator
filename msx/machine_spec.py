@@ -17,6 +17,15 @@ from pathlib import Path
 from msx.boundary import KeyboardLayout, VideoStandard
 
 
+class PrinterPortForm(str, Enum):
+    """A machine's printer port decode (msx/printer.py), from the openMSX
+    machine files."""
+
+    NONE = "none"    # no port: 0x90-0x97 are open bus
+    PLAIN = "plain"  # 0x90-0x91, unused status bits 1
+    S1985 = "s1985"  # 0x90-0x97 with mirrors, unused status bits 0
+
+
 class PpiControlRead(str, Enum):
     """What a port 0xAB read returns; the 8255A data sheet calls it illegal."""
 
@@ -100,6 +109,9 @@ class MachineSpec:
     # (open_bus on the S1985 machines, bus_latch on the S3527 ones -- see
     # msx/ppi.py).
     ppi_control_read: PpiControlRead = PpiControlRead.CONTROL
+
+    # The printer port, resolved from the printer_port device.
+    printer_port: PrinterPortForm = PrinterPortForm.NONE
 
     # RAM mapper's configured size (MSX2, when has_ram_mapper is True), resolved
     # from the mapper: standard sub-slot's size_kb -- default 128 preserves

@@ -207,10 +207,10 @@ def test_an_msx1_machine_without_extras() -> None:
     decoded = json.loads(state.save_state(_ran(1)))
     assert set(decoded) == {
         "format_version", "machine_type", "machine_config_sha256", "cpu", "memory", "slots",
-        "vdp", "psg", "ppi", "scc", "fdc", "rtc", "mouse",
+        "vdp", "psg", "ppi", "scc", "fdc", "rtc", "mouse", "printer",
     }
     assert isinstance(decoded["ppi"], dict)
-    for key in ("scc", "fdc", "rtc", "mouse"):
+    for key in ("scc", "fdc", "rtc", "mouse", "printer"):
         assert decoded[key] is None
     assert decoded["vdp"]["v9938"] is None
     assert decoded["memory"]["ram_mapper"] is None
@@ -300,7 +300,7 @@ def test_an_earlier_version_with_a_float_is_rejected_as_a_version_mismatch() -> 
     decoded["out_time"] = 22458.33333141287   # an older format with a float
     target = _ran(1)
     before = state.save_state(target)
-    with pytest.raises(ValueError, match="incompatible state file: version 16, expected 21"):
+    with pytest.raises(ValueError, match="incompatible state file: version 16, expected 22"):
         state.load_state(target, json.dumps(decoded).encode("utf-8"))
     assert state.save_state(target) == before
 
