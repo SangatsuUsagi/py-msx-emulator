@@ -28,12 +28,15 @@ Debugger entered. Type 'c' to resume, 'q' to exit.
 ```
 
 `cyc` is the cumulative Z80 T-state count. `frm` is the number of completed
-frames. The window shows the last rendered frame. Type `c` to resume the
-emulation, or `q` to exit. A frame that stopped at a break or at Ctrl+C
-continues from where it stopped, so its VBlank and its remaining scanlines
-still run. If you press Ctrl+C again at the REPL prompt, the
-emulator exits immediately (`sys.exit(0)`). It does not cancel the input or
-return to the prompt.
+frames. The window shows the last rendered frame. If you press Ctrl+C in the
+SDL window, type the REPL commands in the terminal that started the emulator.
+The window does not update until you type `c`.
+
+Type `c` to resume the emulation, or `q` to exit. A frame that stopped at a
+break or at Ctrl+C continues from where it stopped, so its VBlank and its
+remaining scanlines still run. If you press Ctrl+C again at the REPL prompt,
+the emulator exits immediately (`sys.exit(0)`). It does not cancel the input
+or return to the prompt.
 
 With `--rpc`, Ctrl+C in the terminal also opens the REPL, and the RPC pause
 state does not change. While the REPL is open, the emulator serves no RPC
@@ -479,6 +482,29 @@ Output format: `CY=.. FR=.. PC=.. MAP_BANK win=W OLDh->NEWh addr=XXXXh`
 
 If the cartridge uses a flat (non-bank-switching) mapper, the emulator writes a
 note to stderr and writes no `MAP_BANK` lines.
+
+### Diagnostic log
+
+```bash
+python . path/to/game.rom --machine cbios_msx2_jp --debug
+python . path/to/game.rom --machine cbios_msx2_jp --debug --log debug.log
+```
+
+`--debug` writes a diagnostic log to stderr. With `--log FILE`, the emulator
+also appends the same lines to `FILE`. `--log` needs `--debug`. Each line
+starts with a category:
+
+| Category | Line |
+|---|---|
+| `[IO]` | `IN` or `OUT` for each I/O port access, with the port, the value and the PC of the instruction |
+| `[BOOT]` | The VDP display turns on or off (R#1), or the screen mode changes (R#0, R#1) |
+| `[CPU]` | An undefined opcode, or one line of the instruction history before a hang |
+| `[HANG]` | The same PC runs 1000 times in a row, or a HALT with interrupts disabled at the end of a frame |
+
+Before each `[HANG]` line, the log shows the last 64 instructions as
+`[CPU]  trace` lines. Each hang location is reported only once. The emulation
+does not stop at a `[HANG]` line. To stop at a HALT with interrupts disabled,
+use `bh` in the REPL.
 
 ### Headless N-frame run
 

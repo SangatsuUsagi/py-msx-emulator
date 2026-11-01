@@ -20,7 +20,7 @@ Debugger entered. Type 'c' to resume, 'q' to exit.
 (msx-dbg cyc=720430 frm=12)
 ```
 
-`cyc` は Z80 の T ステート数の累計、`frm` は終わったフレームの数である。ウィンドウには最後に描画したフレームが表示される。
+`cyc` は Z80 の T ステート数の累計、`frm` は終わったフレームの数である。ウィンドウには最後に描画したフレームが表示される。SDL ウィンドウで Ctrl+C を押した場合も、REPL のコマンドはエミュレータを起動したターミナルで入力する。`c` を入力するまで、ウィンドウの表示は更新されない。
 
 `c` でエミュレーションを再開し、`q` でエミュレータを終了する。ブレークや Ctrl+C で止まったフレームは、止まった位置から続くので、そのフレームの VBlank と残りのスキャンラインも実行される。REPL のプロンプトでもう一度 Ctrl+C を押すと、エミュレータはすぐに終了する（`sys.exit(0)`）。入力の取り消しやプロンプトへの復帰にはならない。
 
@@ -367,6 +367,24 @@ python . path/to/game.rom --machine cbios_msx2_jp --mapper-trace --mapper-trace-
 出力の形式：`CY=.. FR=.. PC=.. MAP_BANK win=W OLDh->NEWh addr=XXXXh`
 
 カートリッジのマッパーがフラット（バンク切り替えなし）のときは、エミュレータは stderr に注記を書き出し、`MAP_BANK` の行は書き出さない。
+
+### 診断ログ
+
+```bash
+python . path/to/game.rom --machine cbios_msx2_jp --debug
+python . path/to/game.rom --machine cbios_msx2_jp --debug --log debug.log
+```
+
+`--debug` を付けると、診断ログを stderr に書き出す。`--log FILE` を付けると、同じ行を `FILE` にも追記する。`--log` には `--debug` が必要である。各行の先頭にはカテゴリが付く。
+
+| カテゴリ | 内容 |
+|---|---|
+| `[IO]` | I/O ポートへのアクセスごとの `IN` または `OUT`。ポート、値、命令の PC を付ける |
+| `[BOOT]` | VDP の画面表示のオンとオフ（R#1）、スクリーンモードの変化（R#0、R#1） |
+| `[CPU]` | 未定義の命令、またはハングの前の命令の履歴の 1 行 |
+| `[HANG]` | 同じ PC を 1000 回続けて実行したとき、またはフレームの終わりに割り込み禁止のまま HALT しているとき |
+
+各 `[HANG]` 行の前には、直前の 64 命令を `[CPU]  trace` 行として出力する。同じ場所のハングは 1 回だけ報告する。`[HANG]` 行が出てもエミュレーションは止まらない。割り込み禁止の HALT で止めたいときは、REPL の `bh` を使う。
 
 ### ヘッドレスで N フレームだけ実行する
 
