@@ -5,7 +5,7 @@ driven by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-4080%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-4444%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -343,7 +343,7 @@ the emulator rejects the same ROM or extension id on both cartridge slots.
 | Slot 0 page 2 | Logo ROM (`cbios_logo_msx1.rom`) at 0x8000-0xBFFF. The machine YAML declares it as a `pages: [2]` entry next to the BIOS. Reads return 0xFF if the file is absent |
 | Slot 0 page 3 | 16 KB SRAM at 0xC000-0xFFFF on some machines (e.g. `hb_10`). This is volatile work RAM. Unlike cartridge SRAM, it has no battery backup and the emulator does not save it. The machine YAML declares it as a `ram: {size_kb: 16, pages: [3]}` entry next to the BIOS |
 | Slot 1 | Cartridge ROM via mapper. Open bus (0xFF on read, writes ignored) when no slot 1 ROM is present. `--extension1` expands it into sub-slots, see [`docs/README_extension.md`](docs/README_extension.md#slot-model) |
-| Slot 2 | Second cartridge ROM via `_mapper2`. Open bus (0xFF on read, writes ignored) when no slot 2 ROM is present. `--extension2` expands it into sub-slots, see [`docs/README_extension.md`](docs/README_extension.md#slot-model) |
+| Slot 2 | Second cartridge ROM, with the mapper that `--mapper2` selects. Open bus (0xFF on read, writes ignored) when no slot 2 ROM is present. `--extension2` expands it into sub-slots, see [`docs/README_extension.md`](docs/README_extension.md#slot-model) |
 | Slot 3 (MSX1) | 32 KB RAM at 0x8000-0xFFFF by default. Each machine sets the size (64 KB across all pages on `hb_10_64k`, unpopulated open bus on `hb_10`) |
 | Slot 3 (MSX2) | Expanded into 4 secondary slots: sub-ROM in 3-0, RAM mapper in 3-2 |
 
@@ -1175,7 +1175,7 @@ entries with `implemented: false` in their device YAML and shows a warning.
 
 ## Running tests
 
-The test suite has 4098 tests and covers all major components. It includes
+The test suite has 4444 tests and covers all major components. It includes
 unit tests for individual opcodes and hardware registers, and integration tests
 that connect multiple components. It also includes scenario-level tests, with
 conditions that come directly from the component specs.
@@ -1218,6 +1218,8 @@ py-msx-emulator/
 │   ├── rpc_server.py      # Unix-socket JSON-RPC control server (--rpc)
 │   ├── trace.py           # VDP and mapper trace text from the core's trace events
 │   ├── debug_log.py       # --debug log text (CPU/I/O trace, hangs) from the trace events
+│   ├── key_names.py       # MSX key names (RPC key input, frontend hotkeys)
+│   ├── watch.py           # Watchpoint access-kind text (r, w, rw)
 │   └── debugger/          # Interactive REPL (prompt, disassembler)
 ├── include/
 │   └── msx_core.h         # C header of the core API, for a native core (declarations only)
@@ -1238,6 +1240,8 @@ py-msx-emulator/
 │   ├── kanji.py           # JIS Kanji font ROM I/O device
 │   ├── ram_mapper.py      # MSX2 RAM mapper (16 KB segments)
 │   ├── rtc.py             # RP5C01 real-time clock
+│   ├── clock.py           # Shared emulated-time record (cycle, frame, instruction address)
+│   ├── sram.py            # Battery-backed SRAM value and its persisted shape
 │   ├── psg.py             # AY-3-8910 PSG + audio synthesis (sub-frame software PCM)
 │   ├── audio_mixer.py     # Per-frame audio mix (run by Machine.run_frame)
 │   ├── dac.py             # Write-driven DAC channel (Majutsushi DAC, key click)
@@ -1251,6 +1255,7 @@ py-msx-emulator/
 │   ├── screenshot.py      # Current-frame RGB24 capture
 │   ├── trace.py           # Trace buffer (VDP and mapper trace, debug log events, hang history)
 │   ├── snapshot.schema.json # JSON Schema of the save-state layout
+│   ├── snapshot_schema.py # Checks shared by the save-state parsers
 │   └── state.py           # Machine state snapshot (canonical JSON)
 ├── config/
 │   ├── devices/           # Device YAML definitions (VDP, PSG, PPI, RTC, ...)
@@ -1264,7 +1269,7 @@ py-msx-emulator/
 ├── allium/                # Allium behaviour specs, verifying spec/implementation alignment (not published yet)
 ├── openspec/
 │   └── specs/             # Component specifications (not published yet)
-├── tests/                 # Test suite (4098 tests)
+├── tests/                 # Test suite (4444 tests)
 ├── py_emulator.example.yaml # Annotated example of the optional config file
 ├── QUICK_START.md         # Requirements, installation, BIOS setup
 ├── CHANGELOG.md           # Version history
@@ -1290,7 +1295,8 @@ contracts to match.
 - **Python 3.10+**: dataclasses and modern type annotation syntax. Keep the
   core easy to port to Rust/C/JS: explicit `for` loops, no walrus operator, no
   complex comprehensions or generators
-- **Type hints everywhere**: mypy checks the project in strict mode
+- **Type hints everywhere**: mypy checks `msx/`, `host/`, `frontend/` and
+  `tools/` in strict mode. `tests/` is exempt
 - **Linting**: ruff with `line-length = 99`. Run `python -m ruff check .`
   before you commit
 - **Comments only for the non-obvious**: do not add comments that restate the

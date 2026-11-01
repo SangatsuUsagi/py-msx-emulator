@@ -1,18 +1,18 @@
 # py-msx-emulator
 
-純粋な Python 3.10+ で書いた、機能的に正確な MSX1/MSX2 エミュレータ。機械可読なコンポーネント仕様に基づいて実装している。
+純粋な Python 3.10+ で書いた、機能的に正確な MSX1/MSX2 エミュレータである。機械可読なコンポーネント仕様に基づいて実装している。
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-4080%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-4444%20passing-brightgreen)
 
 [English README is here](README.md)
 
 ---
 
-ハードウェアコンポーネントはすべて純粋な Python で書いている。各コンポーネントは実装の前に機械可読な仕様として定義し、その仕様がテストを決める（[仕様駆動アーキテクチャ](#仕様駆動アーキテクチャ)を参照）。コンポーネントの配線は `build_machine()` に手で書いてあり、リフレクションや依存性注入は使わない。プラットフォーム固有の依存は、画面と音声のフロントエンドに使う pysdl2 だけ。内部構造は [`docs/technical-implementation_ja.md`](docs/technical-implementation_ja.md) で説明している。
+ハードウェアコンポーネントはすべて純粋な Python で書いている。各コンポーネントは実装の前に機械可読な仕様として定義し、その仕様がテストを決める（[仕様駆動アーキテクチャ](#仕様駆動アーキテクチャ)を参照）。コンポーネントの配線は `build_machine()` に手で書いてあり、リフレクションや依存性注入は使わない。プラットフォーム固有の依存は、画面と音声のフロントエンドに使う pysdl2 だけである。内部構造は [`docs/technical-implementation_ja.md`](docs/technical-implementation_ja.md) で説明している。
 
-コア（`msx/`）はファイルもホストの時計も読まない。コアの外のコードは、コア API（`msx/core_api.py`）だけを通してマシンを使う。`include/msx_core.h` はこの API の C の形で、ABI バージョンは 1。ほかの言語で書いたコアに Python のコアを置き換えられるようにするためのもの。[コアの移植](docs/technical-implementation_ja.md#コアの移植)を参照。
+コア（`msx/`）はファイルもホストの時計も読まない。コアの外のコードは、コア API（`msx/core_api.py`）だけを通してマシンを使う。`include/msx_core.h` はこの API の C の形で、ABI バージョンは 1 である。ほかの言語で書いたコアに Python のコアを置き換えられるようにするためのものである。[コアの移植](docs/technical-implementation_ja.md#コアの移植)を参照してほしい。
 
-動かすには BIOS ROM が必要で、リポジトリには含まれない。汎用マシンには無償の [C-BIOS](https://cbios.sourceforge.net/) が使える。手順は [QUICK_START_ja.md](QUICK_START_ja.md) を参照。
+動かすには BIOS ROM が必要で、リポジトリには含まれない。汎用マシンには無償の [C-BIOS](https://cbios.sourceforge.net/) が使える。手順は [QUICK_START_ja.md](QUICK_START_ja.md) を参照してほしい。
 
 ### 検証済みハードウェアとソフトウェア
 
@@ -66,7 +66,7 @@
 
 ### CPU：Zilog Z80
 
-レジスタはすべて持つ（AF、BC、DE、HL、IX、IY、SP、PC、I、R と裏レジスタ）。文書化された 252 のオペコードすべてと、CB/DD/ED/FD プレフィックスのテーブル、非公式の IXH/IXL/IYH/IYL アクセス命令を実装している。マスカブル割り込み（INT モード 1 と 2）とノンマスカブル割り込み（NMI）にも対応する。ステップ実行は T ステート単位で正確。MSX の **M1 ウェイト**を設定でき、オペコードフェッチごとに 1 T ステートを足す（実機と openMSX と同じ）。デフォルトは 0 で、純粋な Zilog Z80 として動く。CPU コアは命令テストの zexdoc と zexall をすべて通る（[命令テスト](docs/technical-implementation_ja.md#命令テスト)を参照）。
+レジスタはすべて持つ（AF、BC、DE、HL、IX、IY、SP、PC、I、R と裏レジスタ）。文書化された 252 のオペコードすべてと、CB/DD/ED/FD プレフィックスのテーブル、非公式の IXH/IXL/IYH/IYL アクセス命令を実装している。マスカブル割り込み（INT モード 1 と 2）とノンマスカブル割り込み（NMI）にも対応する。ステップ実行は T ステート単位で正確である。MSX の **M1 ウェイト**を設定でき、オペコードフェッチごとに 1 T ステートを足す（実機と openMSX と同じ）。デフォルトは 0 で、純粋な Zilog Z80 として動く。CPU コアは命令テストの zexdoc と zexall をすべて通る（[命令テスト](docs/technical-implementation_ja.md#命令テスト)を参照）。
 
 - 実装：`msx/cpu/z80.py`、`msx/cpu/opcodes_main.py`、`msx/cpu/registers.py`
 - 既知の制限：
@@ -89,12 +89,12 @@
 - 実装：`msx/vdp/v9938.py`、`msx/vdp/v9938_renderer.py`
 - 既知の制限：
   - コマンドのタイミングは近似で、サイクル単位では正確でない。ビームに合わせた転送や、1 フレーム内での VRAM のダブルバッファは正しく再現しない。ブロックコマンドには 1 バイトまたは 1 ドットあたりのコストが 1 つずつあり、その値は実機の HB-F1XD で表示とスプライトをオンにして測った。表示やスプライトの VRAM アクセスが少ないときに速くなる分はモデル化していない。
-  - GRAPHIC 6/7 のプレーナ VRAM インターリーブはモデル化していない。実機はこれらのモードで、偶数バイトと奇数バイトを 2 個の VRAM IC に分ける。エミュレータはリニアなアドレスを使う。結果が違うのは、プレーナモードで VRAM に書き、クリアせずに非プレーナモードへ切り替え、データを読み戻した場合だけ。
+  - GRAPHIC 6/7 のプレーナ VRAM インターリーブはモデル化していない。実機はこれらのモードで、偶数バイトと奇数バイトを 2 個の VRAM IC に分ける。エミュレータはリニアなアドレスを使う。結果が違うのは、プレーナモードで VRAM に書き、クリアせずに非プレーナモードへ切り替え、データを読み戻した場合だけである。
   - R#13 の点滅タイマーは 1 フレームに 1 回進む。このタイマーは、R#12 の色による TEXT2 の文字点滅と、GRAPHIC4〜7 の自動ページ切り替えを制御する。そのため、フレーム途中の R#13 書き込みはフレーム全体に効く。非公式の R#1 bit 2 によるライン単位の点滅タイミングは実装していない。R#9 の EO ビットは、実機の V9938 と同じく GRAPHIC4〜7 の偶数/奇数ページを自動で切り替える。本当のインターレース出力（縦の解像度が 2 倍）に必要な半走査線分のずらしは、描画を単純で速く保つため、意図的に対象外にしている。
 
 ### PSG（Programmable Sound Generator）：AY-3-8910
 
-16 個のレジスタ、3 つのトーンチャンネル、ノイズチャンネル、8 種類の波形を持つエンベロープジェネレータを備える。音量テーブルは実チップの測定値に基づく。理想化した幾何カーブではなく、ayumi がオシロスコープで測った AY-3-8910 の DAC カーブを使う。出力は 44100 Hz の PCM で、1 フレームあたり NTSC マシン（60 fps）では 735 サンプル、PAL マシン（50 fps）では 882 サンプル。
+16 個のレジスタ、3 つのトーンチャンネル、ノイズチャンネル、8 種類の波形を持つエンベロープジェネレータを備える。音量テーブルは実チップの測定値に基づく。理想化した幾何カーブではなく、ayumi がオシロスコープで測った AY-3-8910 の DAC カーブを使う。出力は 44100 Hz の PCM で、1 フレームあたり NTSC マシン（60 fps）では 735 サンプル、PAL マシン（50 fps）では 882 サンプルである。
 
 **フレーム内のソフトウェア PCM** の再現のため、音量レジスタへの書き込みごとにサイクル時刻を記録し、フレーム内の対応するサンプル位置で再生する。トーンジェネレータは出力サンプルごとに積分するので、周期 0 の超音波 PCM キャリアは帯域制限されたデューティ平均になり、0/最大のチョッピングにエイリアスしない。
 
@@ -110,7 +110,7 @@ PPI ポートC の bit 7（I/O ポート 0xAA）は 1 ビット DAC を駆動す
 
 ### SCC：Konami SCC（Sound Creative Chip）
 
-5 チャンネルのウェーブテーブル音源。出力は PSG と一緒にミックスする。SCC には 2 つのモードがある。
+5 チャンネルのウェーブテーブル音源である。出力は PSG と一緒にミックスする。SCC には 2 つのモードがある。
 
 - **Compatible モード**（デフォルト）：32 サンプルの波形バンクが 4 つ（チャンネル 5 はチャンネル 4 の波形を使う）。チャンネルごとに 12 ビットの周波数と 4 ビットの音量を持つ。プログラムが 0x9000 に 0x3F を書くと KonamiSCC マッパーがこのモードを有効にし、レジスタが 0x9800 に現れる。
 - **Plus モード**：5 チャンネルそれぞれに*独立した*波形バンクを持つ。周波数、音量、イネーブルのレジスタは別のオフセットに移る。後述の SCC-I カートリッジがこのモードを使い、`SCC.set_mode()` で選ぶ。
@@ -121,9 +121,9 @@ PPI ポートC の bit 7（I/O ポート 0xAA）は 1 ビット DAC を駆動す
 
 ### SCC-I カートリッジ（「SCC+」）
 
-ゲーム ROM を持たない音源だけのカートリッジ。`--extension1`/`--extension2 scc_plus` で有効にする。有効化とスロットの仕組みは [`docs/README_extension_ja.md`](docs/README_extension_ja.md#scc-i-カートリッジ-scc) を参照。音源目的でこのカートリッジを使うフロッピー（FDD）の MSX2 タイトル向け。
+ゲーム ROM を持たない音源だけのカートリッジである。`--extension1`/`--extension2 scc_plus` で有効にする。有効化とスロットの仕組みは [`docs/README_extension_ja.md`](docs/README_extension_ja.md#scc-i-カートリッジ-scc) を参照してほしい。音源目的でこのカートリッジを使うフロッピー（FDD）の MSX2 タイトル向けである。
 
-カートリッジは物理 64 KB のバンク切り替え RAM を持ち、128 KB として見える。RAM は空で、ROM やデータファイルは一切読み込まない。バンクレジスタは bit 3 を無視するので、ブロック N はブロック N+8 と同じになる。これは実機で知られている改造（「[2 つの 64 KB バンクを接続する](http://bifi.msxnet.org/msxnet/tech/soundcartridge.html)」）を再現したもの。この改造により、工場出荷時の RAM 搭載パターン 2 種類のどちらにも 1 つのカートリッジで対応できる。このプロジェクトの対象 2 タイトルは、それぞれどちらか一方のパターンを前提にしている。
+カートリッジは物理 64 KB のバンク切り替え RAM を持ち、128 KB として見える。RAM は空で、ROM やデータファイルは一切読み込まない。バンクレジスタは bit 3 を無視するので、ブロック N はブロック N+8 と同じになる。これは実機で知られている改造（「[2 つの 64 KB バンクを接続する](http://bifi.msxnet.org/msxnet/tech/soundcartridge.html)」）を再現したものである。この改造により、工場出荷時の RAM 搭載パターン 2 種類のどちらにも 1 つのカートリッジで対応できる。このプロジェクトの対象 2 タイトルは、それぞれどちらか一方のパターンを前提にしている。
 
 モードレジスタで、搭載している SCC チップの Compatible/Plus モードを選ぶ。ウィンドウごとの RAM 書き込み制御もある。
 
@@ -138,7 +138,7 @@ PPI ポートC の bit 7（I/O ポート 0xAA）は 1 ビット DAC を駆動す
 
 ### FM-PAC：MSX-MUSIC カートリッジ（YM2413/OPLL）
 
-追加で挿せるカートリッジ。`--extension1`/`--extension2 fmpac` で有効にする。有効化と必要な ROM は [`docs/README_extension_ja.md`](docs/README_extension_ja.md#fm-pac) を参照。64 KB のバンク切り替え ROM、openMSX 互換のマジック値でロックを外す 8 KB のバッテリーバックアップ SRAM、YM2413（OPLL）FM 音源チップを持つ。チップは 9 チャンネル 2 オペレータのメロディ合成（内蔵 15 音色とユーザー定義音色）、ADSR エンベロープ、リズムモード（バスドラム、スネア、タム、トップシンバル、ハイハット）を備える。出力は PSG/SCC と一緒にミックスする。
+追加で挿せるカートリッジである。`--extension1`/`--extension2 fmpac` で有効にする。有効化と必要な ROM は [`docs/README_extension_ja.md`](docs/README_extension_ja.md#fm-pac) を参照してほしい。64 KB のバンク切り替え ROM、openMSX 互換のマジック値でロックを外す 8 KB のバッテリーバックアップ SRAM、YM2413（OPLL）FM 音源チップを持つ。チップは 9 チャンネル 2 オペレータのメロディ合成（内蔵 15 音色とユーザー定義音色）、ADSR エンベロープ、リズムモード（バスドラム、スネア、タム、トップシンバル、ハイハット）を備える。出力は PSG/SCC と一緒にミックスする。
 
 | 項目 | 詳細 |
 | --- | --- |
@@ -151,15 +151,15 @@ PPI ポートC の bit 7（I/O ポート 0xAA）は 1 ビット DAC を駆動す
 
 - 既知の制限：
   - 出力レートの変換には、emu2413 の窓付き sinc リサンプラではなく、積算平均による間引き（チップ clk/72 → 44100 Hz）を使う。残るイメージングはアナログ風のローパスで取り除く。
-  - 音色セットは YM2413 のものだけ（VRC7、YMF281 のバンクはない）。
+  - 音色セットは YM2413 のものだけである（VRC7、YMF281 のバンクはない）。
   - チャンネルマスクとステレオパンはない。
 
 ### Sony HBI-J1：漢字ROM + MSX-JEワードプロセッサ
 
-追加で挿せるカートリッジ。`--extension1`/`--extension2 hbi_j1` で有効にする。有効化、必要な ROM、ライセンスは [`docs/README_extension_ja.md`](docs/README_extension_ja.md#sony-hbi-j1) を参照。カートリッジは 2 つの部分からなる。
+追加で挿せるカートリッジである。`--extension1`/`--extension2 hbi_j1` で有効にする。有効化、必要な ROM、ライセンスは [`docs/README_extension_ja.md`](docs/README_extension_ja.md#sony-hbi-j1) を参照してほしい。カートリッジは 2 つの部分からなる。
 
-- JIS 漢字フォント ROM の I/O デバイス。ポート `0xD8-0xDB` にあり、スロット上の位置は持たない。
-- サブスロットを 2 つ持つ*拡張*プライマリスロット。Halnote マッパー方式の MSX-JE ワープロ ROM（16 KB のバッテリーバックアップ SRAM 付き）と、フラットな漢字ドライバ兼 BASIC 拡張 ROM が入る。どのスロットになるかは `--extension1`/`--extension2` で決まる。
+- JIS 漢字フォント ROM の I/O デバイスである。ポート `0xD8-0xDB` にあり、スロット上の位置は持たない。
+- サブスロットを 2 つ持つ*拡張*プライマリスロットである。Halnote マッパー方式の MSX-JE ワープロ ROM（16 KB のバッテリーバックアップ SRAM 付き）と、フラットな漢字ドライバ兼 BASIC 拡張 ROM が入る。どのスロットになるかは `--extension1`/`--extension2` で決まる。
 
 標準的な MSX2 本体に挿すカートリッジなので、この拡張スロットは本体側のスロット 3 の拡張と共存する。
 
@@ -177,7 +177,7 @@ PPI ポートC の bit 7（I/O ポート 0xAA）は 1 ビット DAC を駆動す
 
 ### オーディオ出力フィルタ
 
-実機 MSX の音声出力の RC フィルタを模した、アナログ風の出力ローパスフィルタ（2 極バターワース）。ミックス後の PSG/SCC/DAC/OPLL/キークリックの信号から、残ったイメージングとエイリアシングを取り除く。
+実機 MSX の音声出力の RC フィルタを模した、アナログ風の出力ローパスフィルタ（2 極バターワース）である。ミックス後の PSG/SCC/DAC/OPLL/キークリックの信号から、残ったイメージングとエイリアシングを取り除く。
 
 - 実装：`frontend/audio_filter.py`。フロントエンドがかける。コアの音声出力はフィルタ前のミックス
 
@@ -185,9 +185,9 @@ PPI ポートC の bit 7（I/O ポート 0xAA）は 1 ビット DAC を駆動す
 
 スロット選択レジスタ（ポート 0xA8）、11 行 × 8 ビットの MSX キーボードマトリクス（ポート 0xA9）、行選択（ポート 0xAA）を持つ。書き込み専用の制御ポート 0xAB を読んだときの値は、マシンの PPI チップによって違う。マシンごとの `control_read` 設定で、次のどれかを選ぶ。
 
-- `control`（デフォルト）：最後のモード設定値。CMOS 82C55A と同じ。
-- `open_bus`：0xFF。S1985 搭載マシンと同じ。実機 HB-F1XD で確認した。
-- `bus_latch`：最後の PPI アクセスでラッチしたバイト。`hb_10` と `hb_10_64k` の S3527 と同じ。実機 HB-10 で確認した。
+- `control`（デフォルト）：最後のモード設定値。CMOS 82C55A と同じである。
+- `open_bus`：0xFF。S1985 搭載マシンと同じである。実機 HB-F1XD で確認した。
+- `bus_latch`：最後の PPI アクセスでラッチしたバイト。`hb_10` と `hb_10_64k` の S3527 と同じである。実機 HB-10 で確認した。
 
 - 実装：`msx/ppi.py`
 - 既知の制限：カセットインターフェース（ポート 0xAA のビット 4〜5）と CAPS LED（ビット 6）は実装していない。ビット 7 はキークリックを駆動する（「キークリック：PPI ポートC bit 7」を参照）。
@@ -196,7 +196,7 @@ PPI ポートC の bit 7（I/O ポート 0xAA）は 1 ビット DAC を駆動す
 
 MSX1 は 4 ページ × 4 スロットで振り分ける。スロット 0 に BIOS ROM、スロット 1 にカートリッジ、スロット 2 に追加のカートリッジ、スロット 3 に 32 KB の RAM が入る。MSX2 ではプライマリスロット 3 が 4 つのセカンダリスロットに拡張され、サブスロット 3-0 にサブ ROM、3-2 に RAM マッパーが入る。
 
-`--extension1`/`--extension2` でプライマリスロット 1 とスロット 2 もそれぞれ拡張できる。この拡張はスロット 3 の拡張と共存し、それぞれが自分のセカンダリスロットレジスタを持つ。各スロットに何を入れられるか、どの拡張がスロットを拡張するかは、[`docs/README_extension_ja.md` の「スロットモデル」節](docs/README_extension_ja.md#スロットモデル)を参照。同じ ROM や拡張 id を両方のカートリッジスロットに指定すると、起動時にエラーになる。
+`--extension1`/`--extension2` でプライマリスロット 1 とスロット 2 もそれぞれ拡張できる。この拡張はスロット 3 の拡張と共存し、それぞれが自分のセカンダリスロットレジスタを持つ。各スロットに何を入れられるか、どの拡張がスロットを拡張するかは、[`docs/README_extension_ja.md` の「スロットモデル」節](docs/README_extension_ja.md#スロットモデル)を参照してほしい。同じ ROM や拡張 id を両方のカートリッジスロットに指定すると、起動時にエラーになる。
 
 | 項目 | 詳細 |
 | --- | --- |
@@ -206,22 +206,22 @@ MSX1 は 4 ページ × 4 スロットで振り分ける。スロット 0 に BI
 | スロット 0 ページ 2 | ロゴ ROM（`cbios_logo_msx1.rom`）を 0x8000–0xBFFF にマップ。BIOS と並べてマシン YAML の `pages: [2]` エントリとして宣言する。存在しない場合は 0xFF を返す |
 | スロット 0 ページ 3 | 一部の機種（例：`hb_10`）で 16 KB SRAM を 0xC000–0xFFFF にマップする。電源断で消えるワーク RAM で、カートリッジ SRAM のようなバッテリーバックアップや保存はない。BIOS と並べてマシン YAML の `ram: {size_kb: 16, pages: [3]}` エントリとして宣言する |
 | スロット 1 | マッパー経由のカートリッジ ROM。未装着の場合はオープンバス（読み出しは 0xFF、書き込みは無視）。`--extension1` によりサブスロットに拡張。詳細は[`docs/README_extension_ja.md`](docs/README_extension_ja.md#スロットモデル)を参照 |
-| スロット 2 | `_mapper2` 経由の第 2 カートリッジ ROM。未装着の場合はオープンバス（読み出しは 0xFF、書き込みは無視）。`--extension2` によりサブスロットに拡張。詳細は[`docs/README_extension_ja.md`](docs/README_extension_ja.md#スロットモデル)を参照 |
+| スロット 2 | `--mapper2` で選んだマッパーを使う第 2 カートリッジ ROM。未装着の場合はオープンバス（読み出しは 0xFF、書き込みは無視）。`--extension2` によりサブスロットに拡張。詳細は[`docs/README_extension_ja.md`](docs/README_extension_ja.md#スロットモデル)を参照 |
 | スロット 3（MSX1） | 既定はページ 2–3（0x8000–0xFFFF）の 32 KB RAM。サイズは機種ごとに設定（`hb_10_64k` は全ページの 64 KB、`hb_10` は空きでオープンバス） |
 | スロット 3（MSX2） | 4 つのセカンダリスロットに拡張。3-0 にサブ ROM、3-2 に RAM マッパー |
 
 ### RAM マッパー
 
-メイン RAM を 16 KB 単位のセグメントで扱う。セグメントレジスタはポート 0xFC〜0xFF。標準の MSX2 マシンは 128 KB（8 セグメント）。`hb_f1xd_256k` は 256 KB で、[`docs/README_extension_ja.md`](docs/README_extension_ja.md) の 512 KB の拡張を使うとさらに増える。
+メイン RAM を 16 KB 単位のセグメントで扱う。セグメントレジスタはポート 0xFC〜0xFF にある。標準の MSX2 マシンの RAM は 128 KB（8 セグメント）である。`hb_f1xd_256k` は 256 KB で、[`docs/README_extension_ja.md`](docs/README_extension_ja.md) の 512 KB の拡張を使うとさらに増える。
 
 - 実装：`msx/ram_mapper.py`
 
 ### RTC：RP5C01
 
-ポート 0xB4〜0xB5 のリアルタイムクロック。バッテリーバックアップの CMOS RAM（ブロック 2/3、計 26 ニブル）と、12/24 時間モードの切り替え（レジスタ 10 の bit 0）も持つ。
+ポート 0xB4〜0xB5 にあるリアルタイムクロックである。バッテリーバックアップの CMOS RAM（ブロック 2/3、計 26 ニブル）と、12/24 時間モードの切り替え（レジスタ 10 の bit 0）も持つ。
 
 - 実装：`msx/rtc.py`
-- CMOS RAM の保存先：`saves/sram/rtc_<machine_id>.sram`。マシンごとに 1 ファイル。カートリッジの SRAM と違い、実機は 1 台に 1 個の RTC と電池を持つため。起動時に読み込み、変更があれば終了時に保存する
+- CMOS RAM の保存先：`saves/sram/rtc_<machine_id>.sram`。マシンごとに 1 ファイルを使う。カートリッジの SRAM と違い、実機は 1 台に 1 個の RTC と電池を持つためである。起動時に読み込み、変更があれば終了時に保存する
 - 時計：マシンを作るときにホストの現在時刻から始まり、その後はエミュレーションの時間だけで進む。このため同じ入力なら毎回同じ動作になる。時計はエミュレーションの速さで進む（早送り中は速く、一時停止中は止まる）
 - 既知の制限：MSX 側から時刻を設定しても時計は変わらない。アラームとタイマー出力はない。
 
@@ -246,7 +246,7 @@ MSX1 は 4 ページ × 4 スロットで振り分ける。スロット 0 に BI
 
 スロット 1 とスロット 2 はそれぞれ独立にマッパーを選ぶ（`--mapper`/`--mapper1` と `--mapper2`、どちらもデフォルトは自動）。SRAM 付きのタイプも含め、両スロットは同じマッパーに対応する。各スロットの SRAM は、それぞれ `saves/sram/<カートリッジの SHA1>.sram` に、変更があれば終了時に保存する。
 
-`KonamiSCC` はどちらのスロットでも実際の Konami-SCC チップを作る。実機の Konami-SCC カートリッジは、Konami のスロットコンバータなどを使えばどちらのスロットにも挿せるため。ただし、スロット 1 と 2 はマシンに 1 つだけの `SCC` チップを共有する。次の場合は `MachineLoadError` になる。
+`KonamiSCC` はどちらのスロットでも実際の Konami-SCC チップを作る。実機の Konami-SCC カートリッジは、Konami のスロットコンバータなどを使えばどちらのスロットにも挿せるためである。ただし、スロット 1 と 2 はマシンに 1 つだけの `SCC` チップを共有する。次の場合は `MachineLoadError` になる。
 
 - 両方のスロットが `KonamiSCC` になる。
 - 一方のスロットが `KonamiSCC` で、もう一方が `--extensionN scc_plus` を選んでいる。
@@ -260,19 +260,19 @@ MSX1 は 4 ページ × 4 スロットで振り分ける。スロット 0 に BI
 - 実装：`msx/fdc/wd2793.py`、`msx/fdc/interface.py`
 - 既知の制限：
   - タイミングのモデルがなく、コマンドは即座に終わる。シーク/ステップの速度、回転に基づく ID の検索、ヘッドロードやシーク後ベリファイの待ちはない。
-  - READ TRACK は中身のないスタブ。
+  - READ TRACK は中身のないスタブである。
   - WRITE TRACK は送られたデータを捨て、バイト数だけでフォーマットする。ギャップバイトやアドレスマークは解釈しない。
 
 ### フロッピーディスクドライブ（TC8566AF）
 
-同じ汎用 FDC 層の上にある、2 つ目のコントローラと接続方式の組み合わせ。Panasonic FS-A1F（`--machine fs_a1f`）と同じもの。レジスタは実機の FS-A1F と同じくスロット 3 のサブスロット 2 にメモリマップされる（RAM はサブスロット 0、SUB ROM はサブスロット 1）。レジスタは Main Status Register、Data Register、2 つのコントロールレジスタ。WD2793 と違い、TRACK/SECTOR レジスタを直接読み書きできない。`*.dsk` イメージは同じく `--fdd1` でマウントする。
+同じ汎用 FDC 層の上にある、2 つ目のコントローラと接続方式の組み合わせである。Panasonic FS-A1F（`--machine fs_a1f`）と同じものである。レジスタは実機の FS-A1F と同じくスロット 3 のサブスロット 2 にメモリマップされる（RAM はサブスロット 0、SUB ROM はサブスロット 1）。レジスタは Main Status Register、Data Register、2 つのコントロールレジスタである。WD2793 と違い、TRACK/SECTOR レジスタを直接読み書きできない。`*.dsk` イメージは同じく `--fdd1` でマウントする。
 
 SPECIFY、SENSE INTERRUPT STATUS、SENSE DEVICE STATUS、RECALIBRATE、SEEK、READ DATA、WRITE DATA、FORMAT を実装している。MSX の DISK ROM の起動とセクタ入出力、`CALL FORMAT` にはこれで足りる。
 
 - 実装：`msx/fdc/tc8566af.py`、`msx/fdc/interface.py`
 - 既知の制限：
   - タイミングのモデルはない（WD2793 と同じ方針）。
-  - 非 DMA モードだけ。DRQ2/-DACK2/DMATC ピンはモデル化していない。
+  - 非 DMA モードだけに対応する。DRQ2/-DACK2/DMATC ピンはモデル化していない。
   - READ DELETED DATA、WRITE DELETED DATA、READ DIAGNOSTIC、READ ID、SCAN は実装していない。Disk BASIC の起動とセクタ入出力には使わない。
   - WD2793 の WRITE TRACK と同じく、FORMAT は送られたディスクリプタのバイトを捨てる。現在のトラックとサイドの全セクタを空にするだけで、ギャップ、同期、ID、CRC のバイトは書かない。
   - 同梱のマシン設定はどれもドライブ 1 台なので、複数ドライブでの動作は確認していない。実行中のディスク交換で転送を中断する処理は、ドライブ 0 だけを正しく追う。対象ドライブは、Control Register 0 の選択状態ではなく、各コマンドのパラメータバイトから決める。どちらも、実際の DISK ROM の通信で見られる 1 ドライブの動作とは一致する。
@@ -310,7 +310,7 @@ ROM の SHA1 からゲームタイトルを引き、マッパーを自動で選�
 
 ### マウス
 
-ホストのマウスに追従する MSX マウス（任意）。ジョイスティックポートに、そのポートの物理ジョイスティックやキーボードジョイスティックの代わりにつながる。実機のプロトコルを再現している。MSX はポートの pin 8 をトグルする。pin 8 はふだん、常に High の PSG のストローブ出力になっている。トグルのたびに、符号付きの相対移動量を 4 ビットずつ送る。順番は X 上位、X 下位、Y 上位、Y 下位。続けて移動量 0 のサイクルを送るので、MSX BIOS のマウス判定はトラックボールではなくマウスと判断する。左右のボタンはポートのトリガ A/B につながる。
+ホストのマウスに追従する MSX マウスを、任意で接続できる。ジョイスティックポートに、そのポートの物理ジョイスティックやキーボードジョイスティックの代わりにつながる。実機のプロトコルを再現している。MSX はポートの pin 8 をトグルする。pin 8 はふだん、常に High の PSG のストローブ出力になっている。トグルのたびに、符号付きの相対移動量を 4 ビットずつ送る。順番は X 上位、X 下位、Y 上位、Y 下位の順である。続けて移動量 0 のサイクルを送るので、MSX BIOS のマウス判定はトラックボールではなくマウスと判断する。左右のボタンはポートのトリガ A/B につながる。
 
 | 項目 | 詳細 |
 | --- | --- |
@@ -325,11 +325,11 @@ ROM の SHA1 からゲームタイトルを引き、マッパーを自動で選�
 
 ### SDL2 フロントエンド
 
-ウィンドウの大きさは、256×212 ベース解像度を整数の `--scale` 倍したもの（デフォルトのスケール 3 なら 768×636）で、全マシン・全モードで共通。描画するフレームは常に 212 ライン。192 ラインの SCREEN モードは上下にボーダーを足して中央に置くので、R#9 の LN に関係なく 4:3 の CRT の比率が保たれる。SCREEN 6/7（横 512 ドット）は同じウィンドウ幅に縮小してドットの比率を保つ。
+ウィンドウの大きさは、256×212 ベース解像度を整数の `--scale` 倍したもの（デフォルトのスケール 3 なら 768×636）で、全マシン・全モードで共通である。描画するフレームは常に 212 ラインである。192 ラインの SCREEN モードは上下にボーダーを足して中央に置くので、R#9 の LN に関係なく 4:3 の CRT の比率が保たれる。SCREEN 6/7（横 512 ドット）は同じウィンドウ幅に縮小してドットの比率を保つ。
 
-ほかに、ハードウェアパレット、アナログ風ローパスを通した 44100 Hz モノラル音声、フルスクリーン切り替え、スクリーンショット、ステートセーブ/ロード、一時停止、早送り、ミュート、リセットがある。ウィンドウタイトルには fps、`[PAUSED]`/`[FF]`/`[MUTE]`、ドライブ A のディスクを表示する。早送り中は音声を再生しない。自動フレームスキップは[パフォーマンス](#パフォーマンス)を参照。
+ほかに、ハードウェアパレット、アナログ風ローパスを通した 44100 Hz モノラル音声、フルスクリーン切り替え、スクリーンショット、ステートセーブ/ロード、一時停止、早送り、ミュート、リセットがある。ウィンドウタイトルには fps、`[PAUSED]`/`[FF]`/`[MUTE]`、ドライブ A のディスクを表示する。早送り中は音声を再生しない。自動フレームスキップは[パフォーマンス](#パフォーマンス)を参照してほしい。
 
-- 実装：`frontend/sdl2_frontend.py`。音声のミックスはコアが毎フレーム行う（`msx/audio_mixer.py`）。ヘッドレスの実行でも同じ。フロントエンドはそれをキューに積むだけ。
+- 実装：`frontend/sdl2_frontend.py`。音声のミックスはコアが毎フレーム行う（`msx/audio_mixer.py`）。ヘッドレスの実行でも同じである。フロントエンドはそれをキューに積むだけである。
 
 ### ステートセーブ/ロード
 
@@ -339,13 +339,13 @@ ROM の SHA1 からゲームタイトルを引き、マッパーを自動で選�
 
 ### インタラクティブデバッガ
 
-Ctrl+C かブレークポイントで開く REPL。ブレークポイントとウォッチポイント、ステップ実行、レジスタと VRAM のダンプ、逆アセンブル、VDP トレース、マッパートレース、スロットの表示、フロッピーの交換（`fdd1`/`fdd2 [FILE|-]`）がある。全コマンドは [`docs/debugger_ja.md`](docs/debugger_ja.md) を参照。
+Ctrl+C かブレークポイントで開く REPL である。ブレークポイントとウォッチポイント、ステップ実行、レジスタと VRAM のダンプ、逆アセンブル、VDP トレース、マッパートレース、スロットの表示、フロッピーの交換（`fdd1`/`fdd2 [FILE|-]`）がある。全コマンドは [`docs/debugger_ja.md`](docs/debugger_ja.md) を参照してほしい。
 
 - 実装：`host/debugger/`
 
 ### デバッグツール
 
-必要なときに有効にする構造化ログ、CPU 命令トレース、I/O ポートトレース、ハング検出。
+必要なときに有効にする構造化ログ、CPU 命令トレース、I/O ポートトレース、ハング検出がある。
 
 - 実装：`msx/trace.py`（コアがイベントを記録する）、`host/debug_log.py`（ログの文字列）
 
@@ -357,7 +357,7 @@ Ctrl+C かブレークポイントで開く REPL。ブレークポイントと�
 
 v2.5.0 からは、振る舞いに注目した 2 つ目の仕様の層（`allium/*.allium`）として [Allium](https://juxt.github.io/allium/) も使っている。この層で、各コンポーネントの実装が仕様からずれていないかを確かめる。
 
-`openspec/` と `allium/` の仕様はまだ公開していない。仕様は `openspec/specs/<spec-id>/spec.md` にコンポーネントごとのディレクトリで置き、ID にはドメインの接頭辞が付く（`cpu-z80`、`vdp-tms9918a`、`audio-psg`、`fdc-wd2793` など）。各ファイルには、自然言語の要件と具体的な WHEN/THEN のシナリオを交互に書く。次は `vdp-tms9918a` の冒頭。
+`openspec/` と `allium/` の仕様はまだ公開していない。仕様は `openspec/specs/<spec-id>/spec.md` にコンポーネントごとのディレクトリで置き、ID にはドメインの接頭辞が付く（`cpu-z80`、`vdp-tms9918a`、`audio-psg`、`fdc-wd2793` など）。各ファイルには、自然言語の要件と具体的な WHEN/THEN のシナリオを交互に書く。次は `vdp-tms9918a` の冒頭である。
 
 ```markdown
 ### Requirement: VRAM
@@ -400,15 +400,15 @@ v2.8.0 からコアとフロントエンドを分け、ヘッドレスの実行�
 | Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤーIV（CPU+V9938+PSG） | 297.58 | 約 5.0 倍 |
 | Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 154.20 | 約 2.6 倍 |
 
-計測した組み合わせのすべてが 60 fps に届くわけではない。余裕が最も小さいのは Raspberry Pi 5 の CPython でドラゴンスレイヤー英雄伝説を動かした場合で、約 0.47 倍と目標を下回る。対象タイトルの中では、FM-PAC（YM2413）の合成が 1 フレームあたりの負荷として最も重い。PyPy にすると、同じ組み合わせで約 2.6 倍になる。Raspberry Pi 5 と CPython のほかの組み合わせは目標に届き、沙羅曼蛇は約 1.3 倍、ドラゴンスレイヤーIV は約 2.6 倍。
+計測した組み合わせのすべてが 60 fps に届くわけではない。余裕が最も小さいのは Raspberry Pi 5 の CPython でドラゴンスレイヤー英雄伝説を動かした場合で、約 0.47 倍と目標を下回る。対象タイトルの中では、FM-PAC（YM2413）の合成が 1 フレームあたりの負荷として最も重い。PyPy にすると、同じ組み合わせで約 2.6 倍になる。Raspberry Pi 5 と CPython のほかの組み合わせは目標に届き、沙羅曼蛇は約 1.3 倍、ドラゴンスレイヤーIV は約 2.6 倍である。
 
-60 fps を下回るのは、Raspberry Pi 5 の CPython で FM-PAC を使うタイトルを動かすとき、Raspberry Pi 5 より遅いハードウェアで動かすとき、もっと重いタイトルを動かすとき。そのときゲームは、実際のフレームレートに比例してスローモーションになる。音声も劣化する（クリックや無音）。原因は、音声のサンプルをフレームごとに作るのに、音声デバイスは常に 44100 Hz で消費することにある。PyPy3 はそのまま置き換えて使え、Raspberry Pi 5 では CPython の約 2〜5.5 倍の処理速度が出る（上の表を参照）。Raspberry Pi のような非力な環境で余裕を持たせたいなら PyPy を勧める。
+60 fps を下回るのは、Raspberry Pi 5 の CPython で FM-PAC を使うタイトルを動かすとき、Raspberry Pi 5 より遅いハードウェアで動かすとき、もっと重いタイトルを動かすときである。そのときゲームは、実際のフレームレートに比例してスローモーションになる。音声も劣化する（クリックや無音）。原因は、音声のサンプルをフレームごとに作るのに、音声デバイスは常に 44100 Hz で消費することにある。PyPy3 はそのまま置き換えて使え、Raspberry Pi 5 では CPython の約 2〜5.5 倍の処理速度が出る（上の表を参照）。Raspberry Pi のような非力な環境で余裕を持たせたいなら PyPy を勧める。
 
 PyPy の数値は、OS のスケジューリングや発熱による速度低下のためか、CPython より実行ごとのばらつきが大きい。目安として見てほしい。
 
 ### ベンチマーク推移
 
-v0.1.0 から v2.9.0 までの平均 FPS（`--benchmark`）の推移を、プラットフォームごとに示す。実線が CPython、破線が PyPy。v2.7.5 までは上と同じコールドブートの方法で、ただし音声合成なし（v2.7.8 までの方法）で計測した。v2.8.1 からは上の方法で計測した。2 つの方法の数値は比べられないので、方法が変わるところで線を切っている。
+v0.1.0 から v2.9.0 までの平均 FPS（`--benchmark`）の推移を、プラットフォームごとに示す。実線が CPython、破線が PyPy である。v2.7.5 までは上と同じコールドブートの方法で、ただし音声合成なし（v2.7.8 までの方法）で計測した。v2.8.1 からは上の方法で計測した。2 つの方法の数値は比べられないので、方法が変わるところで線を切っている。
 
 ![Apple MacBook Pro（M5 Pro）でのベンチマーク推移](assets/bench-history-m5pro.png)
 
@@ -422,7 +422,7 @@ v0.1.0 から v2.9.0 までの平均 FPS（`--benchmark`）の推移を、プラ
 
 ## インストール
 
-必要なもの、インストール手順、BIOS の準備は [QUICK_START_ja.md](QUICK_START_ja.md) を参照。
+必要なもの、インストール手順、BIOS の準備は [QUICK_START_ja.md](QUICK_START_ja.md) を参照してほしい。
 
 ---
 
@@ -547,7 +547,7 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 cp py_emulator.example.yaml py_emulator.yaml
 ```
 
-値の優先順位は **組み込みのデフォルト < `py_emulator.yaml` < コマンドライン引数**。
+値の優先順位は **組み込みのデフォルト < `py_emulator.yaml` < コマンドライン引数** の順である。
 指定したフラグが常に勝ち、ファイルは指定しなかった項目だけを補う。ファイルがなけ
 れば動作は変わらない。このファイルは git の管理外なので、ローカルの設定はバージ
 ョン管理に入らない。
@@ -606,10 +606,10 @@ hotkeys: {}              # フロントエンドのホットキーの上書き�
 
 設定できるのは `machine`、`speed`、`scale`、`slot1`、`slot2`、`extension1`、
 `extension2`、`fdd1`、`frame_skip`、`mouse`、`hotkeys` と、RPC、ゲームパッド、キーボード
-ジョイスティックの設定。`extension` も `extension2` の古い別名として使える。`mapper1`/
-`mapper2` は CLI だけ（上の `--mapper`/`--mapper1`/`--mapper2` を参照）。次の点にも注意。
+ジョイスティックの設定である。`extension` も `extension2` の古い別名として使える。`mapper1`/
+`mapper2` は CLI だけで使える（上の `--mapper`/`--mapper1`/`--mapper2` を参照）。次の点にも注意してほしい。
 
-- ゲームパッドのボタン割り当ては SDL GameController の経路に効き、両ポートで共通。
+- ゲームパッドのボタン割り当ては SDL GameController の経路に効き、両ポートで共通である。
 - `keyboard_joystick.buttons` は Joy1 のキーボードエミュレーションだけに効く。
 - コマンドラインの `--mouse` は常に `mouse.enabled`/`mouse.port` より優先する。
 - `fdd1` には 1 つのパスかパスのリストを書ける。コマンドラインの `--fdd1` は一覧全体を
@@ -618,7 +618,7 @@ hotkeys: {}              # フロントエンドのホットキーの上書き�
   起動時にエラーになる：2 つの動作が同じキーを使う、MSX のキー（F1〜F5、Shift+F1〜F5）を
   使う、固定のホットキー（F8〜F10）を使う。
 
-全項目と、使えるボタン名・キー名は `py_emulator.example.yaml` を参照。
+全項目と、使えるボタン名・キー名は `py_emulator.example.yaml` を参照してほしい。
 
 ### エミュレータ内のキー操作
 
@@ -646,30 +646,30 @@ hotkeys: {}              # フロントエンドのホットキーの上書き�
 | 右 Alt/Option | MSX CODE/KANA |
 | Shift + 0 | MSX の "_"。SHIFT+"\" で入る文字で、"\" は International キーボードにない JIS 専用のキー |
 
-\* `<title>` は ROM データベースのゲームタイトル。データベースにないカートリッジでは `"py-msx-emulator"` になる。
+\* `<title>` は ROM データベースのゲームタイトルである。データベースにないカートリッジでは `"py-msx-emulator"` になる。
 
-F6、F7、F11、F12 とその Shift 付きは組み込みのデフォルト。別のキーに割り当てるには
+F6、F7、F11、F12 とその Shift 付きは組み込みのデフォルトである。別のキーに割り当てるには
 `py_emulator.yaml` の `hotkeys` を設定する（[設定ファイル](#設定ファイルpy_emulatoryaml)参照）。
 これらのホットキーは MSX のキーボードに渡らない。Shift 付きのホットキーを押している間は、
 MSX から見た SHIFT も離した状態になる。
 
 **注記（macOS）:** macOS はこれらのキーの一部を、システム全体のショートカットとして
 予約していることがある。`^F1`〜`^F5`（Ctrl+F1〜F5。例：「メニューバーにフォーカスを
-移動」= `^F2`）、F11（「デスクトップを表示」）、F12 など。システム設定 → キーボード →
+移動」= `^F2`）、F11（「デスクトップを表示」）、F12 などである。システム設定 → キーボード →
 キーボードショートカットと、「F1、F2 などのキーを標準のファンクションキーとして使用」の
 設定を確認してほしい。エミュレータにキーが届かないときは、そこでショートカットを無効に
 する。F6、F7、F11、F12 は `py_emulator.yaml` の `hotkeys` で別のキーに移すこともできる。
 
 **注記（JIS BIOS 機種）:** HB-F1XD など日本の MSX は日本語の BIOS ROM を使う。この
 ROM の文字デコード表は、マシン設定の `keyboard_type` に関係なく常に JIS 版になる。
-`keyboard_type` が決めるのは、ホストのキーと MSX キーボードマトリクスのセルの対応だけ。
+`keyboard_type` が決めるのは、ホストのキーと MSX キーボードマトリクスのセルの対応だけである。
 各セルの文字は BIOS が決める。そのため、これらのマシンを
 International キーボードで使うと、キートップと入力される文字が一致しないことがある。
 International キーボードにキーがない文字は `"_"` だけで、上の表の Shift+0 で入力できる。
 ほかのキーも文字は入力できるが、キートップどおりとは限らない。
 
 **キーボードによるジョイスティックエミュレーション（Joy 1）:** 下の表は組み込みの
-デフォルト。各機能のキーは `py_emulator.yaml` の `keyboard_joystick.buttons` で
+デフォルトである。各機能のキーは `py_emulator.yaml` の `keyboard_joystick.buttons` で
 変えられる（[設定ファイル](#設定ファイルpy_emulatoryaml)を参照）。
 
 | キー | 動作 |
@@ -685,16 +685,16 @@ International キーボードにキーがない文字は `"_"` だけで、上�
 
 ## ツール
 
-`tools/` にある単独で動くコマンドラインツール。ディスクイメージ用のツール（ftp 風の
+この節では、`tools/` にある単独で動くコマンドラインツールを紹介する。ディスクイメージ用のツール（ftp 風の
 対話シェル、空イメージの作成、USB フロッピードライブからの生セクタのコピー）と、
 [リモート制御](#リモート制御socket-rpc--mcp)で使う RPC/MCP のクライアントツールがある。
 Z80 コアだけを外部の命令テストで確かめるツールも 2 つある。`run_z80_exercisers.py`
 （zexdoc、zexall、z80test）と `run_singlestep_tests.py`（SingleStepTests/z80）で、
-詳しくは技術資料の[命令テスト](docs/technical-implementation_ja.md#命令テスト)を参照。
+詳しくは技術資料の[命令テスト](docs/technical-implementation_ja.md#命令テスト)を参照してほしい。
 
 各スクリプトの使い方、オプション、実行例は
 [`tools/README_tools.md`](tools/README_tools.md) /
-[`tools/README_tools_ja.md`](tools/README_tools_ja.md) を参照。
+[`tools/README_tools_ja.md`](tools/README_tools_ja.md) を参照してほしい。
 
 ---
 
@@ -705,7 +705,7 @@ Z80 コアだけを外部の命令テストで確かめるツールも 2 つあ�
 Claude Code のような AI コーディングエージェントから、実行中のエミュレータを一時停止、
 検査、操作できる。設定方法、メソッド一覧、セキュリティ上の注意は
 [`tools/README_tools.md`](tools/README_tools.md#remote-control-socket-rpc--mcp)
-/ [`tools/README_tools_ja.md`](tools/README_tools_ja.md#リモート制御socket-rpc--mcp) を参照。
+/ [`tools/README_tools_ja.md`](tools/README_tools_ja.md#リモート制御socket-rpc--mcp) を参照してほしい。
 
 ---
 
@@ -733,7 +733,7 @@ Claude Code のような AI コーディングエージェントから、実行�
 | `hb_f1xd_256k` | MSX2 | 日本 | V9938 |
 | `fs_a1f` | MSX2 | 日本 | V9938 |
 
-`hb_10`（Sony HB-10）は実機の ROM を使い、BIOS と同じスロット 0 に 16 KB の RAM を持つ。実機と同じく、スロット 3 は空き。`hb-10_basic-bios1.rom` を `roms/hb_10/` に置く。
+`hb_10`（Sony HB-10）は実機の ROM を使い、BIOS と同じスロット 0 に 16 KB の RAM を持つ。実機と同じく、スロット 3 は空いている。`hb-10_basic-bios1.rom` を `roms/hb_10/` に置く。
 
 HB-10 の VDP は TMS9118NL だが、エミュレータでは機能が同じ TMS9918A として実装している。
 
@@ -741,11 +741,11 @@ HB-10 の VDP は TMS9118NL だが、エミュレータでは機能が同じ TMS
 
 `hb_f1xd`（Sony HB-F1XD）は実機の ROM を使い、WD2793 のフロッピーディスクドライブを持つ。`hb-f1xd_basic-bios2.rom`、`hb-f1xd_msx2sub.rom`、`hb-f1xd_disk.rom` を `roms/hb_f1xd/` に置き、`--fdd1` でディスクをマウントする。
 
-`hb_f1xd_256k` は `hb_f1xd` と同じ ROM とフロッピードライブを使い、スロット 3 のフラットな 64 KB RAM を 256 KB の RAM マッパーに置き換えたもの。MSX-DOS2 の拡張 BIOS にあるマッパー支援ルーチンには 128 KB 以上の RAM マッパーが必要で、フラットな RAM ではサイズを増やしても使えないため。
+`hb_f1xd_256k` は `hb_f1xd` と同じ ROM とフロッピードライブを使い、スロット 3 のフラットな 64 KB RAM を 256 KB の RAM マッパーに置き換えたものである。MSX-DOS2 の拡張 BIOS にあるマッパー支援ルーチンには 128 KB 以上の RAM マッパーが必要で、フラットな RAM ではサイズを増やしても使えないためである。
 
-> **注記**：256 KB の RAM マッパーを持つ HB-F1XD は実在しない。実機の HB-F1XD は常に 64 KB のフラットな RAM で、RAM マッパーではない。`hb_f1xd_256k` は架空の構成で、実機について何かを主張するものではない。目的は、MSX-DOS2 が必要とするメモリ構成を用意することだけ。ほかの部分は実機の HB-F1XD の設定をそのまま使っている。
+> **注記**：256 KB の RAM マッパーを持つ HB-F1XD は実在しない。実機の HB-F1XD は常に 64 KB のフラットな RAM で、RAM マッパーではない。`hb_f1xd_256k` は架空の構成で、実機について何かを主張するものではない。目的は、MSX-DOS2 が必要とするメモリ構成を用意することだけである。ほかの部分は実機の HB-F1XD の設定をそのまま使っている。
 
-`fs_a1f`（Panasonic FS-A1F）は実機の ROM を使い、TC8566AF のフロッピーディスクドライブを持つ。`fs-a1f_basic-bios2.rom`、`fs-a1f_msx2sub.rom`、`fs-a1f_disk.rom` を `roms/fs_a1f/` に置き、`--fdd1` でディスクをマウントする。実機ではこれらは 1 つの 128 KB マスク ROM になっている。分け方は `config/machines/fs_a1f.yaml` のコメントを参照。
+`fs_a1f`（Panasonic FS-A1F）は実機の ROM を使い、TC8566AF のフロッピーディスクドライブを持つ。`fs-a1f_basic-bios2.rom`、`fs-a1f_msx2sub.rom`、`fs-a1f_disk.rom` を `roms/fs_a1f/` に置き、`--fdd1` でディスクをマウントする。実機ではこれらは 1 つの 128 KB マスク ROM になっている。分け方は `config/machines/fs_a1f.yaml` のコメントを参照してほしい。
 
 > **注記**：実機の FS-A1F には「コックピット」アプリケーションと漢字 ROM/フォントデバイスも入っているが、どちらもエミュレートしていない。作者は実機の FS-A1F を持っていない。この実装は公開されている技術資料に基づくもので、実機では確認していない。
 
@@ -823,7 +823,7 @@ builtin_devices:
 
 ## テストの実行
 
-テストスイートは 4098 個のテストで、主なコンポーネントをすべて扱う。個々のオペコードやハードウェアレジスタのユニットテスト、複数のコンポーネントをつないだ統合テスト、仕様のシナリオをそのまま条件にしたテストがある。
+テストスイートは 4444 個のテストで、主なコンポーネントをすべて扱う。個々のオペコードやハードウェアレジスタのユニットテスト、複数のコンポーネントをつないだ統合テスト、仕様のシナリオをそのまま条件にしたテストがある。
 
 ```bash
 # 開発用依存関係（pytest、ruff、mypy）をインストール
@@ -863,6 +863,8 @@ py-msx-emulator/
 │   ├── rpc_server.py      # Unix ソケット JSON-RPC 制御サーバ（--rpc）
 │   ├── trace.py           # コアのトレースイベントから VDP とマッパーのトレースの文字列を作る
 │   ├── debug_log.py       # トレースイベントから --debug のログ（CPU/I/O トレース、ハング）の文字列を作る
+│   ├── key_names.py       # MSX のキー名（RPC のキー入力、フロントエンドのホットキー）
+│   ├── watch.py           # ウォッチポイントのアクセス種別の表記（r、w、rw）
 │   └── debugger/          # インタラクティブ REPL（プロンプト、逆アセンブラ）
 ├── include/
 │   └── msx_core.h         # コア API の C ヘッダ。ネイティブのコア向け（宣言だけ）
@@ -883,6 +885,8 @@ py-msx-emulator/
 │   ├── kanji.py           # JIS漢字フォントROM I/Oデバイス
 │   ├── ram_mapper.py      # MSX2 RAM マッパー（16 KB セグメント）
 │   ├── rtc.py             # RP5C01 リアルタイムクロック
+│   ├── clock.py           # 共有するエミュレーション時間のレコード（サイクル、フレーム、命令のアドレス）
+│   ├── sram.py            # 電池バックアップの SRAM の値と、保存する形
 │   ├── psg.py             # AY-3-8910 PSG + オーディオ合成（サブフレーム PCM）
 │   ├── audio_mixer.py     # フレームごとの音声ミックス（Machine.run_frame が実行）
 │   ├── dac.py             # 書き込み駆動型の DAC チャンネル（Majutsushi DAC、キークリック）
@@ -896,6 +900,7 @@ py-msx-emulator/
 │   ├── screenshot.py      # 現在のフレームの RGB24 キャプチャ
 │   ├── trace.py           # トレースバッファ（VDP とマッパーのトレース、デバッグログのイベント、ハングの履歴）
 │   ├── snapshot.schema.json # ステートの構成を定める JSON Schema
+│   ├── snapshot_schema.py # ステートの各パーサーが共有する検査
 │   └── state.py           # マシン状態のスナップショット（正規化した JSON）
 ├── config/
 │   ├── devices/           # デバイス YAML 定義（VDP、PSG、PPI、RTC...）
@@ -909,7 +914,7 @@ py-msx-emulator/
 ├── allium/                # Allium の振る舞い仕様。仕様と実装のずれを確かめる（未公開）
 ├── openspec/
 │   └── specs/             # コンポーネントの仕様（未公開）
-├── tests/                 # テストスイート（4098 テスト）
+├── tests/                 # テストスイート（4444 テスト）
 ├── py_emulator.example.yaml # 設定ファイルの記述例（注釈付き）
 ├── QUICK_START_ja.md      # 必要なもの、インストール、BIOS の準備
 ├── CHANGELOG_ja.md        # 更新履歴
@@ -931,7 +936,7 @@ Issue とプルリクエストは歓迎する。仕様（`openspec/`、`allium/`
 
 - **純粋な Python のみ**：C 拡張と Cython は使わない。ctypes は SDL2 フロントエンドで使っている分だけ
 - **Python 3.10+**：データクラスと新しい型アノテーションの書き方を使う。コアは Rust/C/JS に移しやすく保つ。明示的な `for` ループを使い、セイウチ演算子や複雑な内包表記・ジェネレータは使わない
-- **型ヒントを必ず付ける**：mypy の strict モードでチェックする
+- **型ヒントを必ず付ける**：mypy の strict モードで `msx/`、`host/`、`frontend/`、`tools/` をチェックする。`tests/` は対象外
 - **リント**：ruff（`line-length = 99`）。コミット前に `python -m ruff check .` を実行する
 - **コメントは自明でないことだけ**：コードを読めばわかることは書かない
 
@@ -943,19 +948,19 @@ Issue とプルリクエストは歓迎する。仕様（`openspec/`、`allium/`
 
 ## 謝辞
 
-- **[openMSX](https://openmsx.org/)**：ROM の識別データは openMSX の softwaredb.xml（https://github.com/openMSX/openMSX）を参考にしたが、エントリはすべて事実情報として独自に集めた。openMSX のライセンスは GNU GPL v2。
-- **[emu2413](https://github.com/digital-sound-antiques/emu2413)**（Mitsutaka Okazaki 氏）：`msx/opll.py` の YM2413（OPLL）は emu2413 v1.5.9 を Python に移植したもの。emu2413 のライセンスは MIT。
+- **[openMSX](https://openmsx.org/)**：ROM の識別データは openMSX の softwaredb.xml（https://github.com/openMSX/openMSX）を参考にしたが、エントリはすべて事実情報として独自に集めた。openMSX のライセンスは GNU GPL v2 である。
+- **[emu2413](https://github.com/digital-sound-antiques/emu2413)**（Mitsutaka Okazaki 氏）：`msx/opll.py` の YM2413（OPLL）は emu2413 v1.5.9 を Python に移植したものである。emu2413 のライセンスは MIT である。
 - **[C-BIOS](https://cbios.sourceforge.net/)**：無償の MSX BIOS の代替。テストに使っており、利用を勧める。
 
 ---
 
 ## ライセンス
 
-MIT。[LICENSE](LICENSE) を参照。
+ライセンスは MIT である。[LICENSE](LICENSE) を参照してほしい。
 
 ---
 
 ## 更新履歴
 
-更新履歴の全文は [CHANGELOG_ja.md](CHANGELOG_ja.md) を参照。
+更新履歴の全文は [CHANGELOG_ja.md](CHANGELOG_ja.md) を参照してほしい。
 

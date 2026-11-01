@@ -51,7 +51,7 @@ ignore_missing_imports = true
 
 # The test suite is intentionally not held to --strict: tests rely on fixtures,
 # monkeypatch, and base-typed handles (e.g. machine.vdp) that make full typing
-# high-effort and low-value. Source (msx/, frontend/, host/, scripts/) stays strict.
+# high-effort and low-value. Source (msx/, host/, frontend/, tools/) stays strict.
 [[tool.mypy.overrides]]
 module = "tests.*"
 ignore_errors = true
