@@ -1413,6 +1413,14 @@ state. The host takes the audio rate and the frame height from
 key names (`host/key_names.py`) and the cartridge SRAM sizes
 (`host/machine_config.py`) itself, because no core module uses them.
 
+The header is ABI version 1: `MSX_CORE_ABI_VERSION`, the value that
+`msx_core_abi_version()` returns. A host compares that value with the
+`MSX_CORE_ABI_VERSION` it was built with. Any change to the declarations or
+macro values increases the version by 1. A change to the comments only does
+not. `tests/test_core_c_header.py` records a fingerprint of the declarations
+with the version, so a changed declaration fails the test until both are
+updated.
+
 These are the differences between the Python code and the language-neutral
 contract in `allium/core-frontend.allium` (its *Status* comment lists them):
 

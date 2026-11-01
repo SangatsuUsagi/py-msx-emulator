@@ -5,6 +5,7 @@ text; nothing is compiled into or loaded by Python."""
 from __future__ import annotations
 
 import enum
+import hashlib
 import re
 import shutil
 import subprocess
@@ -19,15 +20,32 @@ from msx.core_api import CoreApi
 _HEADER = Path(__file__).resolve().parent.parent / "include" / "msx_core.h"
 _EXTRA_FUNCTIONS = {"create", "destroy", "abi_version"}
 
+# The ABI version of the header, and the fingerprint of the declarations it
+# belongs to (machine-c-abi "The ABI version changes with the declarations").
+# A change to the declarations or macro values increases the version by 1 and
+# records the new fingerprint, both in the same change.
+_ABI_VERSION = 1
+_ABI_FINGERPRINT = "834df8172580cbf2372c1d12b3e04a2b81b09ae3eb230bcfbf467252c783301d"
+
 
 def _text() -> str:
     return _HEADER.read_text(encoding="utf-8")
 
 
+def _strip_comments(text: str) -> str:
+    text = re.sub(r"/\*.*?\*/", " ", text, flags=re.DOTALL)
+    return re.sub(r"//[^\n]*", " ", text)
+
+
 def _code() -> str:
     """The header without its comments."""
-    text = re.sub(r"/\*.*?\*/", " ", _text(), flags=re.DOTALL)
-    return re.sub(r"//[^\n]*", " ", text)
+    return _strip_comments(_text())
+
+
+def _fingerprint(text: str) -> str:
+    """SHA-256 of the header text without its comments and whitespace runs."""
+    tokens = " ".join(_strip_comments(text).split())
+    return hashlib.sha256(tokens.encode("utf-8")).hexdigest()
 
 
 def _core_api_members() -> set[str]:
@@ -65,8 +83,25 @@ def test_every_constant_matches() -> None:
         name: int(value, 0)
         for name, value in re.findall(pattern, _code(), flags=re.MULTILINE)
     }
-    assert macros.pop("CORE_ABI_VERSION") == 1
+    assert macros.pop("CORE_ABI_VERSION") == _ABI_VERSION
     assert macros == _python_constants()
+
+
+def test_a_declaration_change_needs_a_new_version() -> None:
+    # machine-c-abi "A declaration change needs a new version".
+    assert _fingerprint(_text()) == _ABI_FINGERPRINT, (
+        "the header's declarations changed: increase MSX_CORE_ABI_VERSION by 1 "
+        "and record the new _ABI_VERSION and _ABI_FINGERPRINT"
+    )
+    changed = _text().replace("int32_t mouse_dx;", "int16_t mouse_dx;")
+    assert changed != _text()
+    assert _fingerprint(changed) != _ABI_FINGERPRINT
+
+
+def test_a_comment_change_keeps_the_version() -> None:
+    # machine-c-abi "A comment change keeps the version".
+    changed = "/* a new comment */\n" + _text().replace(";\n", ";  // note\n\n")
+    assert _fingerprint(changed) == _ABI_FINGERPRINT
 
 
 def test_the_mouse_motion_and_the_frame_breakpoint_are_wide() -> None:
