@@ -11,6 +11,7 @@ subsystem.
 - [I/O bus](#io-bus)
 - [VDP](#vdp)
 - [Audio](#audio)
+- [Frame pacing (frontend)](#frame-pacing-frontend)
 - [Memory and slot system](#memory-and-slot-system)
 - [Floppy disk (FDC)](#floppy-disk-fdc)
 - [Machine and extension YAML schema](#machine-and-extension-yaml-schema)
@@ -320,15 +321,16 @@ The loop runs in two segments: the lines up to and including
 frame between them, before the VBlank interrupt handler runs (see
 [VDP](#vdp)). A break stops the loop at an instruction boundary. The
 machine keeps the line and the T-state count, and the next `run_frame`
-continues there, so each frame is rendered, counted and mixed once. While the CPU idles and cannot take an interrupt, the loop
-calls `Z80.step_idle_batch()` instead of `step()`. The CPU idles when it is
-halted or when it has just run `JR $` (`18 FE`, a jump to itself), the loop
-many games use to wait for the VBlank interrupt. One call advances the whole
-idle run up to the end of the line, with the same R value and T-state total
-as stepping it. Before it batches a `JR $`, the call checks that the two
-bytes at PC are still `18 FE`. The loop does not batch while a V9938 command
-runs, because the command engine can raise an interrupt partway through the
-line.
+continues there, so each frame is rendered, counted and mixed once.
+
+While the CPU idles and cannot take an interrupt, the loop calls
+`Z80.step_idle_batch()` instead of `step()`. The CPU idles when it is halted or
+when it has just run `JR $` (`18 FE`, a jump to itself), the loop many games
+use to wait for the VBlank interrupt. One call advances the whole idle run up
+to the end of the line, with the same R value and T-state total as stepping it.
+Before it batches a `JR $`, the call checks that the two bytes at PC are still
+`18 FE`. The loop does not batch while a V9938 command runs, because the
+command engine can raise an interrupt partway through the line.
 
 `begin_scanline(line)` calculates the effective IRQ line as
 `(R#19 − R#23) & 0xFF`. It sets S#1 bit 0 (FH) when `line == effective_irq_line`
@@ -611,6 +613,53 @@ The filter removes the residual high-frequency imaging and aliasing that
 point-sampling synthesis leaves near Nyquist. Its cost is ~1 % of the
 per-frame audio-path cost. The audible band and the overall level stay almost
 the same, because the energy of real PSG music is far below the cutoff.
+
+---
+
+## Frame pacing (frontend)
+
+The core has no clock of its own: `step_frame` runs one frame as fast as the
+host can. The SDL2 frontend paces the frames in real time with `FrameTimer`
+(`frontend/frame_timer.py`). Headless runs (`--count-frame`, `--benchmark`)
+use no timer.
+
+The target rate is the nominal `VideoStandard.target_fps` of the machine (60
+for NTSC, 50 for PAL), multiplied by `--speed`. The frame interval is
+`1 / (fps * speed)`. A rate of 0 or less (for example `--speed 0`) falls back
+to a 60 Hz interval. The pacing uses the nominal rate, not the ~59.92 Hz field
+rate of real hardware, and the audio uses the same nominal rate (735 samples
+per NTSC frame, 882 per PAL frame). The audio queue thus fills at the rate
+that the device drains it.
+
+`tick()` waits until the deadline of the current frame. It sleeps until 2 ms
+before the deadline and spins for the rest (see
+[Spin loop in the frame timer](#spin-loop-in-the-frame-timer)). The next
+deadline is the previous deadline plus one interval. A sleep that wakes up
+late therefore makes the next wait shorter, and the sustained rate stays at
+the target. If that next deadline has already passed, the frame overran a
+whole interval, and the deadline restarts at the current time plus one
+interval. The timer never runs frames back to back to catch up. With a sleep
+that always wakes 3 ms late, 600 ticks at 60 fps take 10 seconds, within one
+interval (`tests/test_frame_timer.py`).
+
+`tick()` returns the real time since the previous tick. With
+`--frame-skip auto` (the default), the frontend compares it with the interval.
+If a frame took more than `_FRAME_OVERRUN_RATIO` (1.05) intervals, the skip
+counter goes up by 1, to at most `_MAX_FRAME_SKIP` (4). Otherwise it goes down
+by 1. While the counter is above 0, the next frame runs with
+`render_video=False`: the core skips the pixel rendering, but it still runs
+the CPU, the VDP status and the audio. The frontend shows the previous picture
+again.
+
+During fast-forward (F7, Shift+F7), the frontend calls `tick_unpaced()`
+instead of `tick()`. It counts the frame for the fps measurement and restarts
+the deadline from the current time, but it does not wait. The frontend renders
+a frame only when at least one display interval passed since the last shown
+frame, and it queues no audio. The first `tick()` after fast-forward thus
+waits a full interval.
+
+`fps_measured` is the tick count of the last measurement window, divided by
+its length (at least one second). The window title shows it.
 
 ## Memory and slot system
 
@@ -917,7 +966,8 @@ keys from it, and only when `ref: ppi8255`:
 - `keyboard_type`: `int` or `jp`.
 - `control_read`: `control`, `open_bus` or `bus_latch`, the value that a read
   of port 0xAB returns.
- The former key `control_readback`, in the device file or in
+
+The former key `control_readback`, in the device file or in
 `overrides`, raises `MachineLoadError`. The loader accepts and ignores every
 other `overrides` key, for every other `ref`.
 
