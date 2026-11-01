@@ -20,6 +20,12 @@ platform-specific dependency is pysdl2, for the display and audio frontend.
 [`docs/technical-implementation.md`](docs/technical-implementation.md)
 describes the internals.
 
+The core (`msx/`) reads no file and no host clock. Code outside it uses the
+machine only through the core API (`msx/core_api.py`). `include/msx_core.h`
+is the C form of that API, at ABI version 1, so that a core in another
+language can replace the Python core. See
+[Porting the core](docs/technical-implementation.md#porting-the-core).
+
 The emulator needs BIOS ROMs, which the repository does not include. The free
 [C-BIOS](https://cbios.sourceforge.net/) works for the generic machines.
 [QUICK_START.md](QUICK_START.md) explains the setup.

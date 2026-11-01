@@ -10,6 +10,8 @@
 
 ハードウェアコンポーネントはすべて純粋な Python で書いている。各コンポーネントは実装の前に機械可読な仕様として定義し、その仕様がテストを決める（[仕様駆動アーキテクチャ](#仕様駆動アーキテクチャ)を参照）。コンポーネントの配線は `build_machine()` に手で書いてあり、リフレクションや依存性注入は使わない。プラットフォーム固有の依存は、画面と音声のフロントエンドに使う pysdl2 だけ。内部構造は [`docs/technical-implementation_ja.md`](docs/technical-implementation_ja.md) で説明している。
 
+コア（`msx/`）はファイルもホストの時計も読まない。コアの外のコードは、コア API（`msx/core_api.py`）だけを通してマシンを使う。`include/msx_core.h` はこの API の C の形で、ABI バージョンは 1。ほかの言語で書いたコアに Python のコアを置き換えられるようにするためのもの。[コアの移植](docs/technical-implementation_ja.md#コアの移植)を参照。
+
 動かすには BIOS ROM が必要で、リポジトリには含まれない。汎用マシンには無償の [C-BIOS](https://cbios.sourceforge.net/) が使える。手順は [QUICK_START_ja.md](QUICK_START_ja.md) を参照。
 
 ### 検証済みハードウェアとソフトウェア
