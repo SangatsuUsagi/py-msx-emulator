@@ -294,6 +294,20 @@ Range-based port registration. The bus sends each read and write to the register
 
 - Implementation: `msx/io.py`
 
+### Printer port
+
+The MSX parallel printer port. The guest writes a byte to the data port, and the falling edge of STROBE on the status port sends it. With `--printer-log FILE`, the bytes go to FILE unchanged. There is no printer emulation: the file holds what the guest sends to a printer.
+
+| Machine | Ports | Status read (ready / busy) |
+| --- | --- | --- |
+| `hb_10`, `hb_10_64k` | 0x90-0x91 | 0xFD / 0xFF |
+| `hb_f1xd`, `hb_f1xd_256k`, `fs_a1f` | 0x90-0x97, with mirrors | 0x00 / 0x02 |
+| `cbios_*` | No port | 0xFF |
+
+The status values and the mirrors come from the openMSX machine files. They are not yet verified on real hardware. `extras/HB-10/PRNPORT.BAS` and `extras/HB-F1XD/PRNPORT.BAS` print the values for that check. With no printer attached, the port reads busy.
+
+- Implementation: `msx/printer.py`, `host/printer_output.py`
+
 ### Keyboard / joystick input
 
 | Item | Detail |
@@ -333,7 +347,7 @@ The frontend also gives the hardware palette, mono audio at 44100 Hz through the
 
 ### State save/load
 
-A complete hardware snapshot in a stdlib JSON container. It includes the CPU, RAM, VDP, PSG, the PPI latches, SCC, FM-PAC/OPLL, mapper banks, FDC register and phase state, the RTC, the mouse, and the identity of the mounted disk. The file is canonical JSON (RFC 8785): the same machine state always gives the same bytes, also from another implementation. It holds integers only, and byte blobs such as RAM and VRAM as base64 strings. [`msx/snapshot.schema.json`](msx/snapshot.schema.json) (JSON Schema) defines its layout. The format version is 21. Save states from earlier versions do not load. A save state also records the machine configuration that it comes from (see [Machine configuration](#machine-configuration)). It loads only into the same machine, extensions and cartridge ROM. Each save also writes a PNG screenshot and updates the `saves/states/latest.*` symlinks for quick resume. A save records the mounted `.dsk` by path, size, and SHA1. If the current disk does not match at load time, the load fails with an error and does not continue silently.
+A complete hardware snapshot in a stdlib JSON container. It includes the CPU, RAM, VDP, PSG, the PPI latches, SCC, FM-PAC/OPLL, mapper banks, FDC register and phase state, the RTC, the mouse, the printer port lines, and the identity of the mounted disk. The file is canonical JSON (RFC 8785): the same machine state always gives the same bytes, also from another implementation. It holds integers only, and byte blobs such as RAM and VRAM as base64 strings. [`msx/snapshot.schema.json`](msx/snapshot.schema.json) (JSON Schema) defines its layout. The format version is 22. Save states from earlier versions do not load. A save state also records the machine configuration that it comes from (see [Machine configuration](#machine-configuration)). It loads only into the same machine, extensions and cartridge ROM. Each save also writes a PNG screenshot and updates the `saves/states/latest.*` symlinks for quick resume. A save records the mounted `.dsk` by path, size, and SHA1. If the current disk does not match at load time, the load fails with an error and does not continue silently.
 
 - Implementation: `msx/state.py` (snapshot encoding), `msx/snapshot.schema.json` (layout), `host/state_files.py` (files)
 
@@ -484,6 +498,9 @@ python . path/to/game.rom --extension1 fmpac --extension2 hbi_j1
 # Attach an MSX mouse to Joy2 (default port), driven by the host mouse
 python . path/to/game.rom --mouse
 
+# Write what a program prints to a file (a machine with a printer port)
+python . --machine hb_f1xd --printer-log out.prn
+
 # Attach an MSX mouse to Joy1 instead
 python . path/to/game.rom --mouse=1
 
@@ -526,6 +543,7 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--fdd2 DSK` | _(none)_ | Floppy `*.dsk` image mounted in drive B, on a machine with two drives. Every shipped machine has one drive, so the emulator ignores `--fdd2` with a warning |
 | `--resume [FILE]` | _(none)_ | Resume from `saves/states/latest.state`, or a specific `.state` file. Mount the disks the state was saved with: the first `--fdd1` image must be the one that was in drive A |
 | `--mouse [1\|2]` | _(none)_ | Attach an MSX mouse to a joystick port (bare = Joy2). Overrides the `mouse` settings in `py_emulator.yaml`. Headless runs (`--count-frame`, `--benchmark`) attach it too, so a state saved with a mouse resumes there |
+| `--printer-log FILE` | _(none)_ | Attach a printer to the printer port and write the raw bytes it receives to FILE (created or truncated). A machine with no port stops with an error. Cannot be used with `--benchmark` |
 | `--frame-skip MODE` | `auto` | Frame skip: `auto` skips VDP rendering on late frames. `none` disables frame skip |
 | `--debug` | off | Enable structured diagnostic logging to stderr |
 | `--log FILE` | _(none)_ | Write diagnostic log to a file (requires `--debug`) |
@@ -779,7 +797,7 @@ Key fields:
 | `slots.primary.N` | Primary slot N: `{type: cartridge}`, `{type: ram, ...}`, or inline ROM `content` |
 | `slots.primary.N.expanded` | Set `true` to expand into 4 secondary slots |
 | `builtin_devices` | Devices wired directly (not slot-based): VDP, PSG, PPI, RTC, RAM mapper |
-| `overrides` | Per-machine device settings. The loader reads only `keyboard_type` and `control_read`, both for `ppi8255`. It accepts and ignores other keys (e.g. `vram_kb: 128` for V9938) |
+| `overrides` | Per-machine device settings. The loader reads only `keyboard_type` and `control_read` for `ppi8255`, and `form` for `printer_port`. It accepts and ignores other keys (e.g. `vram_kb: 128` for V9938) |
 | `sha1` | Documentation only: the expected SHA1 of the dump. The loader does not compare it with the file, whether it is `null` or a hash. The core checks the SHA1 that the emulator calculates from the bytes it read |
 
 To use a custom machine definition, add a new YAML file to `config/machines/` and pass its `id` to `--machine`. At load time, the emulator skips device entries with `implemented: false` in their device YAML and shows a warning.
@@ -823,6 +841,7 @@ py-msx-emulator/
 │   ├── app_config.py      # py_emulator.yaml startup defaults
 │   ├── media.py           # SRAM and disk image files (save changed media, disk swap)
 │   ├── input_state.py     # Input builder: keyboard/gamepad/mouse/RPC input -> per-frame InputFrame
+│   ├── printer_output.py  # --printer-log: writes the printed bytes to a file
 │   ├── state_files.py     # Save-state files (names, PNG, latest.* links)
 │   ├── screenshot.py      # RGB24→PNG writer (screenshots + save-state images)
 │   ├── rpc_server.py      # Unix-socket JSON-RPC control server (--rpc)
@@ -859,6 +878,7 @@ py-msx-emulator/
 │   ├── fmpac.py           # FM-PAC cartridge (banked ROM, SRAM, OPLL routing)
 │   ├── opll.py            # YM2413 (OPLL) FM sound chip
 │   ├── ppi.py             # i8255 PPI (slot register, keyboard, key click)
+│   ├── printer.py         # Parallel printer port
 │   ├── io.py              # I/O bus (port dispatch)
 │   ├── input.py           # Per-frame input value (InputFrame) + the lines the PPI/PSG read
 │   ├── mouse.py           # MSX mouse protocol state machine (pin-8-clocked nibbles)
