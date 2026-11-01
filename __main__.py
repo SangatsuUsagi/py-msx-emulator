@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from host.app_config import AppConfig
     from host.debugger.prompt import Debugger
     from host.media import DiskFiles
+    from host.printer_output import PrinterOutput
     from host.rpc_server import DebugServer
     from host.trace import TraceOutput
     from msx.boundary import RtcTime
@@ -175,6 +176,9 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                              "mouse (default port 2 if bare). Overrides py_emulator.yaml's "
                              "mouse.enabled/mouse.port. Ignored in headless "
                              "(--count-frame/--benchmark) runs — no SDL window/event loop.")
+    parser.add_argument("--printer-log", metavar="FILE", dest="printer_log", default=None,
+                        help="Attach a printer to the printer port and write the raw bytes "
+                             "it receives to FILE")
     parser.add_argument("--frame-skip", choices=["auto", "none"], default=None,
                         dest="frame_skip",
                         help="Frame skip mode: auto (default) or none to disable")
@@ -335,6 +339,8 @@ def _print_startup_summary(
     if mouse_port is not None:
         print(f"mouse   : Joy{mouse_port + 1}")
     print(f"mapper  : {display_mapper}")
+    if args.printer_log:
+        print(f"printer : {args.printer_log}")
     if args.vdp_trace:
         print(f"vdp-trace: {'stdout' if args.vdp_trace_out is None else args.vdp_trace_out}")
     if args.mapper_trace:
@@ -374,6 +380,7 @@ def _run_frames(
         while done < count:
             out = machine.step_frame(no_input, render_video=render_video)
             debugger.drain_trace()
+            debugger.drain_printer()
             if out.stop_reason:
                 handle_stop(machine, out.stop_reason, debugger, None)
             if out.frame_complete:
@@ -415,10 +422,13 @@ def _cleanup(
     machine: "CoreApi | None", rpc_server: "DebugServer | None", log_file: TextIO | None,
     trace_file: TextIO | None, mapper_trace_file: TextIO | None,
     sram_files: "dict[int, Path]", disk_files: "DiskFiles",
+    printer_output: "PrinterOutput | None" = None,
 ) -> None:
     """Tear down open resources and flush SRAM / disk writes on exit."""
     if rpc_server is not None:
         rpc_server.stop()
+    if printer_output is not None:
+        printer_output.close()
     if log_file is not None:
         log_file.close()
     if trace_file is not None:
@@ -525,6 +535,9 @@ def _validate_options(args: argparse.Namespace, opts: _EffectiveOptions) -> None
     """
     if args.benchmark is not None and args.count_frame is not None:
         _fail("--benchmark and --count-frame are mutually exclusive")
+    if args.benchmark is not None and args.printer_log is not None:
+        _fail("--printer-log and --benchmark are mutually exclusive: "
+              "the file output would change the measured time")
     if opts.scale < 1:
         _fail("--scale must be a positive integer")
     if args.cartridge and args.slot1:
@@ -641,6 +654,18 @@ def _open_trace_outputs(
     return trace_output, trace_file, log_file
 
 
+def _open_printer_output(machine: "CoreApi", path: str) -> "PrinterOutput":
+    """Attach a printer and open --printer-log's file. On a machine with no
+    port it stops here, before the file exists."""
+    from host.printer_output import PrinterOutput
+
+    _check(machine, machine.attach_printer())
+    try:
+        return PrinterOutput(machine, Path(path))
+    except OSError as exc:
+        _fail(f"--printer-log: {exc}")
+
+
 def _start_traces(
     machine: "CoreApi", args: argparse.Namespace, trace_output: "TraceOutput"
 ) -> TextIO | None:
@@ -720,6 +745,7 @@ def main() -> None:
     game_title = (lookup_title(cartridge) if cartridge else None) or "py-msx-emulator"
     machine = None
     rpc_server = None
+    printer_output = None
     sram_files: "dict[int, Path]" = {}
     from host.media import DiskFiles
     # The file of each drive's disk: one table for the debugger, the RPC
@@ -747,12 +773,14 @@ def main() -> None:
         if result.machine is None:
             _fail(result.error_text.decode("utf-8"))
         machine = result.machine
+        if args.printer_log:
+            printer_output = _open_printer_output(machine, args.printer_log)
 
         # The interactive debugger for all machines, so Ctrl-C drops into the
         # REPL on MSX1 too (the slot/mapper tools are most useful there). The
         # host opens it when step_frame stops (host/debugger/stop.py).
         from host.debugger.prompt import Debugger
-        debugger = Debugger(machine, disk_files, trace_output, _rom_names(spec))
+        debugger = Debugger(machine, disk_files, trace_output, _rom_names(spec), printer_output)
 
         _set_break_points(machine, breakpoint_addrs, watchpoint_entries)
 
@@ -789,7 +817,8 @@ def main() -> None:
                 debugger=debugger, disk_files=disk_files)
     finally:
         _cleanup(
-            machine, rpc_server, log_file, trace_file, mapper_trace_file, sram_files, disk_files
+            machine, rpc_server, log_file, trace_file, mapper_trace_file, sram_files, disk_files,
+            printer_output,
         )
 
 

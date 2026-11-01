@@ -35,6 +35,7 @@ except ImportError:  # stock Windows CPython has no readline module
     readline = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:
+    from host.printer_output import PrinterOutput
     from msx.core_api import CoreApi
 
 
@@ -114,6 +115,7 @@ class Debugger:
     def __init__(
         self, machine: CoreApi, disk_files: DiskFiles | None = None,
         trace: TraceOutput | None = None, rom_names: tuple[str, str] = ("", ""),
+        printer: PrinterOutput | None = None,
     ) -> None:
         self._machine = machine
         # The main and sub ROM file names `sl`/`st` print ("" for none): the
@@ -125,6 +127,15 @@ class Debugger:
         # Where the run's VDP and mapper trace lines go (host/trace.py); the
         # CLI flags set it up, te/ce turn the traces on.
         self.trace = trace if trace is not None else TraceOutput()
+        # --printer-log's file (host/printer_output.py); None without the flag.
+        self._printer = printer
+
+    def drain_printer(self) -> None:
+        """Write the guest's printed bytes to --printer-log's file. The run
+        loops call it after each step_frame, the step command after each
+        step."""
+        if self._printer is not None:
+            self._printer.drain()
 
     def drain_trace(self) -> None:
         """Write the core's recorded trace events as text. The run loops call
@@ -541,6 +552,7 @@ class Debugger:
         for _ in range(count):
             self._machine.step()
             self.drain_trace()
+            self.drain_printer()
             stop = self._machine.last_stop()
             if stop.reason == STOP_WATCHPOINT:
                 print(watch_hit_line(stop))
