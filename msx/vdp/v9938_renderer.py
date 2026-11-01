@@ -11,7 +11,8 @@ from dataclasses import dataclass
 from itertools import chain
 from typing import TYPE_CHECKING, Iterable, NamedTuple
 
-from msx.vdp._geometry import OUTPUT_H, ZERO_BYTE, pad_rows, pad_to_output_height
+from msx.boundary import OUTPUT_HEIGHT
+from msx.vdp._geometry import ZERO_BYTE, pad_rows, pad_to_output_height
 from msx.vdp._v9938_defs import (
     _S2_EO,
     _PaletteChange,
@@ -220,7 +221,7 @@ def render_frame(vdp: "V9938", skip_render: bool = False) -> bytearray:
     """Render one frame; return bytearray of palette indices.
 
     The returned buffer always has the constant output height (length
-    width × OUTPUT_H: 256×212 normally, 512×212 for SCREEN 6/7 and TEXT2, and
+    width × OUTPUT_HEIGHT: 256×212 normally, 512×212 for SCREEN 6/7 and TEXT2, and
     512×212 for a frame that mixes a 512-dot band with a 256-dot one). A
     192-line frame (R#9 LN=0) is centred with border rows above
     and below so the displayed image keeps a stable geometry regardless of LN.
@@ -1800,12 +1801,12 @@ def _banded_to_rgb24(vdp: "V9938", src: bytearray) -> bytes:
     (R#18 high nibble) is accounted for: output line dy came from source line
     dy - v_off, whose band determines the palette.
 
-    src is the padded output-height buffer (OUTPUT_H rows). When the native
+    src is the padded output-height buffer (OUTPUT_HEIGHT rows). When the native
     active height is 192 the picture occupies rows [pad, pad + native_h); the
     top/bottom border pad rows use the frame-start palette.
     """
     native_h = vdp.display_height
-    w = len(src) // OUTPUT_H
+    w = len(src) // OUTPUT_HEIGHT
     pad = pad_rows(native_h)  # 10 when native_h == 192, 0 when 212
 
     # Vertical shift must match _apply_display_adjust: use the frame-start R#18
@@ -1828,7 +1829,7 @@ def _banded_to_rgb24(vdp: "V9938", src: bytearray) -> bytes:
 
     rows = vdp._rgb_rows
     parts: list[bytes] = []
-    for dy in range(OUTPUT_H):
+    for dy in range(OUTPUT_HEIGHT):
         ny = dy - pad  # native index-buffer row this output row maps to
         channels = default_channels
         if 0 <= ny < native_h:

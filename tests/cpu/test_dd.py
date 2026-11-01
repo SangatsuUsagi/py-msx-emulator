@@ -8,7 +8,7 @@ def make_cpu(rom: list[int]) -> Z80:
     mem = Memory(
         rom=bytes(rom + [0] * (32768 - len(rom))),
         ram=bytearray(32768),
-        _mapper=FlatMapper(None),
+        mapper1=FlatMapper(None),
     )
     return Z80(read_byte=mem.read, write_byte=mem.write)
 
@@ -17,7 +17,7 @@ def make_cpu_mem(rom: list[int]) -> tuple[Z80, Memory]:
     mem = Memory(
         rom=bytes(rom + [0] * (32768 - len(rom))),
         ram=bytearray(32768),
-        _mapper=FlatMapper(None),
+        mapper1=FlatMapper(None),
     )
     return Z80(read_byte=mem.read, write_byte=mem.write), mem
 
@@ -32,7 +32,7 @@ def test_ld_a_ix_d() -> None:
     rom = bytes([0xDD, 0x7E, 0x02] + [0] * 32765)  # LD A, (IX+2)
     ram = bytearray(32768)
     ram[0x4002] = 0x55  # (0xC000 + 2): addr - 0x8000 = 0x4002
-    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    mem = Memory(rom=rom, ram=ram, mapper1=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.IX = 0xC000
     cpu.step()
@@ -42,7 +42,7 @@ def test_ld_a_ix_d() -> None:
 def test_ld_ix_d_n() -> None:
     rom = bytes([0xDD, 0x36, 0x01, 0xAB] + [0] * 32764)  # LD (IX+1), 0xAB
     ram = bytearray(32768)
-    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    mem = Memory(rom=rom, ram=ram, mapper1=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.IX = 0xC000
     cpu.step()

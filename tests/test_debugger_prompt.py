@@ -2,15 +2,26 @@
 
 from __future__ import annotations
 
+import functools
 from unittest.mock import MagicMock, patch
 
 from host.debugger import prompt as prompt_module
 from host.debugger.prompt import Debugger
-from msx.boundary import RgbFrame
+from host.debugger.slots import slot_bank_text
+from msx.boundary import (
+    SLOT_CONTENT_CARTRIDGE,
+    TRACE_MAPPER,
+    TRACE_VDP,
+    WATCH_READ,
+    RgbFrame,
+    SlotInfo,
+)
 from msx.cpu.registers import Registers
+from msx.machine import Machine
 from msx.mapper import FlatMapper
 from msx.memory import Memory
 from msx.ram_mapper import RamMapper
+from msx.trace import TraceLog
 from msx.vdp.v9938 import V9938
 from msx.vdp.vdp import VDP
 
@@ -20,6 +31,30 @@ from msx.vdp.vdp import VDP
 # History-file isolation for Debugger.enter() (autouse) lives in
 # tests/conftest.py so it applies to every test file that exercises the
 # REPL, not just this one.
+
+# The real Machine inspection queries, bound onto the mocks below so the
+# debugger reads the mocks' registers, VDP and break sets through the core API.
+_CORE_QUERIES = (
+    "cpu_registers", "read_memory", "vram_size", "read_vram", "vdp_info",
+    "frame_number", "breakpoints", "watchpoints", "break_halt_di", "render_preview",
+    "main_ram_range", "drive_count", "slot_layout", "slot_info",
+    "sprites_hidden", "set_sprites_hidden",
+    "set_trace_kinds", "trace_kinds", "trace_sources", "drain_trace",
+)
+
+
+def _bind_core_queries(m: MagicMock) -> None:
+    m.cpu.iff1 = False
+    m.cpu.iff2 = False
+    m.cpu.im = 0
+    m.memory.read = lambda addr: m.cpu.read_byte(addr)
+    m._watch_read = frozenset()
+    m._watch_write = frozenset()
+    m._break_halt_di = False
+    m._trace = TraceLog(sources=TRACE_VDP)
+    for name in _CORE_QUERIES:
+        setattr(m, name, functools.partial(getattr(Machine, name), m))
+
 
 def _make_machine(pc: int = 0x4000) -> MagicMock:
     """Build a minimal mock Machine with wired cpu.registers and vdp."""
@@ -48,7 +83,9 @@ def _make_machine(pc: int = 0x4000) -> MagicMock:
 
     m._breakpoints = frozenset()
     m.set_breakpoints = lambda addrs: setattr(m, "_breakpoints", frozenset(addrs[:4]))
+    m.set_frame_breakpoint.return_value = 0  # STATUS_OK
     m.cycle_count = 0
+    _bind_core_queries(m)
     return m
 
 
@@ -59,7 +96,6 @@ def _make_tms_machine(pc: int = 0x4000) -> MagicMock:
     regs.PC = pc
     m.cpu.registers = regs
     m.cpu.read_byte = lambda addr: 0x00
-    m.cpu.instruction_pc = pc
 
     vdp = VDP()
     vdp.regs[0] = 0x00
@@ -69,7 +105,9 @@ def _make_tms_machine(pc: int = 0x4000) -> MagicMock:
 
     m._breakpoints = frozenset()
     m.set_breakpoints = lambda addrs: setattr(m, "_breakpoints", frozenset(addrs[:4]))
+    m.set_frame_breakpoint.return_value = 0  # STATUS_OK
     m.cycle_count = 0
+    _bind_core_queries(m)
     return m
 
 
@@ -235,22 +273,22 @@ class TestDumpVram:
 class TestBreak:
     def test_list_empty(self, capsys):
         dbg = Debugger(_make_machine())
-        dbg._cmd_break(["l"])
+        dbg._break_list()
         out = capsys.readouterr().out
         assert "no breakpoints" in out
 
     def test_add_breakpoint(self, capsys):
         m = _make_machine()
         dbg = Debugger(m)
-        dbg._cmd_break(["a", "C000"])
+        dbg._break_add(["C000"])
         assert 0xC000 in m._breakpoints
 
     def test_list_after_add(self, capsys):
         m = _make_machine()
         dbg = Debugger(m)
-        dbg._cmd_break(["a", "C000"])
+        dbg._break_add(["C000"])
         capsys.readouterr()
-        dbg._cmd_break(["l"])
+        dbg._break_list()
         out = capsys.readouterr().out
         assert "C000" in out
 
@@ -258,28 +296,39 @@ class TestBreak:
         m = _make_machine()
         m._breakpoints = frozenset([0xC000])
         dbg = Debugger(m)
-        dbg._cmd_break(["r", "C000"])
+        dbg._break_remove(["C000"])
         assert 0xC000 not in m._breakpoints
 
     def test_max_4_enforced(self, capsys):
         m = _make_machine()
         m._breakpoints = frozenset([0x1000, 0x2000, 0x3000, 0x4000])
         dbg = Debugger(m)
-        dbg._cmd_break(["a", "5000"])
+        dbg._break_add(["5000"])
         out = capsys.readouterr().out
         assert "maximum 4" in out
         assert 0x5000 not in m._breakpoints
 
+    def test_ba_on_an_address_already_set_with_4_set(self, capsys):
+        # debug-monitor "ba on an address already set with 4 set".
+        m = _make_machine()
+        m._breakpoints = frozenset([0x0000, 0x4000, 0x8000, 0xC000])
+        dbg = Debugger(m)
+        dbg._break_add(["C000"])
+        out = capsys.readouterr().out
+        assert "Breakpoint set at C000h (4/4)" in out
+        assert "maximum" not in out
+        assert m._breakpoints == frozenset([0x0000, 0x4000, 0x8000, 0xC000])
+
     def test_remove_unknown_addr(self, capsys):
         m = _make_machine()
         dbg = Debugger(m)
-        dbg._cmd_break(["r", "DEAD"])
+        dbg._break_remove(["DEAD"])
         out = capsys.readouterr().out
         assert "not in" in out
 
     def test_add_invalid_addr(self, capsys):
         dbg = Debugger(_make_machine())
-        dbg._cmd_break(["a", "ZZZZ"])
+        dbg._break_add(["ZZZZ"])
         out = capsys.readouterr().out
         assert "invalid" in out.lower()
 
@@ -382,7 +431,7 @@ class TestStep:
         m = _make_machine(pc=0x4000)
         m.step = MagicMock(return_value=4)
         m.cycle_count = 12345
-        m.vdp._frame_count = 60
+        m.vdp.frame_count = 60
         dbg = Debugger(m)
         prompts = []
         with patch("builtins.input", side_effect=lambda p="": (prompts.append(p), "c")[1]):
@@ -444,13 +493,12 @@ class TestTMS9918ADebug:
         lines = [line for line in out.strip().splitlines() if line.strip()]
         assert len(lines) == 8  # 128 bytes / 16 per row
 
-    def test_te_on_tms_attaches_tracer(self, capsys):
+    def test_te_on_tms_turns_the_vdp_trace_on(self, capsys):
         m = _make_tms_machine()
         dbg = Debugger(m)
-        assert m.vdp.tracer is None
+        assert not m.trace_kinds() & TRACE_VDP
         dbg._cmd_trace_enable()
-        assert m.vdp.tracer is not None
-        assert m.vdp.tracer.enabled is True
+        assert m.trace_kinds() & TRACE_VDP
 
     def test_rp_on_tms_prints_no_palette_error(self, capsys):
         dbg = Debugger(_make_tms_machine())
@@ -467,8 +515,7 @@ def _make_slot_memory(
     slot_register: int = 0xD4,
     sub_slot_enabled: bool = False,
     sub_slot_reg: int = 0x00,
-    rom_name: str = "cbios_main.rom",
-    sub0_rom_name: str = "",
+    with_sub_rom: bool = False,
     with_ram_mapper: bool = False,
     slot1_sub_slot_enabled: bool = False,
     slot1_sub_slot_reg: int = 0x00,
@@ -480,22 +527,20 @@ def _make_slot_memory(
     return Memory(
         rom=b"\x00" * 32768,
         ram=bytearray(0x2000),
-        _mapper=FlatMapper(None),
-        _mapper2=FlatMapper(None),
+        mapper1=FlatMapper(None),
+        mapper2=FlatMapper(None),
         slot_register=slot_register,
         sub_slot_enabled=sub_slot_enabled,
         sub_slot_reg=sub_slot_reg,
-        rom_name=rom_name,
-        sub0_rom=b"\x00" * 16384 if sub0_rom_name else None,
-        sub0_rom_name=sub0_rom_name,
+        sub0_rom=b"\x00" * 16384 if with_sub_rom else None,
         ram_mapper=RamMapper() if with_ram_mapper else None,
         slot1_sub_slot_enabled=slot1_sub_slot_enabled,
         slot1_sub_slot_reg=slot1_sub_slot_reg,
-        _mapper1_subslots=mapper1_subslots if mapper1_subslots is not None
+        mapper1_subslots=mapper1_subslots if mapper1_subslots is not None
         else [None, None, None, None],
         slot2_sub_slot_enabled=slot2_sub_slot_enabled,
         slot2_sub_slot_reg=slot2_sub_slot_reg,
-        _mapper2_subslots=mapper2_subslots if mapper2_subslots is not None
+        mapper2_subslots=mapper2_subslots if mapper2_subslots is not None
         else [None, None, None, None],
     )
 
@@ -504,8 +549,7 @@ def _make_slot_machine(
     slot_register: int = 0xD4,
     sub_slot_enabled: bool = False,
     sub_slot_reg: int = 0x00,
-    rom_name: str = "cbios_main.rom",
-    sub0_rom_name: str = "",
+    with_sub_rom: bool = False,
     with_ram_mapper: bool = False,
     slot1_sub_slot_enabled: bool = False,
     slot1_sub_slot_reg: int = 0x00,
@@ -519,8 +563,7 @@ def _make_slot_machine(
         slot_register=slot_register,
         sub_slot_enabled=sub_slot_enabled,
         sub_slot_reg=sub_slot_reg,
-        rom_name=rom_name,
-        sub0_rom_name=sub0_rom_name,
+        with_sub_rom=with_sub_rom,
         with_ram_mapper=with_ram_mapper,
         slot1_sub_slot_enabled=slot1_sub_slot_enabled,
         slot1_sub_slot_reg=slot1_sub_slot_reg,
@@ -572,7 +615,7 @@ class TestSlotActive:
             slot_register=0xD4,
             sub_slot_enabled=True,
             sub_slot_reg=0xA8,  # P0=0,P1=2,P2=2,P3=2 (sub slots for slot 3)
-            sub0_rom_name="cbios_sub.rom",
+            with_sub_rom=True,
             with_ram_mapper=True,
         )
         Debugger(m)._cmd_slot_active()
@@ -581,8 +624,8 @@ class TestSlotActive:
 
     def test_sl_slot2_subslot_shows_its_own_mapper_content(self, capsys):
         """Regression test: an expanded slot 2 (e.g. --extension hbi_j1) must
-        report each page's actual sub-slot mapper via `_mapper2_subslots`,
-        not the flat `_mapper2` (which would misreport "Cartridge (empty)"
+        report each page's actual sub-slot mapper via `mapper2_subslots`,
+        not the flat `mapper2` (which would misreport "Cartridge (empty)"
         regardless of what's really mapped in)."""
         from msx.mapper import FlatMapper as _FlatMapper
 
@@ -619,12 +662,138 @@ class TestSlotActive:
                 assert "Flat" in line
 
 
+class _SlotQueriesOnly:
+    """A core API stand-in that is not a Machine and offers only the slot
+    layout and slot description queries (any other member raises)."""
+
+    def __init__(self, machine: Machine) -> None:
+        self._real = machine
+
+    def slot_layout(self):
+        return self._real.slot_layout()
+
+    def slot_info(self, primary, secondary, page):
+        return self._real.slot_info(primary, secondary, page)
+
+
+def test_the_slot_views_use_only_the_core_api(capsys):
+    # debug-monitor "The slot views use only the core API".
+    from tests.factories import make_machine_msx2
+
+    m = make_machine_msx2(bytes(32 * 1024), bytes(0x4000))
+    m.io.write_port(0xA8, 0xC0)
+    m.write_memory(0xFFFF, b"\xa0")
+    for command in ("_cmd_slot_active", "_cmd_slot_tree"):
+        getattr(Debugger(m), command)()
+        expected = capsys.readouterr().out
+        getattr(Debugger(_SlotQueriesOnly(m)), command)()
+        assert capsys.readouterr().out == expected
+        assert "Primary" in expected or "P3" in expected
+
+
+class _OtherCore:
+    """A core API object that is not the Python core: it forwards every
+    member to a real Machine but is not a Machine instance."""
+
+    def __init__(self, machine: Machine) -> None:
+        self._real = machine
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+def test_ce_works_on_another_core(capsys):
+    # debug-monitor "ce works on another core".
+    from tests.factories import make_machine
+
+    m = make_machine(bytes(32 * 1024), cartridge=bytes(128 * 1024), mapper="ASCII16")
+    Debugger(_OtherCore(m))._cmd_mapper_trace_enable()
+    assert m.trace_kinds() & TRACE_MAPPER
+    assert "Mapper bank-switch trace enabled (stdout)" in capsys.readouterr().out
+
+
+# debug-monitor "te / td" and diag-vdp-tracer "Runtime trace enable/disable
+# via debugger (te / td)".
+
+def _trace_ram_machine():
+    """An MSX1 machine with RAM at 0xC000 holding LD A,01h / OUT (99h),A /
+    LD A,80h / OUT (99h),A, and the PC there."""
+    from tests.factories import make_machine
+
+    m = make_machine(bytes(32 * 1024))
+    m.io.write_port(0xA8, 0xF0)
+    m.write_memory(0xC000, bytes((0x3E, 0x01, 0xD3, 0x99, 0x3E, 0x80, 0xD3, 0x99)))
+    m.cpu.registers.PC = 0xC000
+    return m
+
+
+def test_te_creates_tracer_if_absent(capsys):
+    m = _trace_ram_machine()
+    Debugger(m)._cmd_trace_enable()
+    assert capsys.readouterr().out == "VDP trace enabled (stdout)\n"
+    assert m.trace_kinds() == TRACE_VDP
+
+
+def test_td_disables_existing_tracer(capsys):
+    m = _trace_ram_machine()
+    dbg = Debugger(m)
+    dbg._cmd_trace_enable()
+    capsys.readouterr()
+    dbg._cmd_trace_disable()
+    assert capsys.readouterr().out == "VDP trace disabled\n"
+    assert m.trace_kinds() == 0
+    dbg._cmd_trace_disable()
+    assert capsys.readouterr().out == "VDP trace already disabled\n"
+
+
+def test_a_step_prints_its_trace_lines(capsys):
+    m = _trace_ram_machine()
+    dbg = Debugger(m)
+    dbg._cmd_trace_enable()
+    capsys.readouterr()
+    dbg._cmd_step(["4"])
+    out = capsys.readouterr().out
+    assert "PC=C006 VDP_REG R#00=01h" in out
+    assert out.index("VDP_REG") < out.index("=> ")
+
+
+def test_te_writes_to_the_vdp_trace_out_file(capsys):
+    import io
+
+    from host.trace import TraceOutput
+
+    m = _trace_ram_machine()
+    trace = TraceOutput()
+    log = io.StringIO()
+    trace.set_vdp_output(log, "trace.log")
+    dbg = Debugger(m, trace=trace)
+    dbg._cmd_trace_enable()
+    assert capsys.readouterr().out == "VDP trace enabled (trace.log)\n"
+    dbg._cmd_step(["4"])
+    assert "VDP_REG R#00=01h" in log.getvalue()
+    assert "VDP_REG" not in capsys.readouterr().out
+
+
+def test_ds_hides_and_shows_sprites(capsys):
+    # debug-monitor "ds hides and shows sprites", on both VDP types.
+    from tests.factories import make_machine, make_machine_msx2
+
+    for m in (make_machine(bytes(32 * 1024)), make_machine_msx2(bytes(32 * 1024), bytes(0x4000))):
+        dbg = Debugger(m)
+        dbg._cmd_disable_sprites()
+        assert capsys.readouterr().out == "Sprite rendering: OFF (background only)\n"
+        assert m.sprites_hidden() is True
+        dbg._cmd_disable_sprites()
+        assert capsys.readouterr().out == "Sprite rendering: ON\n"
+        assert m.sprites_hidden() is False
+
+
 class TestSlotTree:
     def test_st_msx2_shows_expanded_slot3(self, capsys):
         m = _make_slot_machine(
             sub_slot_enabled=True,
             sub_slot_reg=0xA4,
-            sub0_rom_name="cbios_sub.rom",
+            with_sub_rom=True,
             with_ram_mapper=True,
         )
         Debugger(m)._cmd_slot_tree()
@@ -679,6 +848,22 @@ class TestSlotTree:
 # sl — cartridge ROM mapper bank column
 # ---------------------------------------------------------------------------
 
+def _bank(mapper, page: int) -> str:
+    """The sl bank text of a mapper's page, through the host formatter."""
+    view = mapper.debug_bank(page)
+    info = SlotInfo(
+        SLOT_CONTENT_CARTRIDGE, -1, 0, view.bank, view.window_kinds,
+        view.window_values, view.sub_bank_count, view.sub_banks, view.sub_offsets,
+    )
+    return slot_bank_text(info, page)
+
+
+def _slot_bank(mem: Memory, primary: int, secondary, page: int) -> str:
+    """The sl bank text of a Memory slot's page, through the host formatter."""
+    sub = -1 if secondary is None else secondary
+    return slot_bank_text(mem.describe_slot(primary, sub, page), page)
+
+
 class TestSlotRomMapperBank:
     @staticmethod
     def _rom16(pages: int):
@@ -692,95 +877,189 @@ class TestSlotRomMapperBank:
         from msx.mapper import Ascii16Mapper
         m = Ascii16Mapper(self._rom16(8))
         # power-on: both windows bank 0
-        assert m.debug_bank_info(1) == "bank 0 @00000-03FFF"
-        assert m.debug_bank_info(2) == "bank 0 @00000-03FFF"
+        assert _bank(m, 1) == "bank 0 @00000-03FFF"
+        assert _bank(m, 2) == "bank 0 @00000-03FFF"
         # switch window 1 (0x8000) to bank 3
         m.write(0x7000, 3)
-        assert m.debug_bank_info(2) == "bank 3 @0C000-0FFFF"
+        assert _bank(m, 2) == "bank 3 @0C000-0FFFF"
 
     def test_ascii8_shows_both_windows_per_page(self):
         from msx.mapper import Ascii8Mapper
         m = Ascii8Mapper(self._rom8(8))
         m.write(0x6000, 1)  # window 0 (0x4000) -> bank 1
         m.write(0x6800, 2)  # window 1 (0x6000) -> bank 2
-        assert m.debug_bank_info(1) == "w0=b1@02000  w1=b2@04000"
+        assert _bank(m, 1) == "w0=b1@02000  w1=b2@04000"
 
     def test_flat_mapper_has_no_bank(self):
         from msx.mapper import FlatMapper
-        assert FlatMapper(b"\x00" * 32768).debug_bank_info(1) is None
+        assert _bank(FlatMapper(b"\x00" * 32768), 1) == "-"
 
     def test_sl_bank_uses_rom_mapper_for_cartridge(self):
         from msx.mapper import Ascii16Mapper
-        mem = Memory(rom=b"\x00", ram=bytearray(1), _mapper=Ascii16Mapper(self._rom16(8)))
-        assert mem.debug_slot_bank(1, None, 2) == "bank 0 @00000-03FFF"
+        mem = Memory(rom=b"\x00", ram=bytearray(1), mapper1=Ascii16Mapper(self._rom16(8)))
+        assert _slot_bank(mem, 1, None, 2) == "bank 0 @00000-03FFF"
+
+    # -- debug-monitor "sl -- cartridge ROM mapper bank column": the text
+    # describes what each window maps, resolved as the mapper's reads are.
+
+    def test_rtype_shows_fixed_and_selected_banks(self):
+        from msx.mapper import RTypeMapper
+        m = RTypeMapper(self._rom16(24))  # 384 KB: block 0x17 selected directly
+        assert _bank(m, 1) == "bank 23 @5C000-5FFFF"
+        assert _bank(m, 2) == "bank 0 @00000-03FFF"
+        m.write(0x4000, 2)
+        assert _bank(m, 2) == "bank 2 @08000-0BFFF"
+        assert _bank(m, 0) == "-" and _bank(m, 3) == "-"
+
+    def test_sl_bank_shows_the_rtype_banks(self):
+        from msx.mapper import RTypeMapper
+        rtype = RTypeMapper(self._rom16(24))
+        rtype.write(0x4000, 2)
+        mem = Memory(rom=b"\x00", ram=bytearray(1), mapper1=rtype)
+        assert _slot_bank(mem, 1, None, 1) == "bank 23 @5C000-5FFFF"
+        assert _slot_bank(mem, 1, None, 2) == "bank 2 @08000-0BFFF"
+
+    def test_fmpac_shows_its_bank_or_its_sram(self):
+        from msx.fmpac import FmPac
+        from msx.opll import Opll
+        m = FmPac(self._rom16(4), Opll())
+        m.write(0x7FF7, 1)  # bank register
+        assert _bank(m, 1) == "bank 1 @04000-07FFF"
+        mem = Memory(rom=b"\x00", ram=bytearray(1), mapper1=m)
+        assert _slot_bank(mem, 1, None, 1) == "bank 1 @04000-07FFF"
+        m.write(0x5FFE, 0x4D)  # SRAM unlock
+        m.write(0x5FFF, 0x69)
+        assert _bank(m, 1) == "bank SRAM@0000"
+        assert _bank(m, 2) == "-"
+
+    def test_a_game_master_2_window_on_sram_shows_sram(self):
+        from msx.mapper import GameMaster2Mapper
+        m = GameMaster2Mapper(self._rom8(16))
+        m.write(0xA000, 0x30)  # window 3: SRAM, upper 4 KB half
+        assert _bank(m, 2) == "w2=b2@04000  w3=SRAM@1000"
+
+    def test_ascii8_and_ascii16_sram_windows_show_sram(self):
+        from msx.mapper import Ascii8Sram2Mapper, Ascii16Sram2Mapper
+        a8 = Ascii8Sram2Mapper(self._rom8(32))
+        a8.write(0x7000, 0x20)  # window 2 (0x8000): SRAM
+        assert _bank(a8, 2) == "w2=SRAM@0000  w3=b0@00000"
+        a16 = Ascii16Sram2Mapper(self._rom16(16))
+        a16.write(0x7000, 0x10)  # window 1 (0x8000): SRAM
+        assert _bank(a16, 2) == "bank SRAM@0000"
+
+    def test_a_register_beyond_the_rom_shows_the_page_mapped(self):
+        from msx.mapper import Ascii16Mapper
+        m = Ascii16Mapper(self._rom16(8))  # 128 KB
+        m.write(0x7000, 0xFF)
+        assert m.read(0x8000) == 7
+        assert _bank(m, 2) == "bank 7 @1C000-1FFFF"
+
+    def test_a_konami_page_past_the_rom_shows_open(self):
+        from msx.mapper import KonamiMapper
+        m = KonamiMapper(self._rom8(16))  # 128 KB
+        m.write(0x8000, 0x1F)  # page 31 is past the end: open bus
+        assert m.read(0x8000) == 0xFF
+        assert _bank(m, 2) == "w2=open  w3=b3@06000"
+
+    def test_scc_i_shows_the_masked_ram_block(self):
+        from msx.mapper import SCCICart
+        from msx.scc import SCC
+        m = SCCICart(SCC())
+        m.write(0x9000, 0xFF)
+        assert _bank(m, 2) == "w2=b7@0E000  w3=b3@06000"
+
+    def test_halnote_shows_sram_its_page_and_the_sub_mapper(self):
+        from msx.mapper import HalnoteMapper
+        m = HalnoteMapper(bytes(1024 * 1024))
+        assert _bank(m, 0) == "-"
+        m.write(0x4FFF, 0x85)  # bank 0: page 5, SRAM on
+        assert _bank(m, 0) == "SRAM@0000-3FFF"
+        assert _bank(m, 1) == "w0=b5@0A000  w1=b1@02000"
+        m.write(0x6FFF, 0x86)  # bank 1: page 6, sub-mapper on
+        m.write(0x77FF, 0x12)
+        m.write(0x7FFF, 0x34)
+        assert _bank(m, 1) == (
+            "w0=b5@0A000  w1=b6@0C000  sub=b18@89000,b52@9A000"
+        )
 
     def test_sl_bank_ram_mapper_segment_unchanged(self):
         from msx.ram_mapper import RamMapper
         rm = RamMapper()
         rm.banks[3] = 2
-        mem = Memory(rom=b"\x00", ram=bytearray(1), _mapper=FlatMapper(None), ram_mapper=rm)
-        assert mem.debug_slot_bank(3, 2, 3) == "seg=2"
+        mem = Memory(rom=b"\x00", ram=bytearray(1), mapper1=FlatMapper(None), ram_mapper=rm)
+        assert _slot_bank(mem, 3, 2, 3) == "seg=2"
+
+    def test_sl_bank_shows_the_segment_a_short_mapper_maps(self):
+        # memory-ram-mapper "A bank past a non-power-of-two size wraps".
+        from msx.ram_mapper import RamMapper
+        rm = RamMapper(size_kb=48)
+        rm.write_port(0xFC, 0x03)
+        mem = Memory(rom=b"\x00", ram=bytearray(1), mapper1=FlatMapper(None), ram_mapper=rm)
+        assert _slot_bank(mem, 3, 2, 0) == "seg=2"
 
     def test_sl_bank_dash_for_bios(self):
-        mem = Memory(rom=b"\x00", ram=bytearray(1), _mapper=FlatMapper(None))
-        assert mem.debug_slot_bank(0, None, 0) == "-"
+        mem = Memory(rom=b"\x00", ram=bytearray(1), mapper1=FlatMapper(None))
+        assert _slot_bank(mem, 0, None, 0) == "-"
 
-    def test_debug_slot_size_kb_reflects_configured_ram_mapper_size(self):
+    def test_slot_size_kb_reflects_configured_ram_mapper_size(self):
         from msx.ram_mapper import RamMapper
         rm = RamMapper(size_kb=256)
-        mem = Memory(rom=b"\x00", ram=bytearray(1), _mapper=FlatMapper(None), ram_mapper=rm)
-        assert mem.debug_slot_size_kb(3, 2) == "256KB"
+        mem = Memory(rom=b"\x00", ram=bytearray(1), mapper1=FlatMapper(None), ram_mapper=rm)
+        assert mem.describe_slot(3, 2, -1).size_kb == 256
 
 
 # ---------------------------------------------------------------------------
 # ce / cd — mapper bank-switch trace
 # ---------------------------------------------------------------------------
 
-def _make_mapper_machine(mapper):
-    from msx.mapper import FlatMapper
-    m = _make_machine()
-    m.memory = MagicMock()
-    m.memory._mapper = mapper
-    m.memory._mapper2 = FlatMapper(None)
-    m.cpu.instruction_pc = 0x402E
-    m.cycle_count = 45231
-    m.vdp._frame_count = 3
-    return m
-
-
 class TestMapperTrace:
     @staticmethod
-    def _rom16(pages: int):
-        return bytes([(p if i == 0 else 0) for p in range(pages) for i in range(16384)])
+    def _machine(mapper: str = "ASCII16"):
+        from tests.factories import make_machine
+
+        rom = bytes([(p if i == 0 else 0) for p in range(8) for i in range(16384)])
+        m = make_machine(bytes(32 * 1024), cartridge=rom, mapper=mapper)
+        m.io.write_port(0xA8, 0xD4)  # pages 1 and 2 in slot 1
+        return m
 
     def test_ce_enables_and_logs_switch(self, capsys):
-        from msx.mapper import Ascii16Mapper
-        mapper = Ascii16Mapper(self._rom16(8))
-        m = _make_mapper_machine(mapper)
-        Debugger(m)._cmd_mapper_trace_enable()
+        m = self._machine()
+        dbg = Debugger(m)
+        dbg._cmd_mapper_trace_enable()
         capsys.readouterr()  # discard the "enabled" line
-        mapper.write(0x7000, 1)  # window 1: 0 -> 1
+        m.memory.write(0x7000, 1)  # window 1: 0 -> 1
+        dbg.drain_trace()
         out = capsys.readouterr().out
         assert "MAP_BANK win=1 00h->01h addr=7000h" in out
-        assert "PC=402E" in out
 
     def test_cd_disables(self, capsys):
-        from msx.mapper import Ascii16Mapper
-        mapper = Ascii16Mapper(self._rom16(8))
-        m = _make_mapper_machine(mapper)
+        m = self._machine()
         dbg = Debugger(m)
         dbg._cmd_mapper_trace_enable()
         dbg._cmd_mapper_trace_disable()
-        capsys.readouterr()
-        mapper.write(0x7000, 2)
+        assert "Mapper trace disabled" in capsys.readouterr().out
+        m.memory.write(0x7000, 2)
+        dbg.drain_trace()
         assert capsys.readouterr().out == ""
+        dbg._cmd_mapper_trace_disable()
+        assert capsys.readouterr().out == "Mapper trace already disabled\n"
 
     def test_ce_no_mapper_message(self, capsys):
-        from msx.mapper import FlatMapper
-        m = _make_mapper_machine(FlatMapper(b"\x00" * 32768))
+        m = self._machine(mapper="Normal")
         Debugger(m)._cmd_mapper_trace_enable()
         out = capsys.readouterr().out
         assert "no bank-switching ROM mapper" in out
+        assert m.trace_kinds() == 0
+
+    def test_ce_reads_only_the_trace_sources(self, capsys):
+        # debug-monitor "Bank-trace-capable mappers are identified by type,
+        # not attribute probing": ce asks the core API, not the mappers.
+        class _NoMapperCore:
+            def trace_sources(self):
+                return TRACE_VDP
+
+        Debugger(_NoMapperCore())._cmd_mapper_trace_enable()
+        assert "no bank-switching ROM mapper" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------
@@ -808,25 +1087,25 @@ class TestBreakSp:
         m = _make_machine()
         m.memory.main_ram_range.return_value = (0x8000, 0xFFFF)
         Debugger(m)._cmd_break_sp([])
-        m.set_sp_range.assert_called_once_with((0x8000, 0xFFFF))
+        m.set_sp_range.assert_called_once_with(0x8000, 0xFFFF)
         out = capsys.readouterr().out
         assert "8000h-FFFFh" in out and "auto" in out
 
     def test_bs_off_disables(self, capsys):
         m = _make_machine()
         Debugger(m)._cmd_break_sp(["off"])
-        m.set_sp_range.assert_called_once_with(None)
+        m.set_sp_range.assert_called_once_with(-1, -1)
         assert "disabled" in capsys.readouterr().out
 
     def test_bs_explicit_range(self, capsys):
         m = _make_machine()
         Debugger(m)._cmd_break_sp(["c000", "ffff"])
-        m.set_sp_range.assert_called_once_with((0xC000, 0xFFFF))
+        m.set_sp_range.assert_called_once_with(0xC000, 0xFFFF)
 
     def test_bs_swaps_reversed_range(self, capsys):
         m = _make_machine()
         Debugger(m)._cmd_break_sp(["ffff", "c000"])
-        m.set_sp_range.assert_called_once_with((0xC000, 0xFFFF))
+        m.set_sp_range.assert_called_once_with(0xC000, 0xFFFF)
 
 
 # ---------------------------------------------------------------------------
@@ -870,7 +1149,7 @@ class TestWatchList:
         m = _make_machine()
         m._watch_read = set()
         m._watch_write = set()
-        Debugger(m)._cmd_watch(["l"])
+        Debugger(m)._watch_list()
         out = capsys.readouterr().out
         assert "no watchpoints" in out
 
@@ -878,7 +1157,7 @@ class TestWatchList:
         m = _make_machine()
         m._watch_read = {0x1234}
         m._watch_write = {0x5678, 0x1234}
-        Debugger(m)._cmd_watch(["l"])
+        Debugger(m)._watch_list()
         out = capsys.readouterr().out
         # 0x1234 is in both sets -> "rw"; 0x5678 write-only -> "w"; sorted ascending
         assert "1234h [rw]" in out
@@ -893,7 +1172,7 @@ class TestWatchList:
 class TestGotoFrame:
     def test_gf_arms_frame_breakpoint_and_resumes(self, capsys):
         m = _make_machine()
-        m.vdp._frame_count = 100
+        m.vdp.frame_count = 100
         assert Debugger(m)._cmd_goto_frame(["150"]) is True
         m.set_frame_breakpoint.assert_called_once_with(150)
         assert "150" in capsys.readouterr().out
@@ -911,14 +1190,24 @@ class TestGotoFrame:
 
     def test_gf_rejects_current_or_past_frame(self, capsys):
         m = _make_machine()
-        m.vdp._frame_count = 100
+        m.vdp.frame_count = 100
         assert Debugger(m)._cmd_goto_frame(["100"]) is False
         m.set_frame_breakpoint.assert_not_called()
         assert "already reached" in capsys.readouterr().out
 
+    def test_gf_with_a_frame_number_the_core_rejects(self, capsys):
+        # debug-monitor "gf with a frame number the core rejects".
+        m = _make_machine()
+        m.vdp.frame_count = 100
+        assert Debugger(m)._cmd_goto_frame([str(2**63)]) is False
+        m.set_frame_breakpoint.assert_not_called()
+        out = capsys.readouterr().out
+        assert "gf: frame 9223372036854775808 is above" in out
+        assert "Running" not in out
+
     def test_gf_in_repl_resumes_without_c(self, capsys):
         m = _make_machine()
-        m.vdp._frame_count = 100
+        m.vdp.frame_count = 100
         inputs = iter(["gf 150"])
         with patch("builtins.input", side_effect=inputs):
             Debugger(m).enter()
@@ -979,28 +1268,34 @@ class TestStateSave:
         m = _make_machine()
         dbg = Debugger(m)
         rgb = b"\x00" * (256 * 192 * 3)
-        with patch.object(dbg, "_render_rgb24", return_value=(rgb, 256, 192)):
+        with patch.object(m, "render_preview", return_value=RgbFrame(256, 192, rgb)):
             with patch("host.state_files.save_state") as mock_save:
                 dbg._cmd_state_save([])
-        mock_save.assert_called_once_with(m, RgbFrame(256, 192, rgb), "msx_dbg_checkpoint")
+        mock_save.assert_called_once_with(
+            m, RgbFrame(256, 192, rgb), "msx_dbg_checkpoint", dbg._disk_files
+        )
 
     def test_sv_with_title_argument(self, capsys):
         m = _make_machine()
         dbg = Debugger(m)
         rgb = b"\x00" * (256 * 192 * 3)
-        with patch.object(dbg, "_render_rgb24", return_value=(rgb, 256, 192)):
+        with patch.object(m, "render_preview", return_value=RgbFrame(256, 192, rgb)):
             with patch("host.state_files.save_state") as mock_save:
                 dbg._cmd_state_save(["my-checkpoint"])
-        mock_save.assert_called_once_with(m, RgbFrame(256, 192, rgb), "my-checkpoint")
+        mock_save.assert_called_once_with(
+            m, RgbFrame(256, 192, rgb), "my-checkpoint", dbg._disk_files
+        )
 
     def test_sv_passes_a_taller_frame_with_its_size(self, capsys):
         m = _make_machine()
         dbg = Debugger(m)
         tall_rgb = b"\x00" * (256 * 212 * 3)
-        with patch.object(dbg, "_render_rgb24", return_value=(tall_rgb, 256, 212)):
+        with patch.object(m, "render_preview", return_value=RgbFrame(256, 212, tall_rgb)):
             with patch("host.state_files.save_state") as mock_save:
                 dbg._cmd_state_save([])
-        mock_save.assert_called_once_with(m, RgbFrame(256, 212, tall_rgb), "msx_dbg_checkpoint")
+        mock_save.assert_called_once_with(
+            m, RgbFrame(256, 212, tall_rgb), "msx_dbg_checkpoint", dbg._disk_files
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1107,3 +1402,22 @@ class TestCompleteCommand:
 
     def test_no_match_returns_none(self):
         assert prompt_module._complete_command("zz", 0) is None
+
+
+# ---------------------------------------------------------------------------
+# dm / da read through the core API (add-core-api-facade design Decision 4)
+# ---------------------------------------------------------------------------
+
+class TestDumpBypassesWatchpoints:
+    def test_dm_over_a_read_watchpoint_requests_no_break(self, capsys) -> None:
+        from msx.boundary import STOP_NONE
+        from tests.factories import make_machine
+
+        m = make_machine(rom=bytes(32 * 1024))
+        m.set_watchpoints([(0xC000, WATCH_READ)])
+        dbg = Debugger(m)
+        dbg._cmd_dump(["BFF8", "10"])
+        dbg._cmd_disasm(["C000"])
+        assert m.last_stop().reason == STOP_NONE
+        assert not m._stop_pending
+        assert "[WP]" not in capsys.readouterr().out

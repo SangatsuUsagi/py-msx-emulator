@@ -6,7 +6,7 @@ import random
 
 import pytest
 
-from msx.vdp._geometry import OUTPUT_H
+from msx.boundary import OUTPUT_HEIGHT
 from msx.vdp.vdp import _TMS_CHANNELS, Rgb24RowCache, _channel_tables_indexed, _translate_rgb24
 
 _OTHER_CHANNELS = _channel_tables_indexed([bytes((i * 16, 255 - i * 16, i)) for i in range(16)])
@@ -16,8 +16,8 @@ def _frame(width: int, seed: int, repeat_rows: bool) -> bytearray:
     rng = random.Random(seed)
     if repeat_rows:
         rows = [bytes(rng.randrange(16) for _ in range(width)) for _ in range(8)]
-        return bytearray(b"".join(rows[rng.randrange(8)] for _ in range(OUTPUT_H)))
-    return bytearray(rng.randrange(256) for _ in range(width * OUTPUT_H))
+        return bytearray(b"".join(rows[rng.randrange(8)] for _ in range(OUTPUT_HEIGHT)))
+    return bytearray(rng.randrange(256) for _ in range(width * OUTPUT_HEIGHT))
 
 
 @pytest.mark.parametrize("width", [256, 512])
@@ -32,7 +32,7 @@ def test_frame_equals_the_uncached_conversion(width: int, repeat_rows: bool) -> 
 
 def test_a_buffer_that_is_not_whole_rows_converts_without_the_memo() -> None:
     cache = Rgb24RowCache()
-    for src in (bytearray(b"\x01\x08\x0f"), bytearray(256 * OUTPUT_H + 1)):
+    for src in (bytearray(b"\x01\x08\x0f"), bytearray(256 * OUTPUT_HEIGHT + 1)):
         assert cache.frame(src, _TMS_CHANNELS) == _translate_rgb24(src, _TMS_CHANNELS)
     assert len(cache) == 0
 
@@ -102,9 +102,9 @@ def test_the_memo_is_not_part_of_the_snapshot(msx2: bool) -> None:
     assert saved == state.save_state(plain)
 
     loaded = build()
-    state.load_state(loaded, saved, "test")
-    expected = converted.step_frame(InputFrame(), render_video=True).video
-    assert loaded.step_frame(InputFrame(), render_video=True).video == expected
+    state.load_state(loaded, saved)
+    expected = converted.step_frame(InputFrame(), render_video=True).video_pixels
+    assert loaded.step_frame(InputFrame(), render_video=True).video_pixels == expected
 
 
 class _Uncached:
@@ -161,7 +161,7 @@ def test_memoised_output_equals_the_uncached_conversion(label, make, width) -> N
 def test_a_palette_change_is_not_hidden_by_the_memo() -> None:
     # vdp-renderer "A palette change is not hidden by the memo".
     vdp = _v9938(0x06)
-    src = bytearray([3]) * (256 * OUTPUT_H)
+    src = bytearray([3]) * (256 * OUTPUT_HEIGHT)
     before = vdp.to_rgb24(src)
     vdp.palette[3] = 0b111_111_111  # index 3 -> white
     after = vdp.to_rgb24(bytearray(src))

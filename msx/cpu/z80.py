@@ -3,11 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable
 
+from msx.clock import CoreClock
 from msx.cpu import opcodes_main as _opcodes_main
 from msx.cpu.registers import Registers
 
 if TYPE_CHECKING:
-    from msx.diagnostics.logger import DebugLogger
+    from msx.trace import TraceLog
 
 
 # PORT-NOTE: this module-level binding aliases opcodes_main._DISPATCH so the
@@ -38,6 +39,9 @@ def _noop_write(_port: int, _value: int) -> None:
 
 @dataclass(slots=True)
 class Z80:
+    """The Z80 core. step() runs one instruction, or accepts an interrupt, and
+    returns the T-states it took. The bus is the read_byte/write_byte hooks."""
+
     # PORT-NOTE: these bus hooks are stored as Python closures (bound methods
     #   assigned at wiring time by Machine.__post_init__).
     # Rust equivalent: a trait object (`Box<dyn Bus>`) or a feature-flagged
@@ -73,7 +77,6 @@ class Z80:
     int_pending: bool = False
     nmi_pending: bool = False
     ei_pending: bool = False
-    instruction_pc: int = 0
     # Q (u8): the flags the ALU latched in the previous instruction (its new F
     # if it wrote F, else 0), read by SCF/CCF. Each step() moves q_next (u8)
     # into q and clears q_next; every handler whose ALU writes F sets q_next
@@ -86,7 +89,13 @@ class Z80:
     # matching openMSX Z80 WAIT_CYCLES=1). Supplied at construction
     # from the machine config.
     m1_wait_states: int = 0
-    _logger: DebugLogger | None = field(default=None, repr=False)
+    # The machine's trace buffer while TRACE_DEBUG is on, None otherwise
+    # (Machine.set_trace_kinds): step() keeps the instruction history in
+    # it, so the per-instruction cost with the kind off is one None check.
+    _trace: TraceLog | None = field(default=None, repr=False)
+    # The emulated time (msx/clock.py): step() writes the address of each
+    # instruction into it. build_machine gives the machine's record.
+    _clock: CoreClock = field(default_factory=CoreClock, repr=False)
 
     def reset(self) -> None:
         self.registers.reset()
@@ -173,7 +182,7 @@ class Z80:
         reg = self.registers
         pc = reg.PC
         if (
-            pc != self.instruction_pc
+            pc != self._clock.instruction_pc
             or self.read_byte(pc) != 0x18
             or self.read_byte((pc + 1) & 0xFFFF) != 0xFE
         ):
@@ -279,14 +288,14 @@ class Z80:
 
         r = self.registers
         pc = r.PC
-        self.instruction_pc = pc
+        self._clock.instruction_pc = pc
         self.q = self.q_next
         self.q_next = 0
         opcode = self.read_byte(pc)
         r.PC = (pc + 1) & 0xFFFF
         r.R = (r.R & 0x80) | ((r.R + 1) & 0x7F)
-        if self._logger is not None:
-            self._logger.on_step(pc, opcode)
+        if self._trace is not None:
+            self._trace.push_history(pc, opcode)
         # + the M1 wait for this opcode fetch. Prefixed instructions add one more
         # per prefix byte inside their prefix handlers (each is its own M1).
         return _DISPATCH[opcode](self) + self.m1_wait_states

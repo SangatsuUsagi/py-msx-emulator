@@ -130,7 +130,7 @@ def test_io_bus_wired_to_z80_dispatches_in_and_out() -> None:
     bus.register_write(0x98, 0x99, lambda p, v: writes.append(v))
 
     rom = bytes([0xDB, 0x98, 0xD3, 0x99]) + bytes(32768 - 4)  # IN A,(0x98); OUT (0x99),A
-    mem = Memory(rom=rom, ram=bytearray(32768), _mapper=FlatMapper(None))
+    mem = Memory(rom=rom, ram=bytearray(32768), mapper1=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.read_port = bus.read_port
     cpu.write_port = bus.write_port

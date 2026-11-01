@@ -3,13 +3,14 @@ from pathlib import Path
 
 import pytest
 
-from host.machine_config import load_machine_config, sram_paths
+from host.machine_config import LoadedMachineConfig, load_machine_config, sram_paths
 from host.media import persist_dirty_media
-from msx.boundary import MachineConfig, RtcTime
+from msx.boundary import RTC_CMOS_SIZE, MediaId, RtcTime
+from msx.clock import CoreClock
 from msx.machine_loader import build_machine
-from msx.machine_spec import MachineSpec, _RomEntry
-from msx.rtc import HOUR_MODE_REG, MODE_REG, RESET_REG, RTC, SRAM_SIZE, TEST_REG
-from tests.factories import make_config_msx2, make_machine_msx2
+from msx.machine_spec import MachineSpec, RomEntry
+from msx.rtc import HOUR_MODE_REG, MODE_REG, RESET_REG, RTC, TEST_REG
+from tests.factories import make_loaded_config_msx2, make_machine_msx2
 
 _ROM = b"\x00" * 0x8000
 _EXTROM = b"\x00" * 0x4000
@@ -188,7 +189,7 @@ def test_cmos_ram_save_and_load_round_trip(tmp_path: Path) -> None:
 
     assert rtc.cmos.dirty is True
     image = rtc.cmos.data()
-    assert len(image) == SRAM_SIZE
+    assert len(image) == RTC_CMOS_SIZE
 
     reloaded = RTC(sram=bytearray(image))
     _set_block(reloaded, 2)
@@ -250,15 +251,15 @@ def test_machine_loads_previously_saved_rtc_sram(
     the next construction."""
     monkeypatch.chdir(tmp_path)
 
-    config1 = make_config_msx2(_ROM, _EXTROM)
-    machine1 = build_machine(config1)
+    config1 = make_loaded_config_msx2(_ROM, _EXTROM)
+    machine1 = build_machine(config1.config)
     assert machine1.rtc is not None
     paths1 = sram_paths(config1)
-    assert paths1["rtc.cmos"] == Path("saves/sram/rtc_test_msx2.sram")
+    assert paths1[MediaId.RTC_CMOS] == Path("saves/sram/rtc_test_msx2.sram")
     _set_block(machine1.rtc, 2)
     _select(machine1.rtc, 0)
     machine1.rtc.write_port(0xB5, 0xA)
-    assert "rtc.cmos" in machine1.dirty_media()
+    assert MediaId.RTC_CMOS in machine1.dirty_media()
     persist_dirty_media(machine1, paths1)
     assert machine1.dirty_media() == []
 
@@ -275,9 +276,9 @@ def _rtc_spec(machine_id: str) -> MachineSpec:
         machine_id=machine_id,
         generation="msx2",
         rom_base_dir=Path("."),
-        main_rom_entry=_RomEntry(file="", size_kb=0, pages=[0, 1]),
+        main_rom_entry=RomEntry(file="", size_kb=0, pages=[0, 1]),
         logo_rom_entry=None,
-        sub_rom_entry=_RomEntry(file="", size_kb=0, pages=[]),
+        sub_rom_entry=RomEntry(file="", size_kb=0, pages=[]),
         has_ram_mapper=True,
         ram_size_kb=32,
         has_v9938=True,
@@ -285,7 +286,7 @@ def _rtc_spec(machine_id: str) -> MachineSpec:
     )
 
 
-def _rtc_config(machine_id: str) -> MachineConfig:
+def _rtc_config(machine_id: str) -> LoadedMachineConfig:
     return load_machine_config(
         _rtc_spec(machine_id), bios_override=_ROM, extrom_override=_EXTROM
     )
@@ -301,13 +302,13 @@ def test_two_rtc_machines_do_not_share_cmos_ram(
 
     config_a = _rtc_config("machine_a")
     config_b = _rtc_config("machine_b")
-    machine_a = build_machine(config_a)
-    machine_b = build_machine(config_b)
+    machine_a = build_machine(config_a.config)
+    machine_b = build_machine(config_b.config)
     assert machine_a.rtc is not None and machine_b.rtc is not None
     paths_a = sram_paths(config_a)
     paths_b = sram_paths(config_b)
-    assert paths_a["rtc.cmos"] == Path("saves/sram/rtc_machine_a.sram")
-    assert paths_b["rtc.cmos"] == Path("saves/sram/rtc_machine_b.sram")
+    assert paths_a[MediaId.RTC_CMOS] == Path("saves/sram/rtc_machine_a.sram")
+    assert paths_b[MediaId.RTC_CMOS] == Path("saves/sram/rtc_machine_b.sram")
 
     _set_block(machine_a.rtc, 2)
     _select(machine_a.rtc, 0)
@@ -315,7 +316,7 @@ def test_two_rtc_machines_do_not_share_cmos_ram(
     persist_dirty_media(machine_a, paths_a)
     persist_dirty_media(machine_b, paths_b)
 
-    reloaded_b = build_machine(_rtc_config("machine_b"))
+    reloaded_b = build_machine(_rtc_config("machine_b").config)
     assert reloaded_b.rtc is not None
     _set_block(reloaded_b.rtc, 2)
     _select(reloaded_b.rtc, 0)
@@ -333,10 +334,10 @@ def _read_block0(rtc: RTC) -> list[int]:
     return digits
 
 
-def _clocked(start: RtcTime) -> tuple[RTC, list[int]]:
-    cycle = [0]
-    rtc = RTC(start=start, _get_cycle=lambda: cycle[0])
-    return rtc, cycle
+def _clocked(start: RtcTime) -> tuple[RTC, CoreClock]:
+    clock = CoreClock()
+    rtc = RTC(start=start, _clock=clock)
+    return rtc, clock
 
 
 def test_block0_reflects_the_supplied_start_time() -> None:
@@ -352,17 +353,17 @@ def test_no_start_time_gives_the_fixed_epoch() -> None:
 
 
 def test_one_emulated_second_advances_the_seconds_digit() -> None:
-    rtc, cycle = _clocked(RtcTime(2026, 1, 1, 12, 0, 0))
-    cycle[0] = 3_579_545 - 1
+    rtc, clock = _clocked(RtcTime(2026, 1, 1, 12, 0, 0))
+    clock.cycle = 3_579_545 - 1
     assert _read_block0(rtc)[0:2] == [0, 0]
-    cycle[0] = 3_579_545
+    clock.cycle = 3_579_545
     assert _read_block0(rtc)[0:2] == [1, 0]
 
 
 def test_midnight_carries_into_the_next_day() -> None:
-    rtc, cycle = _clocked(RtcTime(1999, 12, 31, 23, 59, 59))
+    rtc, clock = _clocked(RtcTime(1999, 12, 31, 23, 59, 59))
     before = _read_block0(rtc)
-    cycle[0] = 3_579_545
+    clock.cycle = 3_579_545
     after = _read_block0(rtc)
     # 2000-01-01 00:00:00; year register (2000 - 1980) % 100 = 20
     assert after[0:6] == [0, 0, 0, 0, 0, 0]
@@ -380,7 +381,7 @@ def test_rtc_never_reads_the_host_clock() -> None:
 def test_build_machine_wires_the_rtc_to_the_machine_clock() -> None:
     machine = make_machine_msx2(bytes(0x8000), bytes(0x4000))
     assert machine.rtc is not None
-    machine.cycle_count = 3 * 3_579_545
+    machine.clock.cycle = 3 * 3_579_545
     assert _read_block0(machine.rtc)[0:2] == [3, 0]
 
 

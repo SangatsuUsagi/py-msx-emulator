@@ -27,9 +27,10 @@ from msx.fdc.interface import (
     FloppyDiskParsed,
 )
 from msx.fdc.tc8566af import CMD_READ_DATA, CMD_SEEK
-from msx.machine_spec import MachineSpec, _FdcDef, _RomEntry
+from msx.machine_spec import FdcDef, MachineSpec, RomEntry
 from msx.snapshot_schema import SchemaError
 from tests.disk_factories import dsk_image
+from tests.factories import restore_state
 
 _2DD = 737280
 _KINDS = ["wd2793", "tc8566af"]
@@ -47,17 +48,17 @@ def _spec(tmp_path: Path, kind: str) -> MachineSpec:
         name="test_fdc_parse_state",
         generation="msx2",
         rom_base_dir=tmp_path,
-        main_rom_entry=_RomEntry(file="main.rom", size_kb=32, pages=[0, 1]),
+        main_rom_entry=RomEntry(file="main.rom", size_kb=32, pages=[0, 1]),
         logo_rom_entry=None,
-        sub_rom_entry=_RomEntry(file="sub.rom", size_kb=16, pages=[0]),
+        sub_rom_entry=RomEntry(file="sub.rom", size_kb=16, pages=[0]),
         has_ram_mapper=False,
         ram_size_kb=32,
         has_v9938=True,
         has_rtc=False,
         flat_ram_subslot=3,
         flat_ram_size_kb=64,
-        fdc=_FdcDef(
-            disk_rom_entry=_RomEntry(file="disk.rom", size_kb=16, pages=[1]),
+        fdc=FdcDef(
+            disk_rom_entry=RomEntry(file="disk.rom", size_kb=16, pages=[1]),
             controller=kind,
             connection_style=style,
             drives=2,
@@ -145,7 +146,7 @@ def test_restore_of_decoded_snapshot_restores_it(tmp_path: Path, kind: str) -> N
     _activity(fdc, 4)
     saved = _roundtrip(fdc.snapshot())
     _activity(fdc, 9)
-    fdc.restore(saved)
+    restore_state(fdc, saved)
     assert _roundtrip(fdc.snapshot()) == saved
 
 
@@ -171,16 +172,16 @@ def test_parse_then_apply_hashes_each_mounted_disk_once(
     identity once: apply_state re-checks nothing."""
     fdc = _fdc(tmp_path, kind)
     saved = _roundtrip(fdc.snapshot())
-    hashed: list[Path] = []
+    hashed: list[int] = []
     original = DskDiskImage.content_sha1
 
     def spy(image: DskDiskImage) -> str:
-        hashed.append(image.path)
+        hashed.append(id(image))
         return original(image)
 
     monkeypatch.setattr(DskDiskImage, "content_sha1", spy)
     fdc.apply_state(fdc.parse_state(saved, "fdc"))
-    assert sorted(hashed) == sorted(drive.image.path for drive in fdc.drives if drive.image)
+    assert sorted(hashed) == sorted(id(drive.image) for drive in fdc.drives if drive.image)
     assert len(hashed) == 2
 
 
@@ -219,12 +220,8 @@ def _other_disk_sha1(snap: dict[str, Any]) -> None:
     snap["drives"][1]["disk_sha1"] = "0" * 40
 
 
-def _other_disk_path(snap: dict[str, Any]) -> None:
-    snap["drives"][0]["disk_path"] = "/nonexistent/other.dsk"
-
-
 def _no_disk(snap: dict[str, Any]) -> None:
-    snap["drives"][1].update(disk_path=None, disk_size=None, disk_sha1=None)
+    snap["drives"][1].update(disk_size=None, disk_sha1=None)
 
 
 def _partial_identity(snap: dict[str, Any]) -> None:
@@ -248,7 +245,7 @@ def _assert_rejected_unchanged(
     selected = fdc.controller.drive
 
     with pytest.raises(ValueError, match=match):
-        fdc.restore(bad)
+        restore_state(fdc, bad, "fdc")
     with pytest.raises(ValueError, match=match):
         fdc.parse_state(bad, "fdc")
 
@@ -266,7 +263,7 @@ _COMMON_CASES: list[tuple[str, Mutation, str]] = [
     ("more_drives", _extra_drive, "drive count"),
     ("connection_key", _unknown_connection_key, r"connection_style has unknown keys"),
     ("sha1_mismatch", _other_disk_sha1, "(?i)disk mismatch"),
-    ("path_mismatch", _other_disk_path, "(?i)disk mismatch"),
+    ("saved_path", _set_drive(0, "disk_path", "a.dsk"), r"drives\[0\] has unknown keys"),
     ("mount_mismatch", _no_disk, "(?i)disk mount mismatch"),
     ("partial_identity", _partial_identity, r"drives\[1\]"),
 ]

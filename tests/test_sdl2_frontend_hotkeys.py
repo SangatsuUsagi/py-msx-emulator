@@ -13,22 +13,25 @@ import pytest
 from frontend.sdl2_frontend import (
     _CtrlComboState,
     _DiskList,
+    _EventContext,
     _handle_events,
     _HotkeyState,
     _LoopState,
     _run_frame,
+    _RunContext,
     _update_window_title,
     _window_title,
 )
 from frontend.sdl2_keyboard import KEY_MATRIX_INT, SdlKeyboard
 from host.input_state import InputState
-from msx.boundary import FrameOutput, RgbFrame
+from host.key_names import KEY_NAME_TO_CELL
+from host.media import DiskFiles
+from msx.boundary import FrameOutput, KeyboardLayout
 from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.interface import SonyPhilipsInterface
 from msx.fdc.wd2793 import WD2793
-from msx.input import KEY_NAME_TO_CELL, InputFrame
+from msx.input import InputFrame
 from msx.machine import Machine
-from msx.machine_spec import KeyboardLayout
 from tests.disk_factories import dsk_image
 
 
@@ -49,16 +52,21 @@ class _Event(ctypes.Structure):
 class _FakeSDL:
     """Just enough SDL2 constant/API surface for `_handle_events`.
 
-    Every constant here is actually read by `_handle_events` while processing
-    a KEYDOWN/KEYUP event (the sequential if/elif chain evaluates each
-    comparison in turn, even when it doesn't match) — this file's tests only
-    ever send KEYDOWN/KEYUP events, so joystick/controller `SDL_*` event-type
-    constants are intentionally omitted: that branch is never reached for
-    these event types, and `window`/`joy_manager` are passed as `None` by
-    `_Harness` on the same basis (only exercised by the fullscreen and
-    joystick branches; the fullscreen tests use `_FullscreenSDL`).
+    _handle_events reads every constant here, the joystick ones when it builds
+    its set. This file's tests only send KEYDOWN/KEYUP events.
     """
 
+    SDL_CONTROLLERDEVICEADDED = 100
+    SDL_CONTROLLERDEVICEREMOVED = 101
+    SDL_JOYDEVICEADDED = 102
+    SDL_JOYDEVICEREMOVED = 103
+    SDL_CONTROLLERBUTTONDOWN = 104
+    SDL_CONTROLLERBUTTONUP = 105
+    SDL_CONTROLLERAXISMOTION = 106
+    SDL_JOYBUTTONDOWN = 107
+    SDL_JOYBUTTONUP = 108
+    SDL_JOYAXISMOTION = 109
+    SDL_JOYHATMOTION = 110
     SDL_QUIT = 1
     SDL_KEYDOWN = 2
     SDL_KEYUP = 3
@@ -118,11 +126,11 @@ class _FakeMachine:
     def __init__(self) -> None:
         self.input = InputState()
         self.keyboard_layout = KeyboardLayout.INTERNATIONAL
-        self._debugger = None
         self.fdc: SonyPhilipsInterface | None = None
         self.reset_calls = 0
         self.shift_at_reset: bool | None = None
         self._sram_table: dict[object, object] = {}
+        self._error_text = b""
 
     def reset(self) -> None:
         self.reset_calls += 1
@@ -130,14 +138,18 @@ class _FakeMachine:
 
     # The real swap path, so host.media.swap_disk drives the FloppyDisk.
     mount_disk = Machine.mount_disk
+    eject_disk = Machine.eject_disk
     disk_mounted = Machine.disk_mounted
-    disk_path = Machine.disk_path
+    last_error_text = Machine.last_error_text
+    _fail = Machine._fail
     _mounted_image = Machine._mounted_image
+    _has_drive = Machine._has_drive
     dirty_media = Machine.dirty_media
     read_media = Machine.read_media
     mark_persisted = Machine.mark_persisted
     _media = Machine._media
     sram_media = Machine.sram_media
+    drive_count = Machine.drive_count
 
 
 def _asserted(matrix: list[int], cell: tuple[int, int]) -> bool:
@@ -171,10 +183,11 @@ class _Harness:
 
     def send(self, script: list[tuple[int, ...]]) -> None:
         sdl = self.sdl_cls(script, self._event)
-        self.running = _handle_events(
+        ctx = _EventContext(
             sdl, self._event, self.machine, self.keyboard, None, None, self.ctrl_combo,
-            _CTRL_FKEY_CELLS, "", b"", 0, 0, None, self.hotkeys,
+            _CTRL_FKEY_CELLS, "", None, self.hotkeys,
         )
+        self.running = _handle_events(ctx, b"", 0, 0)
 
     def keydown(self, sym: int, mod: int = 0, scancode: int = 0, repeat: int = 0) -> None:
         self.send([(_FakeSDL.SDL_KEYDOWN, sym, mod, scancode, repeat)])
@@ -578,7 +591,12 @@ def _dsk(path: Path) -> Path:
 
 def _disk_harness(tmp_path: Path, names: list[str], fdc: bool = True) -> _Harness:
     paths = [_dsk(tmp_path / n) for n in names]
-    h = _Harness(_HotkeyState(bindings=dict(_DISK_BINDINGS), disks=_DiskList(paths)))
+    # The frontend's file table starts with the drive A image build_machine
+    # mounted, as __main__ makes it from LoadedMachineConfig.disk_files.
+    files = DiskFiles({0: paths[0]}) if fdc and paths else DiskFiles()
+    h = _Harness(_HotkeyState(
+        bindings=dict(_DISK_BINDINGS), disks=_DiskList(paths, files=files),
+    ))
     if fdc:
         h.machine.fdc = SonyPhilipsInterface(WD2793(), [DiskDrive()], disk_rom=bytes(16384))
         if paths:
@@ -588,8 +606,11 @@ def _disk_harness(tmp_path: Path, names: list[str], fdc: bool = True) -> _Harnes
 
 def _drive_a(h: _Harness) -> str | None:
     assert h.machine.fdc is not None
-    image = h.machine.fdc.drives[0].image
-    return None if image is None else image.path.name
+    assert h.hotkeys is not None
+    if h.machine.fdc.drives[0].image is None:
+        return None
+    path = h.hotkeys.disks.files.path(0)
+    return None if path is None else path.name
 
 
 def _no_cell_asserted(h: _Harness) -> bool:
@@ -675,8 +696,9 @@ def test_disk_hotkeys_do_nothing_without_an_fdc(tmp_path: Path, shift: bool) -> 
 @pytest.mark.parametrize("shift", [False, True])
 def test_disk_hotkeys_do_nothing_with_an_empty_list(tmp_path: Path, shift: bool) -> None:
     h = _disk_harness(tmp_path, [])
-    assert h.machine.fdc is not None
+    assert h.machine.fdc is not None and h.hotkeys is not None
     h.machine.fdc.mount(dsk_image(_dsk(tmp_path / "x.dsk")), 0)
+    h.hotkeys.disks.files.set(0, tmp_path / "x.dsk")
     if shift:
         h.keydown(_FakeSDL.SDLK_LSHIFT)
     h.keydown(_FakeSDL.SDLK_F6)
@@ -810,7 +832,9 @@ def test_title_shows_an_ejected_drive(tmp_path: Path) -> None:
 def test_title_shows_an_image_from_outside_the_list(tmp_path: Path) -> None:
     h = _disk_harness(tmp_path, ["a.dsk", "b.dsk"])
     assert h.machine.fdc is not None and h.hotkeys is not None
+    # Another swap path (the debugger or the RPC) records the shared table.
     h.machine.fdc.swap(0, dsk_image(_dsk(tmp_path / "other.dsk")))
+    h.hotkeys.disks.files.set(0, tmp_path / "other.dsk")
     title = _window_title("Game", 60.0, h.machine, h.hotkeys, False)
     assert title.endswith("disk -/2: other.dsk")
 
@@ -988,8 +1012,9 @@ class _LoopMachine(_FakeMachine):
         self.frames += 1
         self.takes += 1
         self.cycle_count += 59736
-        video = RgbFrame(256, 212, bytes(256 * 212 * 3)) if render_video else None
-        return FrameOutput(video, b"\x10\x00" * _SAMPLES, self.frames)
+        if render_video:
+            return FrameOutput(256, 212, bytes(256 * 212 * 3), b"\x10\x00" * _SAMPLES, self.frames)
+        return FrameOutput(0, 0, b"", b"\x10\x00" * _SAMPLES, self.frames)
 
 
 class _LoopTimer:
@@ -1044,11 +1069,17 @@ class _Loop:
         )
 
     def step(self) -> None:
+        joy = _LoopJoy()
+        events = _EventContext(
+            self.sdl, _Event(), self.machine, SdlKeyboard(self.machine.input), None, joy,
+            _CtrlComboState(), _CTRL_FKEY_CELLS, "", None, self.hotkeys,
+        )
         _run_frame(
-            self.sdl, self.machine, SdlKeyboard(self.machine.input), None, None, self.state,
-            _LoopJoy(), _CtrlComboState(),
-            _CTRL_FKEY_CELLS, "", None, _Event(), self.rpc, self.timer, "auto",
-            self.audio_dev, 3, self.hotkeys,
+            _RunContext(
+                events, self.sdl, self.machine, None, None, joy, self.rpc, self.timer, "auto",
+                self.audio_dev, 3, self.hotkeys,
+            ),
+            self.state,
         )
 
 

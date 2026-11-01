@@ -1,13 +1,14 @@
 """Tests for scanline-based run_frame() and level-based IRQ."""
+from msx.boundary import OUTPUT_HEIGHT, STOP_BREAKPOINT, VideoStandard
 from msx.cpu.z80 import Z80
 from msx.machine import Machine
 from msx.mapper import FlatMapper
 from msx.memory import Memory
-from msx.vdp._geometry import ACTIVE_H, OUTPUT_H, VideoStandard, pad_rows
+from msx.vdp._geometry import ACTIVE_H, cycles_per_frame, pad_rows
 from msx.vdp.v9938 import V9938
-from tests.factories import make_machine_msx2
+from tests.factories import make_machine_msx2, watch_scanlines
 
-NTSC_CYCLES = VideoStandard.NTSC.cycles_per_frame
+NTSC_CYCLES = cycles_per_frame(VideoStandard.NTSC)
 
 _DUMMY_ROM = bytes(32768)
 _DUMMY_EXTROM = bytes(16384)
@@ -74,7 +75,7 @@ def _make_cpu_with_rom(rom: list[int]) -> Z80:
     mem = Memory(
         rom=bytes(rom + [0x00] * (32768 - len(rom))),
         ram=bytearray(32768),
-        _mapper=FlatMapper(None),
+        mapper1=FlatMapper(None),
     )
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.SP = 0xFFF0
@@ -219,67 +220,42 @@ def test_vblank_isr_vram_write_lands_on_the_next_frame() -> None:
     vdp.regs[0] = 0x06  # R#0 M4|M3 -> G4
     vdp.regs[1] = 0x40  # R#1 BL: display enabled
 
-    def on_scanline(line: int) -> None:
+    def after_scanline(line: int) -> None:
         if line == vdp.vblank_start_line + 1:
             # End of the first scanline after the render split — the VBlank ISR
             # has had one line to run, and its VRAM writes must not be visible
             # in the frame that was just rendered.
             vdp.vram[0] = 0x55  # G4: two pixels of palette index 5
 
-    vdp.on_scanline = on_scanline
+    watch_scanlines(vdp, after_scanline)
 
     first = machine.run_frame()
     second = machine.run_frame()
 
-    # A 192-line frame is centred in the constant OUTPUT_H-line output buffer.
+    # A 192-line frame is centred in the constant OUTPUT_HEIGHT-line output buffer.
     top_left = pad_rows(ACTIVE_H) * 256
-    assert len(first) == 256 * OUTPUT_H
+    assert len(first) == 256 * OUTPUT_HEIGHT
     assert first[top_left] == 0
     assert second[top_left] == 5
 
 
-def test_pause_during_active_display_skips_the_rest_of_the_frame() -> None:
-    """A breakpoint mid-display stops the frame at the break point: the loop
-    neither finishes the active display nor runs the VBlank segment."""
+def test_a_break_during_active_display_stops_the_call_there() -> None:
+    """A breakpoint mid-display stops the call at the break point: it
+    neither finishes the active display nor runs the VBlank segment (the
+    frame continues on the next call)."""
     machine = _make_msx2()
     vdp = machine.vdp
     assert isinstance(vdp, V9938)
 
     lines: list[int] = []
-    vdp.on_scanline = lines.append
+    watch_scanlines(vdp, lines.append)
 
-    machine.set_pause_hook(lambda reason, pc: None)
     machine.set_breakpoints([_MID_DISPLAY_PC])
     machine.run_frame(skip_render=True)
 
-    assert machine.is_paused
+    assert machine.last_stop().reason == STOP_BREAKPOINT
     # Non-vacuous: the frame really did run into the active display, and then
     # stopped there — no scanline of the VBlank segment was begun.
     assert lines
     assert max(lines) < vdp.vblank_start_line
     assert machine.cycle_count < machine.cycles_per_frame
-
-
-def test_ctrl_c_during_active_display_skips_the_vblank_segment() -> None:
-    """Ctrl-C reaches the loops as an exception, not through the pause hook's
-    _pause_requested flag; it must still stop the frame instead of falling
-    through to the post-render VBlank segment."""
-    machine = _make_msx2()
-    vdp = machine.vdp
-    assert isinstance(vdp, V9938)
-
-    lines: list[int] = []
-    interrupt_at = 100
-
-    def on_scanline(line: int) -> None:
-        lines.append(line)
-        if line == interrupt_at:
-            raise KeyboardInterrupt
-
-    vdp.on_scanline = on_scanline
-    # A pause hook is what makes _on_frame_interrupt handle Ctrl-C instead of
-    # re-raising; no breakpoints, so this runs on the fast loop.
-    machine.set_pause_hook(lambda reason, pc: None)
-    machine.run_frame(skip_render=True)
-
-    assert max(lines) == interrupt_at

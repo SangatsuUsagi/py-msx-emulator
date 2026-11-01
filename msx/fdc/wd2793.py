@@ -387,10 +387,6 @@ class WD2793:
             "step_dir": check_choice(fields["step_dir"], f"{label}.step_dir", (-1, 1)),
         }
 
-    def restore(self, state: dict[str, object]) -> None:
-        """Restore register/phase/buffer state produced by snapshot()."""
-        self.apply_state(self.parse_state(state, "wd2793"))
-
     def apply_state(self, state: WD2793State) -> None:
         """Assign a state returned by parse_state()."""
         self.command_reg = state["command_reg"]

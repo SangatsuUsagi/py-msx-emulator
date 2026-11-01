@@ -1,7 +1,10 @@
 """Tests for msx.ram_mapper.RamMapper."""
 import pytest
 
+from msx.boundary import BANK_WINDOW_16K, WINDOW_NONE, WINDOW_PAGE
+from msx.mapper import NO_BANK, BankView
 from msx.ram_mapper import RamMapper
+from tests.factories import restore_state
 
 # ---------------------------------------------------------------------------
 # Buffer size and initial state
@@ -196,8 +199,29 @@ def test_minimum_size_16kb_single_bank() -> None:
     assert rm.read_port(0xFF) == 0xFF  # 0 | ~0 & 0xFF
 
 
+def test_bank_past_non_power_of_two_size_wraps() -> None:
+    # memory-ram-mapper "A bank past a non-power-of-two size wraps": 48 KB is
+    # 3 banks, bank_mask 3; register value 3 selects bank 3 & 2 = 2.
+    rm = RamMapper(size_kb=48)
+    rm.ram[2 * 0x4000] = 0x5A
+    rm.write_port(0xFC, 0x03)
+    assert rm.read(0x0000) == 0x5A
+    assert rm.debug_bank(0) == BankView(BANK_WINDOW_16K, (WINDOW_PAGE, WINDOW_NONE), (2, 0))
+    assert rm.read_port(0xFC) == 0xFF  # 0x03 | 0xFC
+
+
+@pytest.mark.parametrize("size_kb", [48, 80, 96, 112, 208])
+def test_every_register_value_stays_in_ram(size_kb: int) -> None:
+    # A restored register may hold any byte; every value maps inside ram.
+    rm = RamMapper(size_kb=size_kb)
+    for value in range(0x100):
+        rm.banks[0] = value
+        rm.write(0x3FFF, 0x11)
+        assert rm.read(0x3FFF) == 0x11
+
+
 # ---------------------------------------------------------------------------
-# Mapper protocol: kind, snapshot/restore, debug_bank_info
+# Mapper protocol: kind, snapshot/restore, debug_bank
 # ---------------------------------------------------------------------------
 
 def test_kind_is_ram_mapper() -> None:
@@ -212,7 +236,7 @@ def test_snapshot_restore_round_trip() -> None:
     state = rm.snapshot()
 
     fresh = RamMapper(size_kb=256)
-    fresh.restore(state)
+    restore_state(fresh, state)
     assert fresh.banks == [1, 2, 3, 4]
     assert fresh.ram == rm.ram
 
@@ -220,25 +244,24 @@ def test_snapshot_restore_round_trip() -> None:
 def test_restore_rejects_wrong_bank_count() -> None:
     rm = RamMapper()
     with pytest.raises(ValueError):
-        rm.restore({"banks": [0, 0, 0], "ram": bytes(len(rm.ram))})
+        restore_state(rm, {"banks": [0, 0, 0], "ram": bytes(len(rm.ram))})
 
 
 def test_restore_rejects_wrong_ram_length() -> None:
     rm = RamMapper(size_kb=256)
     with pytest.raises(ValueError):
-        rm.restore({"banks": [0, 0, 0, 0], "ram": bytes(16384)})
+        restore_state(rm, {"banks": [0, 0, 0, 0], "ram": bytes(16384)})
 
 
-def test_debug_bank_info_describes_page_bank() -> None:
+def test_debug_bank_describes_page_bank() -> None:
+    # memory-ram-mapper "debug_bank_info describes the page's own bank".
     rm = RamMapper()
     rm.banks[2] = 5
-    info = rm.debug_bank_info(2)
-    assert info is not None
-    assert "5" in info
-    assert f"{5 * 0x4000:05X}" in info
+    assert rm.debug_bank(2) == BankView(
+        BANK_WINDOW_16K, (WINDOW_PAGE, WINDOW_NONE), (5, 0))
 
 
-def test_debug_bank_info_out_of_range_page_is_none() -> None:
+def test_debug_bank_out_of_range_page_is_none() -> None:
     rm = RamMapper()
-    assert rm.debug_bank_info(4) is None
-    assert rm.debug_bank_info(-1) is None
+    assert rm.debug_bank(4) == NO_BANK
+    assert rm.debug_bank(-1) == NO_BANK

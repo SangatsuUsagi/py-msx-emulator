@@ -21,9 +21,9 @@ MCP client  <-- MCP (stdio) -->  tools/mcp_server.py  <-- Unix socket -->  host/
 
 エミュレータプロセス内部では、`DebugServer`（`host/rpc_server.py`）がソケットの accept/read ループをバックグラウンドのデーモンスレッドで実行します。リクエストはそのスレッドでパースされますが、実行はされません。各リクエストはキューに積まれ、ホストループが `DebugServer.drain()` を呼び出したとき（1フレームに1回、およびデバッガで一時停止している間は継続的に）にエミュレータのメインスレッドで処理されます。これにより CPU/VDP のホットパスはロックフリーのままとなり、RPC ハンドラが CPU ステップや VDP レンダリングと並行して実行されることはありません。
 
-1つ例外があります。`cpu.continue_sync` は呼び出し元のソケットスレッドを次の一時停止イベントまでブロックするため、キューに積まれずそのスレッド上でインラインに処理されます（`DebugServer._continue_sync` を参照）。
+1つ例外があります。`cpu.continue_sync` は呼び出し元のソケットスレッドを次の一時停止イベントまでブロックするため、キューに積まれずそのスレッド上でインラインに処理されます（`DebugServer._continue_sync` を参照）。このスレッドはコアを呼びません。エミュレータのスレッドが呼び出しを起こす前に書いた一時停止の記録から応答します。
 
-コアのエミュレータ（`machine`、`cpu`、`vdp`、`memory`）は RPC について一切関知しません。`host/rpc_server.py` はこの機能のために `socket`・`json`・`threading` を使用する唯一の場所です。コアが公開するのは汎用の一時停止フック（`Machine.set_pause_hook`）だけであり、RPC サーバーはそこにインストールされます。このレイヤー構造が Python 以外への移植先にどう対応するかは、`host/rpc_server.py` 冒頭の移植性に関する注記を参照してください。
+コアのエミュレータ（`machine`、`cpu`、`vdp`、`memory`）は RPC について一切関知しません。`host/rpc_server.py` はこの機能のために `socket`・`json`・`threading` を使用する唯一の場所です。コアが RPC サーバーを呼ぶことはありません。ブレークすると `step_frame` が停止理由を返し、フロントエンドのループがそれを `DebugServer.on_core_stop` に渡します（`host/debugger/stop.py`）。このレイヤー構造が Python 以外への移植先にどう対応するかは、`host/rpc_server.py` 冒頭の移植性に関する注記を参照してください。
 
 ---
 
@@ -56,7 +56,7 @@ RPC は Unix ドメインソケットを使うため、macOS か Linux が必要
 接続時、サーバーはバナー通知を送信します。
 
 ```json
-{"notification": "connected", "version": "1.0", "emulator": "py-msx-emulator"}
+{ "notification": "connected", "version": "1.0", "emulator": "py-msx-emulator" }
 ```
 
 ### リクエストとレスポンス
@@ -76,13 +76,13 @@ RPC は Unix ドメインソケットを使うため、macOS か Linux が必要
 
 ### エラーコード
 
-| コード | 意味 |
-|------|---------|
-| `-32700` | パースエラー（不正な JSON） |
-| `-32601` | メソッドが見つからない |
-| `-32602` | 不正な params |
-| `1` | エミュレータが一時停止していることが必要な操作 |
-| `3` | エミュレータ内部エラー。後述の dispatch timeout を含む |
+| コード   | 意味                                                       |
+| -------- | ---------------------------------------------------------- |
+| `-32700` | パースエラー（不正な JSON）                                |
+| `-32601` | メソッドが見つかりません                                   |
+| `-32602` | 不正な params                                              |
+| `1`      | エミュレータが一時停止していることが必要な操作             |
+| `3`      | エミュレータ内部エラー。後述の dispatch timeout を含みます |
 
 （`2` は未使用——対応するコードは定義されていません。）
 
@@ -105,21 +105,21 @@ RPC は Unix ドメインソケットを使うため、macOS か Linux が必要
 
 ## メソッドリファレンス
 
-全体で使われる `reason` の値：`"user_request"`、`"breakpoint"`、`"watchpoint"`、`"step_complete"`。
+全体で使われる `reason` の値：`"user_request"`、`"breakpoint"`、`"watchpoint"`、`"step_complete"`です。
 
 ### デバッガ制御
 
 - **`debugger.status`** → `{ paused, pc, reason }`。状態を変更せずに報告します。
-- **`debugger.pause`** → `{ paused: true, pc, reason: "user_request" }`。Ctrl+C を押すのと同等です。
+- **`debugger.pause`** → `{ paused: true, pc, reason: "user_request" }`。ターミナルでの Ctrl+C はこれと同じではありません。Ctrl+C はデバッガの REPL を開き、REPL から再開するまでサーバーは要求を処理しません。
 
 ### CPU / 実行
 
-- **`cpu.step`** *（一時停止が必要）* → `{ pc, t_states, mnemonic, registers }`。Z80 命令を1つだけ実行します。
-- **`cpu.continue`** *（一時停止が必要）* → `{ running: true }`。再開して即座に返ります（非ブロッキング）。
-- **`cpu.continue_sync`** *（一時停止が必要）* — params: `{ timeout_ms? }`（デフォルト 5000）。再開し、次の一時停止イベントまたはタイムアウトまでブロックします。`{ paused: true, reason, pc, registers }` または `{ paused: false, reason: "timeout" }` を返します。エミュレータループを止めずにブロックできるよう、ソケットスレッド上で処理されます。
+- **`cpu.step`** _（一時停止が必要）_ → `{ pc, t_states, mnemonic, registers }`。Z80 命令を1つだけ実行します。
+- **`cpu.continue`** _（一時停止が必要）_ → `{ running: true }`。再開して即座に返ります（非ブロッキング）。ブレークで止まったフレームは、止まった位置から続きを実行します。
+- **`cpu.continue_sync`** _（一時停止が必要）_ — params: `{ timeout_ms? }`（デフォルト 5000）。再開し、次の一時停止イベントまたはタイムアウトまでブロックします。`{ paused: true, reason, pc, registers }` または `{ paused: false, reason: "timeout" }` を返します。エミュレータループを止めずにブロックできるよう、ソケットスレッド上で処理されます。
 - **`cpu.get_registers`** → `{ registers }`。どの状態でも動作します。
 
-`registers` オブジェクト：`AF`、`BC`、`DE`、`HL`、`IX`、`IY`、`SP`、`PC`（`0xXXXX` の16進文字列）、シャドウレジスタ `AF'`/`BC'`/`DE'`/`HL'`、`I`/`R`（`0xXX`）、`IFF1`/`IFF2`（真偽値）、`IM`（整数）。
+`registers` オブジェクト：`AF`、`BC`、`DE`、`HL`、`IX`、`IY`、`SP`、`PC`（`0xXXXX` の16進文字列）、シャドウレジスタ `AF'`/`BC'`/`DE'`/`HL'`、`I`/`R`（`0xXX`）、`IFF1`/`IFF2`（真偽値）、`IM`です（整数）。
 
 ### ブレークポイント / ウォッチポイント
 
@@ -129,13 +129,15 @@ RPC は Unix ドメインソケットを使うため、macOS か Linux が必要
 - **`debug.set_watchpoint`** — params: `{ address, mode? }`（`"r"` / `"w"` / `"rw"`、デフォルト `"rw"`）→ `{ id, address, mode, active }`。
 - **`debug.remove_watchpoint`** — params: `{ id }` → `{ removed }`。
 
-アドレスは JSON の整数または16進文字列（`"0xC000"` あるいは `"C000"`）のどちらでも指定できます。実機側は最大4個のブレークポイントと4個のウォッチポイントしか保持しません（[インタラクティブデバッガ](debugger_ja.md)の `ba`/`wa` の上限と同じ）。5個目の `debug.set_*` 呼び出しも新しい `id` を返しますが、実際に有効化されるのは（割り当て順で）最初の4個だけです。
+アドレスは JSON の整数または16進文字列（`"0xC000"` あるいは `"C000"`）のどちらでも指定できます。実機側は最大4個のブレークポイントと4個のウォッチポイントしか保持しません（[インタラクティブデバッガ](debugger_ja.md)の `ba`/`wa` の上限と同じ）。5個目の `debug.set_*` 呼び出しは invalid params のエラー（`-32602`）を返し、設定済みの4個はそのまま有効です。
+
+RPC のメソッドは、`--break-point`、`--watch-point` オプションや `ba`/`wa` コマンドと、実機側の同じ設定を共有します。追加と削除は自分のエントリだけを変え、4個の上限はすべてのエントリを数えます。実機側は 1 つのアドレスに 1 つのエントリしか持ちません。そのため、削除するとデバッガが同じアドレスに設定したエントリも消えます。また、ウォッチ中のアドレスにウォッチポイントを設定すると、そのアドレスにモードが加わります。`debug.list_breakpoints` の `active` は、アドレスが設定されていないとき（たとえばデバッガの `br` で消した後）`false` です。
 
 ### メモリ
 
-- **`memory.read`** — params: `{ address, length? }`（デフォルト 16）→ `{ address, data }`。`data` はスペース区切りの16進バイト列です。
-- **`memory.write`** *（一時停止が必要）* — params: `{ address, data }`（16進バイト、例：`"3E 01 C9"`）→ `{ written }`。
-- **`memory.read_vram`** — params: `{ address, length? }`（デフォルト 32）→ `{ address, data }`。VRAM サイズ内でラップします。
+- **`memory.read`** — params: `{ address, length? }`（デフォルト 16）→ `{ address, data }`。`data` はスペース区切りの16進バイト列です。長さは 0〜0x10000 です。それ以外の長さは invalid-params エラー（`-32602`）になります。
+- **`memory.write`** _（一時停止が必要）_ — params: `{ address, data }`（16進バイト、例：`"3E 01 C9"`）→ `{ written }`。
+- **`memory.read_vram`** — params: `{ address, length? }`（デフォルト 32）→ `{ address, data }`。アドレスは VRAM サイズ（0x4000 か 0x20000）内でラップするので、MSX2 では 0xFFFF より上のアドレスで 64 KB より上の VRAM を読めます。そのとき結果の `address` は 16進 5 桁（`0x1C000`）です。長さは 0〜VRAM サイズです。それ以外の長さは invalid-params エラー（`-32602`）になります。
 - **`memory.disassemble`** — params: `{ address, count? }`（デフォルト 10）→ `{ instructions: [{ address, bytes, mnemonic }] }`。
 
 ### VDP
@@ -199,7 +201,7 @@ params は `key=value` の組（int/bool/文字列に変換されます）また
 - `memory_read(address, length=16)`、`memory_write(address, data_hex)`（一時停止が必要）、`memory_disassemble(address, count=10)`、`memory_read_vram(address, length=32)`
 - `vdp_get_registers`、`vdp_get_status`
 - `input_press_key(key, duration_ms=100)`、`input_joystick(port=1, up=, down=, left=, right=, trigger_a=, trigger_b=)`、`input_joystick_release(port=1)`
-- `screen_capture(scale=1)` — テキストだけでなく実際の画像を返す
+- `screen_capture(scale=1)` — テキストだけでなく実際の画像を返します
 - `state_save(path="")`、`state_load(path)`
 - `fdd_swap(drive, path="")`
 
@@ -259,11 +261,11 @@ MCP サーバーを登録済みであれば、Claude に `msx-emulator` のツ�
 
 典型的なデバッグの流れは次のようになります。
 
-1. `emulator_pause` → PC と理由を確認する。
-2. `memory_disassemble` / `cpu_get_registers` → 状態を確認する。
-3. `debug_set_breakpoint` + `cpu_continue_until_pause` → 注目したい箇所まで実行する。
-4. `screen_capture` → 描画内容を視覚的に確認する。
-5. `cpu_continue` → 通常の実行を再開する。
+1. `emulator_pause` → PC と理由を確認します。
+2. `memory_disassemble` / `cpu_get_registers` → 状態を確認します。
+3. `debug_set_breakpoint` + `cpu_continue_until_pause` → 注目したい箇所まで実行します。
+4. `screen_capture` → 描画内容を視覚的に確認します。
+5. `cpu_continue` → 通常の実行を再開します。
 
 ---
 

@@ -10,10 +10,12 @@ from typing import Any, Callable
 
 import pytest
 
+from msx.boundary import FMPAC_SRAM_SIZE
 from msx.canonical_json import to_jsonable
-from msx.fmpac import SRAM_SIZE, FmPac
+from msx.fmpac import FmPac
 from msx.opll import Opll
 from msx.snapshot_schema import SchemaError
+from tests.factories import restore_state
 
 _BANK_SIZE = 0x4000
 
@@ -85,7 +87,7 @@ def test_restore_from_parsed_snapshot_is_bit_identical(fmpac: FmPac) -> None:
     snap = fmpac.snapshot()
     expected = bytes(fmpac.opll.generate_samples(400))
     other = FmPac(rom=_bank_rom(), opll=Opll())
-    other.restore(dict(snap))
+    restore_state(other, dict(snap))
     assert other.snapshot() == snap
     assert bytes(other.opll.generate_samples(400)) == expected
     assert other.read(0x4000) == 0xA0  # SRAM re-enabled by the restored magic
@@ -102,9 +104,9 @@ def _assert_rejected(fmpac: FmPac, mutate: Callable[[dict[str, Any]], None], pat
     with pytest.raises(ValueError, match=path):
         fmpac.parse_state(bad, "state")
     with pytest.raises(ValueError, match=path):
-        fmpac.restore(bad)
+        restore_state(fmpac, bad)
     assert fmpac.snapshot() == pre
-    assert len(fmpac.sram_image) == SRAM_SIZE
+    assert len(fmpac.sram_image) == FMPAC_SRAM_SIZE
 
 
 def test_short_sram_rejected_without_resizing(fmpac: FmPac) -> None:
@@ -245,7 +247,7 @@ def test_opll_restore_rejects_without_mutating() -> None:
     bad: dict[str, Any] = copy.deepcopy(dict(pre))
     bad["patch_number"][8] = 19
     with pytest.raises(SchemaError, match=r"opll\.patch_number\[8\]"):
-        opll.restore(bad)
+        restore_state(opll, bad, "opll")
     assert opll.snapshot() == pre
 
 

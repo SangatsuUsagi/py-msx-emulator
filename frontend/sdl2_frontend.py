@@ -4,6 +4,7 @@ import ctypes
 import sys
 import time
 from collections.abc import Callable, Mapping
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn, Protocol, cast
@@ -11,9 +12,6 @@ from typing import TYPE_CHECKING, Any, NoReturn, Protocol, cast
 from frontend.audio_filter import BiquadLowPass
 from frontend.frame_timer import FrameTimer
 from frontend.sdl2_joystick import (
-    _DEFAULT_GC_BUTTON_BIT,
-    _DEFAULT_GC_TURBO_BUTTON_BIT,
-    TURBO_PERIOD,
     JoystickManager,
 )
 from frontend.sdl2_keyboard import (
@@ -25,18 +23,24 @@ from frontend.sdl2_keyboard import (
     resolve_keyboard_joy_map,
 )
 from host.app_config import AppConfig
+from host.debugger.stop import handle_stop, sigint_requests_break
 from host.input_state import InputState
-from host.media import swap_disk
+from host.key_names import KEY_NAME_TO_CELL
+from host.media import DiskFiles, swap_disk
 from host.screenshot import save_screenshot
 from host.state_files import load_state, resume_state, save_state
-from msx.boundary import RgbFrame
-from msx.input import KEY_NAME_TO_CELL
-from msx.machine import Machine
-from msx.mouse import MouseDevice
-from msx.psg import SAMPLE_RATE, JoystickPort
-from msx.vdp._geometry import OUTPUT_H
+from msx.boundary import (
+    AUDIO_SAMPLE_RATE,
+    OUTPUT_HEIGHT,
+    STOP_NONE,
+    KeyboardLayout,
+    RgbFrame,
+    VideoStandard,
+)
+from msx.core_api import CoreApi
 
 if TYPE_CHECKING:
+    from host.debugger.prompt import Debugger
     from host.rpc_server import DebugServer
 
 _APP_NAME = "py-msx-emulator"
@@ -44,11 +48,12 @@ _SCREEN_WIDTH = 256
 # Every rendered frame is padded to a constant output height (see
 # msx/vdp/_geometry.py), so the window/texture height is fixed regardless of R#9
 # LN (192↔212). Only the width still varies (256, or 512 for SCREEN 6/7).
-_SCREEN_HEIGHT = OUTPUT_H
+_SCREEN_HEIGHT = OUTPUT_HEIGHT
 _MAX_FRAME_SKIP: int = 4
 
-# Audio output format: the core's mix rate (msx.psg.SAMPLE_RATE), mono S16LE.
-# Machine.run_frame() mixes each frame; the frontend only queues it.
+# Audio output format: the core's mix rate (AUDIO_SAMPLE_RATE), mono S16LE.
+# step_frame() mixes each frame's audio (FrameOutput.audio); the frontend
+# only filters and queues it.
 _AUDIO_CHANNELS: int = 1
 _AUDIO_BUFFER_SAMPLES: int = 1024
 
@@ -56,10 +61,23 @@ _AUDIO_BUFFER_SAMPLES: int = 1024
 # more than this ratio (5% slack).
 _FRAME_OVERRUN_RATIO: float = 1.05
 
-def _target_fps_for(machine: Machine) -> float:
+def _target_fps_for(machine: CoreApi) -> float:
     """Real-time pacing target for this machine: 60 fps NTSC, 50 fps PAL
-    (VideoStandard.target_fps)."""
-    return machine.video_standard.target_fps
+    (VideoStandard.target_fps of the core's int, which the frame timer
+    paces in float)."""
+    try:
+        return float(VideoStandard(machine.video_standard).target_fps)
+    except ValueError:  # a value this host does not know: pace as NTSC
+        return float(VideoStandard.NTSC.target_fps)
+
+
+def _keyboard_layout(value: int) -> KeyboardLayout:
+    """The core's layout value, or INTERNATIONAL for one this host does not
+    know."""
+    try:
+        return KeyboardLayout(value)
+    except ValueError:
+        return KeyboardLayout.INTERNATIONAL
 
 
 class _InitSdlApi(Protocol):
@@ -67,8 +85,8 @@ class _InitSdlApi(Protocol):
     audio-device creation and the cascading-failure teardown. Narrower than
     the full SDL2 API -- declares only what these two functions call.
     Part of the staged SDL2 FFI Protocol typing
-    (openspec/changes/sdl2-ffi-protocol-typing); composed into `SDL2Api`
-    once all stages land.
+    (openspec/changes/archive/2026-08-15-sdl2-ffi-protocol-typing); composed
+    into `SDL2Api`.
     """
     SDL_INIT_VIDEO: int
     SDL_INIT_AUDIO: int
@@ -175,7 +193,7 @@ def _init_sdl(
     # Open SDL2 audio device (mono, 44100 Hz, signed 16-bit LE).
     # Fall back gracefully if unavailable — video and input remain functional.
     desired = sdl2.SDL_AudioSpec(
-        SAMPLE_RATE, sdl2.AUDIO_S16LSB, _AUDIO_CHANNELS, _AUDIO_BUFFER_SAMPLES
+        AUDIO_SAMPLE_RATE, sdl2.AUDIO_S16LSB, _AUDIO_CHANNELS, _AUDIO_BUFFER_SAMPLES
     )
     audio_dev = sdl2.SDL_OpenAudioDevice(None, 0, desired, None, 0)
     if audio_dev == 0:
@@ -266,9 +284,12 @@ class _ShiftComboState:
 
 @dataclass
 class _DiskList:
-    """Drive A images cycled by the disk hotkeys (`--fdd1` / config `fdd1`)."""
+    """Drive A images cycled by the disk hotkeys (`--fdd1` / config `fdd1`),
+    and the file of each drive's disk, shared with the debugger and the RPC
+    server (host/media.py DiskFiles)."""
     paths: list[Path]
     index: int = 0
+    files: DiskFiles = field(default_factory=DiskFiles)
 
 
 @dataclass
@@ -291,6 +312,8 @@ class _HotkeyState:
     # Output low-pass applied to the machine's PCM; one instance so its state
     # carries across frames. The reset action clears it with the machine.
     audio_filter: BiquadLowPass = field(default_factory=BiquadLowPass)
+    # The debug REPL a stop or the Ctrl-C hotkey opens, when one is given.
+    debugger: Debugger | None = None
 
     @property
     def fast_forward(self) -> bool:
@@ -301,7 +324,7 @@ class _EventApi(Protocol):
     """The `sdl2.*` surface event polling and dispatch use: `_handle_events`,
     `_handle_hotkey_keydown`, `_handle_ctrl_combo_keydown`,
     `_handle_ctrl_combo_keyup`. Part of the staged SDL2 FFI Protocol typing
-    (openspec/changes/sdl2-ffi-protocol-typing)."""
+    (openspec/changes/archive/2026-08-15-sdl2-ffi-protocol-typing)."""
     SDL_QUIT: int
     SDL_KEYDOWN: int
     SDL_KEYUP: int
@@ -321,8 +344,7 @@ class _EventApi(Protocol):
     SDL_MOUSEBUTTONUP: int
     SDL_BUTTON_LEFT: int
     SDL_BUTTON_RIGHT: int
-    # Joystick/GameController device and input event types (see
-    # _JOYSTICK_EVENT_TYPES_ATTRS below, resolved dynamically via getattr).
+    # Joystick/GameController device and input event types (_handle_events).
     SDL_CONTROLLERDEVICEADDED: int
     SDL_CONTROLLERDEVICEREMOVED: int
     SDL_JOYDEVICEADDED: int
@@ -414,37 +436,37 @@ def _handle_ctrl_combo_keyup(
     return False
 
 
-def _mount_disk(machine: Machine, path: Path) -> bool:
+def _mount_disk(machine: CoreApi, disks: _DiskList, path: Path) -> bool:
     """Swap `path` into drive A via `host.media.swap_disk` (outgoing image
     written back, disk change, transfer abort). Returns False, leaving the
     drive as it was, if the image cannot be opened."""
-    assert machine.fdc is not None
+    assert machine.drive_count() > 0
     try:
-        swap_disk(machine, 0, path)
+        swap_disk(machine, disks.files, 0, path)
     except (ValueError, OSError) as exc:
         print(f"disk swap failed: {exc}", file=sys.stderr)
         return False
     return True
 
 
-def _disk_next(machine: Machine, disks: _DiskList) -> None:
+def _disk_next(machine: CoreApi, disks: _DiskList) -> None:
     """F6: mount the next drive A image, wrapping to the first."""
-    if machine.fdc is None or not disks.paths:
+    if machine.drive_count() == 0 or not disks.paths:
         return
     next_index = (disks.index + 1) % len(disks.paths)
-    if _mount_disk(machine, disks.paths[next_index]):
+    if _mount_disk(machine, disks, disks.paths[next_index]):
         disks.index = next_index
 
 
-def _disk_toggle_eject(machine: Machine, disks: _DiskList) -> None:
+def _disk_toggle_eject(machine: CoreApi, disks: _DiskList) -> None:
     """Shift+F6: eject drive A, or re-insert the current list image when the
     drive is empty (whoever emptied it -- this, the RPC or the debugger)."""
-    if machine.fdc is None or not disks.paths:
+    if machine.drive_count() == 0 or not disks.paths:
         return
     if not machine.disk_mounted(0):
-        _mount_disk(machine, disks.paths[disks.index])
+        _mount_disk(machine, disks, disks.paths[disks.index])
     else:
-        swap_disk(machine, 0, None)
+        swap_disk(machine, disks.files, 0, None)
 
 
 def _toggle_fullscreen(sdl2: _EventApi, window: object, hotkeys: _HotkeyState) -> None:
@@ -455,7 +477,7 @@ def _toggle_fullscreen(sdl2: _EventApi, window: object, hotkeys: _HotkeyState) -
 
 
 def _run_hotkey_action(
-    sdl2: _EventApi, action: str, sym: int, machine: Machine, window: object,
+    sdl2: _EventApi, action: str, sym: int, machine: CoreApi, window: object,
     hotkeys: _HotkeyState,
 ) -> None:
     if action == "disk_next":
@@ -478,7 +500,7 @@ def _run_hotkey_action(
 
 
 def _handle_bound_hotkey_keydown(
-    sdl2: _EventApi, sym: int, repeat: int, machine: Machine, keyboard: SdlKeyboard,
+    sdl2: _EventApi, sym: int, repeat: int, machine: CoreApi, keyboard: SdlKeyboard,
     window: object, ctrl_combo: _CtrlComboState, hotkeys: _HotkeyState,
 ) -> bool:
     """Shift tracking and bound-hotkey KEYDOWN handling. Returns True if `sym`
@@ -541,8 +563,9 @@ def _handle_bound_hotkey_keyup(
 
 
 def _handle_hotkey_keydown(
-    sdl2: _EventApi, sym: int, mod: int, machine: Machine,
+    sdl2: _EventApi, sym: int, mod: int, machine: CoreApi,
     game_title: str, rgb_buf: bytes, tex_w: int, tex_h: int, running: bool,
+    debugger: Debugger | None = None, disk_files: DiskFiles | None = None,
 ) -> tuple[bool, bool]:
     """Fixed application meta-hotkey KEYDOWN handling: Ctrl-Q quit, F8 save
     state, F9 load state, F10 screenshot, Ctrl-C debugger break (the
@@ -557,6 +580,10 @@ def _handle_hotkey_keydown(
     ESC is deliberately not claimed here: it has its own MSX matrix cell
     (row 7, column 2) and reaches it through the plain key_down fallback,
     like any other ordinary key.
+
+    With `debugger` None, Ctrl-C is no debugger break and falls through to
+    the MSX key. With `disk_files` None, F8 writes no dirty disk back before
+    the save.
     """
     # PORT-NOTE: `mod & sdl2.KMOD_CTRL` relies on Python's implicit
     #   int-to-bool truthiness (0 is falsy, any nonzero bit pattern truthy).
@@ -571,7 +598,7 @@ def _handle_hotkey_keydown(
     if sym == sdl2.SDLK_q and (mod & sdl2.KMOD_CTRL):
         return True, False
     if sym == sdl2.SDLK_F8:
-        save_state(machine, RgbFrame(tex_w, tex_h, rgb_buf), game_title)
+        save_state(machine, RgbFrame(tex_w, tex_h, rgb_buf), game_title, disk_files)
         return True, running
     if sym == sdl2.SDLK_F9:
         try:
@@ -582,34 +609,10 @@ def _handle_hotkey_keydown(
     if sym == sdl2.SDLK_F10:
         save_screenshot(rgb_buf, tex_w, tex_h)
         return True, running
-    if sym == sdl2.SDLK_c and (mod & sdl2.KMOD_CTRL) and machine.enter_debugger_if_attached():
+    if sym == sdl2.SDLK_c and (mod & sdl2.KMOD_CTRL) and debugger is not None:
+        debugger.enter()
         return True, running
     return False, running
-
-
-# SDL joystick/GameController device and input event types, all routed to
-# JoystickManager unchanged. Held as attribute *names*, not resolved ints:
-# `sdl2` is only ever imported lazily (see run()), so these can't be resolved
-# into a real tuple of constants at module load time. `_handle_events` below
-# resolves this once per call (not once per polled event) via getattr.
-# PORT-NOTE: held as attribute name strings, resolved via getattr(sdl2, name)
-#   once per _handle_events() call -- purely a Python workaround for `sdl2`
-#   being an optionally, lazily imported module (see run()) whose constants
-#   don't exist at module-import time.
-# Rust equivalent: none needed -- the `sdl2` crate is a statically-linked,
-#   always-present dependency, so a port just references the real constant
-#   names (e.g. sdl2::event::Event::ControllerDeviceAdded) directly.
-# C++ equivalent: same -- SDL2 headers are always available at compile time
-#   in a C++ port, so this name-string indirection has no reason to exist.
-# Kept as-is here because: this whole indirection layer is a Python-only
-#   workaround for the optional-dependency import pattern; it disappears
-#   entirely at port time rather than needing a translated equivalent.
-_JOYSTICK_EVENT_TYPES_ATTRS = (
-    "SDL_CONTROLLERDEVICEADDED", "SDL_CONTROLLERDEVICEREMOVED",
-    "SDL_JOYDEVICEADDED", "SDL_JOYDEVICEREMOVED",
-    "SDL_CONTROLLERBUTTONDOWN", "SDL_CONTROLLERBUTTONUP", "SDL_CONTROLLERAXISMOTION",
-    "SDL_JOYBUTTONDOWN", "SDL_JOYBUTTONUP", "SDL_JOYAXISMOTION", "SDL_JOYHATMOTION",
-)
 
 
 def _resolve_key_sym(sdl2: _EventApi, keysym: _KeysymLike) -> int:
@@ -654,21 +657,51 @@ def _resolve_key_sym(sdl2: _EventApi, keysym: _KeysymLike) -> int:
     return keysym.sym
 
 
-def _handle_events(
-    sdl2: _EventApi, event: _EventLike, machine: Machine, keyboard: SdlKeyboard,
-    window: object, joy_manager: JoystickManager,
-    ctrl_combo: _CtrlComboState, ctrl_fkey_cells: dict[int, tuple[int, int]],
-    game_title: str, rgb_buf: bytes, tex_w: int, tex_h: int,
-    mouse: _HostMouse | None = None, hotkeys: _HotkeyState | None = None,
-) -> bool:
+@dataclass(frozen=True)
+class _EventContext:
+    """What `_handle_events` reads, fixed for a run. `hotkeys` is None for no
+    bound hotkeys: Shift then goes through the plain path."""
+
+    sdl2: _EventApi
+    event: _EventLike
+    machine: CoreApi
+    keyboard: SdlKeyboard
+    window: object
+    joy_manager: JoystickManager
+    ctrl_combo: _CtrlComboState
+    ctrl_fkey_cells: dict[int, tuple[int, int]]
+    game_title: str
+    mouse: _HostMouse | None = None
+    hotkeys: _HotkeyState | None = None
+
+
+def _handle_events(ctx: _EventContext, rgb_buf: bytes, tex_w: int, tex_h: int) -> bool:
     """Drain the SDL event queue, applying input and hotkeys.
 
-    `hotkeys` (None: no bound hotkeys, Shift goes through the plain path) is
-    checked before every other key handler.
+    Bound hotkeys are checked before every other key handler.
 
     Returns running: False once a quit is requested. rgb_buf/tex_w/tex_h are
     the previous frame's, used by F8 (save state) and F10 (screenshot).
     """
+    sdl2 = ctx.sdl2
+    event = ctx.event
+    machine = ctx.machine
+    keyboard = ctx.keyboard
+    window = ctx.window
+    joy_manager = ctx.joy_manager
+    ctrl_combo = ctx.ctrl_combo
+    ctrl_fkey_cells = ctx.ctrl_fkey_cells
+    game_title = ctx.game_title
+    mouse = ctx.mouse
+    hotkeys = ctx.hotkeys
+    joystick_event_types = frozenset((
+        sdl2.SDL_CONTROLLERDEVICEADDED, sdl2.SDL_CONTROLLERDEVICEREMOVED,
+        sdl2.SDL_JOYDEVICEADDED, sdl2.SDL_JOYDEVICEREMOVED,
+        sdl2.SDL_CONTROLLERBUTTONDOWN, sdl2.SDL_CONTROLLERBUTTONUP,
+        sdl2.SDL_CONTROLLERAXISMOTION,
+        sdl2.SDL_JOYBUTTONDOWN, sdl2.SDL_JOYBUTTONUP, sdl2.SDL_JOYAXISMOTION,
+        sdl2.SDL_JOYHATMOTION,
+    ))
     running = True
     # `event` is typed `_EventLike` for the attribute reads below, but
     # `ctypes.byref` needs a real ctypes type -- both the real `SDL_Event`
@@ -683,9 +716,12 @@ def _handle_events(
                 sdl2, sym, event.key.repeat, machine, keyboard, window, ctrl_combo, hotkeys
             ):
                 continue
+            debugger, disk_files = (
+                (hotkeys.debugger, hotkeys.disks.files) if hotkeys is not None else (None, None)
+            )
             consumed, running = _handle_hotkey_keydown(
                 sdl2, sym, event.key.keysym.mod, machine,
-                game_title, rgb_buf, tex_w, tex_h, running,
+                game_title, rgb_buf, tex_w, tex_h, running, debugger, disk_files,
             )
             if not consumed and not _handle_ctrl_combo_keydown(
                 sdl2, sym, ctrl_combo, ctrl_fkey_cells, keyboard
@@ -697,7 +733,7 @@ def _handle_events(
                 continue
             if not _handle_ctrl_combo_keyup(sdl2, sym, ctrl_combo, keyboard):
                 keyboard.key_up(sym)
-        elif event.type in (getattr(sdl2, name) for name in _JOYSTICK_EVENT_TYPES_ATTRS):
+        elif event.type in joystick_event_types:
             joy_manager.handle_event(event)
         elif mouse is not None and event.type == sdl2.SDL_MOUSEMOTION:
             # Host motion is negated on both axes when converting to MSX
@@ -724,7 +760,7 @@ class _UploadTextureApi(Protocol):
     (a `CArgObject`) has no clean public type name to declare here -- `object`
     is honest about that rather than asserting a precision this file's own
     call site doesn't rely on. Part of the staged SDL2 FFI Protocol typing
-    (openspec/changes/sdl2-ffi-protocol-typing)."""
+    (openspec/changes/archive/2026-08-15-sdl2-ffi-protocol-typing)."""
     def SDL_GetError(self) -> bytes: ...
     def SDL_LockTexture(
         self, texture: object, rect: object, pixels: object, pitch: object
@@ -750,18 +786,22 @@ def _upload_to_texture(
     # contiguous memmove is correct and fastest. Otherwise (driver row padding)
     # copy row-by-row: width*3 source bytes into each pitch-strided destination
     # row, so no source overrun and no padding is overwritten with pixel data.
+    #
+    # The frame goes through a ctypes array first: on PyPy, passing `bytes` to
+    # memmove costs about 2 ms per frame, against about 15 us for this copy.
     row_bytes = tex_w * 3
     dst_pitch = pitch.value
+    src = (ctypes.c_char * len(rgb_buf)).from_buffer_copy(rgb_buf)
     if dst_pitch == row_bytes:
-        ctypes.memmove(pixels_ptr, rgb_buf, len(rgb_buf))
+        ctypes.memmove(pixels_ptr, src, len(rgb_buf))
     else:
         dst_base = pixels_ptr.value
         assert dst_base is not None
+        src_base = ctypes.addressof(src)
         for row in range(tex_h):
-            src_off = row * row_bytes
             ctypes.memmove(
                 dst_base + row * dst_pitch,
-                rgb_buf[src_off:src_off + row_bytes],
+                src_base + row * row_bytes,
                 row_bytes,
             )
     sdl2.SDL_UnlockTexture(texture)
@@ -770,7 +810,7 @@ def _upload_to_texture(
 class _ResizeTextureApi(Protocol):
     """The `sdl2.*` surface `_resize_texture_if_needed` uses: texture
     recreation and window resize. Part of the staged SDL2 FFI Protocol
-    typing (openspec/changes/sdl2-ffi-protocol-typing)."""
+    typing (openspec/changes/archive/2026-08-15-sdl2-ffi-protocol-typing)."""
     SDL_PIXELFORMAT_RGB24: int
     SDL_TEXTUREACCESS_STREAMING: int
 
@@ -846,7 +886,7 @@ class _EventLike(Protocol):
     Structure and `tests/test_sdl2_frontend_hotkeys.py`'s hand-rolled fake
     (a `ctypes.Structure` subclass with fewer fields, satisfying this
     narrower shape). Part of the staged SDL2 FFI Protocol typing
-    (openspec/changes/sdl2-ffi-protocol-typing)."""
+    (openspec/changes/archive/2026-08-15-sdl2-ffi-protocol-typing)."""
     type: int
     key: _KeyEventLike
     motion: _MotionEventLike
@@ -859,7 +899,7 @@ class SDL2Api(_InitSdlApi, _ResizeTextureApi, _UploadTextureApi, _EventApi, Prot
     members only `run()`/`_run_frame` call directly. Used where a function
     calls into more than one of those groups; each leaf function keeps its
     own narrower Protocol. Part of the staged SDL2 FFI Protocol typing
-    (openspec/changes/sdl2-ffi-protocol-typing)."""
+    (openspec/changes/archive/2026-08-15-sdl2-ffi-protocol-typing)."""
     SDL_TRUE: int
     SDL_FALSE: int
 
@@ -876,14 +916,14 @@ class SDL2Api(_InitSdlApi, _ResizeTextureApi, _UploadTextureApi, _EventApi, Prot
     def SDL_CloseAudioDevice(self, dev: int) -> None: ...
 
 
-def _disk_status(machine: Machine, disks: _DiskList) -> str:
+def _disk_status(machine: CoreApi, disks: _DiskList) -> str:
     """The drive A part of the window title ("" with no FDC or no list)."""
-    if machine.fdc is None or not disks.paths:
+    if machine.drive_count() == 0 or not disks.paths:
         return ""
     count = len(disks.paths)
     if not machine.disk_mounted(0):
         return f"disk {disks.index + 1}/{count}: (ejected)"
-    path = machine.disk_path(0)
+    path = disks.files.path(0)
     name = path.name if path is not None else "?"
     if path == disks.paths[disks.index]:
         return f"disk {disks.index + 1}/{count}: {name}"
@@ -891,7 +931,7 @@ def _disk_status(machine: Machine, disks: _DiskList) -> str:
 
 
 def _window_title(
-    game_title: str, fps: float, machine: Machine, hotkeys: _HotkeyState, paused: bool
+    game_title: str, fps: float, machine: CoreApi, hotkeys: _HotkeyState, paused: bool
 ) -> str:
     """Window title: app/game name, measured fps, status flags, drive A status.
     `paused` covers both the frontend and the RPC pause."""
@@ -939,7 +979,7 @@ class _LoopState:
     last_present: float = 0.0
 
 
-def _is_paused(hotkeys: _HotkeyState, rpc_server: "DebugServer | None") -> bool:
+def _is_paused(hotkeys: _HotkeyState, rpc_server: DebugServer | None) -> bool:
     return hotkeys.user_paused or (rpc_server is not None and rpc_server.pause_state.paused)
 
 
@@ -949,25 +989,44 @@ def _present(sdl2: SDL2Api, renderer: object, texture: object) -> None:
     sdl2.SDL_RenderPresent(renderer)
 
 
-def _run_frame(
-    sdl2: SDL2Api, machine: Machine, keyboard: SdlKeyboard, window: object, renderer: object,
-    state: _LoopState, joy_manager: JoystickManager, ctrl_combo: _CtrlComboState,
-    ctrl_fkey_cells: dict[int, tuple[int, int]], game_title: str,
-    mouse: _HostMouse | None, event: _EventLike,
-    rpc_server: "DebugServer | None", frame_timer: FrameTimer,
-    frame_skip: str, audio_dev: int, scale: int,
-    hotkeys: _HotkeyState,
-) -> None:
+@dataclass(frozen=True)
+class _RunContext:
+    """What `run()`'s main loop reads, fixed for a run. `_LoopState` holds what
+    changes per frame."""
+
+    events: _EventContext
+    sdl2: SDL2Api
+    machine: CoreApi
+    window: object
+    renderer: object
+    joy_manager: JoystickManager
+    rpc_server: DebugServer | None
+    frame_timer: FrameTimer
+    frame_skip: str
+    audio_dev: int
+    scale: int
+    hotkeys: _HotkeyState
+
+
+def _run_frame(ctx: _RunContext, state: _LoopState) -> None:
     """Run one iteration of `run()`'s main loop: poll/apply events, service the
     RPC pause gate, advance emulation one frame (or redisplay under
     frame-skip), mix/queue audio, and present. Updates `state` in place with
     whatever this iteration changed.
     """
+    sdl2 = ctx.sdl2
+    machine = ctx.machine
+    window = ctx.window
+    renderer = ctx.renderer
+    joy_manager = ctx.joy_manager
+    rpc_server = ctx.rpc_server
+    frame_timer = ctx.frame_timer
+    frame_skip = ctx.frame_skip
+    audio_dev = ctx.audio_dev
+    scale = ctx.scale
+    hotkeys = ctx.hotkeys
     # Process events (input + hotkeys); updates running.
-    state.running = _handle_events(
-        sdl2, event, machine, keyboard, window, joy_manager, ctrl_combo, ctrl_fkey_cells,
-        game_title, state.rgb_buf, state.tex_w, state.tex_h, mouse, hotkeys,
-    )
+    state.running = _handle_events(ctx.events, state.rgb_buf, state.tex_w, state.tex_h)
     if not state.running:
         return
 
@@ -1006,16 +1065,24 @@ def _run_frame(
     else:
         skip_this_frame = state.skip_counter > 0
     out = machine.step_frame(
-        keyboard.input_state.take_frame(), render_video=not skip_this_frame
+        ctx.events.keyboard.input_state.take_frame(), render_video=not skip_this_frame
     )
-    if out.video is not None:
-        state.rgb_buf = out.video.pixels
+    if hotkeys.debugger is not None:
+        hotkeys.debugger.drain_trace()
+    if out.stop_reason != STOP_NONE:
+        # A break: the frame continues on the next step_frame, after the REPL
+        # returns or the RPC client resumes. Keep the last picture on screen.
+        # A stopped call returns no audio, so there is nothing to queue.
+        handle_stop(machine, out.stop_reason, hotkeys.debugger, rpc_server)
+        return
+    if out.video_width > 0:  # 0: no video this frame (not rendered)
+        state.rgb_buf = out.video_pixels
         # The output height is constant (192-line frames are padded to
         # 212); only the width can change at runtime (SCREEN 6/7 is
         # 512-wide). Recreate the texture / resize the window on a width
         # change before uploading, or the texture copy would overflow.
         state.texture, state.tex_w, state.tex_h, state.running = _resize_texture_if_needed(
-            sdl2, renderer, window, state.texture, out.video.width, state.tex_w, state.tex_h,
+            sdl2, renderer, window, state.texture, out.video_width, state.tex_w, state.tex_h,
             scale,
         )
         if not state.running:
@@ -1053,19 +1120,21 @@ def _run_frame(
 
 
 def run(
-    machine: Machine,
+    machine: CoreApi,
     scale: int = 3,
     speed: float = 1.0,
     game_title: str = "py-msx-emulator",
     resume: str | None = None,
     frame_skip: str = "auto",
-    rpc_server: "DebugServer | None" = None,
+    rpc_server: DebugServer | None = None,
     gamepad_map: "tuple[dict[int, int], dict[int, int]] | None" = None,
     turbo_period: int | None = None,
     mouse_port: int | None = None,
     fdd1_images: list[Path] | None = None,
     hotkey_bindings: dict[tuple[int, bool], str] | None = None,
     keyboard_joystick: Mapping[str, str] | None = None,
+    debugger: Debugger | None = None,
+    disk_files: DiskFiles | None = None,
 ) -> None:
     """Run the SDL2 window loop for `machine` until the user quits.
 
@@ -1080,19 +1149,23 @@ def run(
             value disables frame skipping.
         rpc_server: optional debug/automation RPC server; when given, its
             pause state gates the emulation loop (see the per-frame RPC
-            servicing in `_run_frame`).
+            servicing in `_run_frame`) and a core stop pauses it.
         gamepad_map: optional (direct, turbo) GameController button→bit maps from
             py_emulator.yaml; None uses the built-in defaults.
         turbo_period: optional turbo-fire per-frame period; None uses the default.
         mouse_port: 0 (Joy1) or 1 (Joy2) to attach an MSX mouse driven by the
             host mouse (relative-mouse mode); None disables mouse emulation.
         fdd1_images: drive A disk list stepped through by F6 / Shift+F6; the
-            first entry is the one build_machine already mounted.
+            first entry is the one create_machine already mounted.
         hotkey_bindings: (SDL keycode, Shift held) -> action table resolved
             from py_emulator.yaml (`resolve_hotkeys(AppConfig.hotkey_bindings())`); None uses the
             built-in table.
         keyboard_joystick: keyboard_joystick.buttons (function -> key name)
             from py_emulator.yaml; None or empty uses the built-in key map.
+        debugger: the debug REPL a core stop (without an RPC server) or the
+            Ctrl-C hotkey opens; None disables both.
+        disk_files: the file of each drive's disk, shared with the debugger
+            and the RPC server; None starts an empty table.
 
     Runtime hotkeys (built-in table; configurable): F6 next disk, Shift+F6
     eject/re-insert disk, F7 fast-forward while held, Shift+F7 latch
@@ -1104,7 +1177,6 @@ def run(
     """
     try:
         import sdl2
-        import sdl2.ext
     except ImportError:
         print("error: pysdl2 is not installed — run 'pip install pysdl2'", file=sys.stderr)
         sys.exit(1)
@@ -1125,36 +1197,27 @@ def run(
         sdl2, game_title, win_w, win_h, tex_w, tex_h
     )
 
-    # Falls back to the same default tables JoystickManager's own dataclass
-    # fields would use, resolved here (not left to the field defaults)
-    # because an explicit gamepad_map always needs `dict(...)`-copying into
-    # the constructor kwargs below either way.
-    gc_button_bit, gc_turbo_button_bit = (
-        gamepad_map if gamepad_map is not None
-        else (_DEFAULT_GC_BUTTON_BIT, _DEFAULT_GC_TURBO_BUTTON_BIT)
-    )
     # Host input accumulates here and reaches the machine once per frame
     # through step_frame (allium/core-frontend.allium InputHeldForFrame).
     frame_input = InputState()
     if rpc_server is not None:
         rpc_server.input_target = frame_input
-    joy_manager = JoystickManager(
-        _input=frame_input,
-        _sdl=sdl2,
-        _gc_button_bit=dict(gc_button_bit),
-        _gc_turbo_button_bit=dict(gc_turbo_button_bit),
-        _turbo_period=turbo_period if turbo_period is not None else TURBO_PERIOD,
-    )
+    joy_manager = JoystickManager(_input=frame_input, _sdl=sdl2)
+    if gamepad_map is not None:
+        joy_manager._gc_button_bit = dict(gamepad_map[0])
+        joy_manager._gc_turbo_button_bit = dict(gamepad_map[1])
+    if turbo_period is not None:
+        joy_manager._turbo_period = turbo_period
 
     keyboard = SdlKeyboard(
         frame_input, resolve_keyboard_joy_map(keyboard_joystick or {}),
-        keyboard_layout=machine.keyboard_layout,
+        keyboard_layout=_keyboard_layout(machine.keyboard_layout),
     )
 
     mouse: _HostMouse | None = None
     if mouse_port is not None:
         mouse = _HostMouse(keyboard.input_state, scale)
-        machine.attach_mouse(MouseDevice(), JoystickPort(mouse_port))
+        machine.attach_mouse(mouse_port)
         sdl2.SDL_SetRelativeMouseMode(sdl2.SDL_TRUE)
     ctrl_combo = _CtrlComboState()
     # Ctrl+F1..F5 -> MSX HOME/INS/DEL/STOP/SELECT (alternate access on host
@@ -1175,7 +1238,11 @@ def run(
             hotkey_bindings if hotkey_bindings is not None
             else resolve_hotkeys(AppConfig().hotkey_bindings())
         ),
-        disks=_DiskList(list(fdd1_images) if fdd1_images else []),
+        disks=_DiskList(
+            list(fdd1_images) if fdd1_images else [],
+            files=disk_files if disk_files is not None else DiskFiles(),
+        ),
+        debugger=debugger,
     )
 
     if resume is not None:
@@ -1190,27 +1257,41 @@ def run(
         running=True, texture=texture, tex_w=tex_w, tex_h=tex_h,
         rgb_buf=bytes(_SCREEN_WIDTH * screen_h * 3), skip_counter=0,
     )
+    ctx = _RunContext(
+        events=_EventContext(
+            sdl2, event, machine, keyboard, window, joy_manager, ctrl_combo, ctrl_fkey_cells,
+            game_title, mouse, hotkeys,
+        ),
+        sdl2=sdl2, machine=machine, window=window, renderer=renderer, joy_manager=joy_manager,
+        rpc_server=rpc_server, frame_timer=frame_timer, frame_skip=frame_skip,
+        audio_dev=audio_dev, scale=scale, hotkeys=hotkeys,
+    )
     last_title: str | None = None
+    # With a debugger or an RPC server, Ctrl-C in the terminal is a break
+    # request (debug-monitor "The REPL opens after the core stops").
+    breaks = (
+        sigint_requests_break(machine)
+        if debugger is not None or rpc_server is not None
+        else nullcontext()
+    )
 
     try:
-        while state.running:
-            try:
-                _run_frame(
-                    sdl2, machine, keyboard, window, renderer, state, joy_manager, ctrl_combo,
-                    ctrl_fkey_cells, game_title, mouse, event, rpc_server,
-                    frame_timer, frame_skip, audio_dev, scale, hotkeys,
-                )
-                last_title = _update_window_title(
-                    sdl2, window,
-                    _window_title(
-                        game_title, frame_timer.fps_measured, machine, hotkeys,
-                        _is_paused(hotkeys, rpc_server),
-                    ),
-                    last_title,
-                )
+        with breaks:
+            while state.running:
+                try:
+                    _run_frame(ctx, state)
+                    last_title = _update_window_title(
+                        sdl2, window,
+                        _window_title(
+                            game_title, frame_timer.fps_measured, machine, hotkeys,
+                            _is_paused(hotkeys, rpc_server),
+                        ),
+                        last_title,
+                    )
 
-            except KeyboardInterrupt:
-                if not machine.enter_debugger_if_attached():
+                except KeyboardInterrupt:
+                    # Only without a debugger and an RPC server: otherwise
+                    # sigint_requests_break turns Ctrl-C into a break request.
                     state.running = False
 
     finally:

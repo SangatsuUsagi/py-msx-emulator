@@ -3,6 +3,7 @@ joystick line sources and the per-frame hand-over (input-keyboard,
 input-joystick). Host key translation is tested in tests/test_sdl2_keyboard.py.
 """
 from host.input_state import InputState
+from msx.boundary import MOUSE_LEFT
 from msx.input import InputFrame, InputLines
 
 
@@ -61,8 +62,8 @@ def test_frame_carries_the_merged_lines() -> None:
     state.mouse_left = True
     frame = state.frame()
     assert frame.key_matrix[2] == 0xFF & ~(1 << 6)
-    assert frame.joystick_ports == (0x3E, 0x2F)
-    assert frame.mouse_left is True
+    assert (frame.joy1, frame.joy2) == (0x3E, 0x2F)
+    assert frame.mouse_buttons == MOUSE_LEFT
 
 
 def test_take_frame_hands_over_the_motion_once() -> None:
@@ -74,7 +75,7 @@ def test_take_frame_hands_over_the_motion_once() -> None:
     second = state.take_frame()
     assert (first.mouse_dx, second.mouse_dx) == (5, 0)
     assert first.key_matrix == second.key_matrix
-    assert first.joystick_ports == second.joystick_ports
+    assert (first.joy1, first.joy2) == (second.joy1, second.joy2)
 
 
 def test_joystick_release_keeps_the_lines_within_six_bits() -> None:
@@ -83,3 +84,13 @@ def test_joystick_release_keeps_the_lines_within_six_bits() -> None:
     state.joystick_button_up(0, 6)
     state.keyboard_joystick_up(1, 7)
     assert (state.joy1, state.joy2) == (0x3F, 0x3F)
+
+
+def test_the_frame_clamps_the_mouse_motion_to_int32() -> None:
+    # machine-c-abi "The mouse motion and the frame breakpoint are wide".
+    state = InputState()
+    state.mouse_dx = 2**40
+    state.mouse_dy = -(2**40)
+    frame = state.frame()
+    assert frame.mouse_dx == 0x7FFF_FFFF
+    assert frame.mouse_dy == -0x8000_0000

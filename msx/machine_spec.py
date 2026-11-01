@@ -10,20 +10,25 @@ in a spec parsed from a document (which carries no host paths).
 """
 from __future__ import annotations
 
-import enum
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 
-from msx.ppi import PpiControlRead
-from msx.vdp._geometry import VideoStandard
+from msx.boundary import KeyboardLayout, VideoStandard
 
 
-class KeyboardLayout(str, enum.Enum):
-    """A machine's keyboard matrix layout; the values are the machine-YAML
-    spellings (ppi8255 `keyboard_type`). Format one with `.value`."""
+class PpiControlRead(str, Enum):
+    """What a port 0xAB read returns; the 8255A data sheet calls it illegal."""
 
-    INTERNATIONAL = "int"
-    JAPANESE = "jp"
+    # The last mode-set word: CMOS 82C55A, as openMSX I8255::readControlPort.
+    CONTROL = "control"
+    # 0xFF: nothing drives the bus. Verified on a real SONY HB-F1XD (S1985
+    # MSX-ENGINE), extras/HB-F1XD/PORTRD.BAS, 2026-10-05.
+    OPEN_BUS = "open_bus"
+    # The byte latched by the last PPI access (see msx/ppi.py PPI._bus_latch). Verified
+    # on a real SONY HB-10 (S3527 MSX-ENGINE), extras/HB-10/PORTRD1-4.BAS,
+    # 2026-10-08.
+    BUS_LATCH = "bus_latch"
 
 
 class MachineLoadError(Exception):
@@ -33,7 +38,7 @@ class MachineLoadError(Exception):
 
 
 @dataclass
-class _RomEntry:
+class RomEntry:
     file: str
     size_kb: int
     pages: list[int]
@@ -41,18 +46,18 @@ class _RomEntry:
 
 
 @dataclass
-class _Slot0RamEntry:
+class Slot0RamEntry:
     """Resolved slot-0 flat RAM region (e.g. Sony HB-10's 16 KB page 3),
     coexisting with slot 0's main/logo ROM. Named to avoid a positional
-    tuple, matching _RomEntry/_FdcDef's own precedent."""
+    tuple, matching RomEntry/FdcDef's own precedent."""
     size_kb: int
     page: int
 
 
 @dataclass
-class _FdcDef:
+class FdcDef:
     """Resolved floppy interface: DISK ROM entry, controller, style, drive count."""
-    disk_rom_entry: _RomEntry
+    disk_rom_entry: RomEntry
     controller: str
     connection_style: str
     drives: int
@@ -68,11 +73,11 @@ class MachineSpec:
     rom_base_dir: Path | None = field(default=None, kw_only=True)
 
     # Slot 0
-    main_rom_entry: _RomEntry
-    logo_rom_entry: _RomEntry | None
+    main_rom_entry: RomEntry
+    logo_rom_entry: RomEntry | None
 
     # Slot 3 MSX2
-    sub_rom_entry: _RomEntry | None
+    sub_rom_entry: RomEntry | None
     has_ram_mapper: bool
 
     # Slot 3 MSX1
@@ -86,7 +91,7 @@ class MachineSpec:
     # logo_rom_entry above (e.g. Sony HB-10's 16 KB page 3). None for every
     # machine that doesn't declare one (the default, unaffected by this
     # field's addition).
-    slot0_ram_entry: _Slot0RamEntry | None = None
+    slot0_ram_entry: Slot0RamEntry | None = None
 
     # Keyboard layout resolved from the ppi8255 device
     keyboard_type: KeyboardLayout = KeyboardLayout.INTERNATIONAL
@@ -115,13 +120,13 @@ class MachineSpec:
     # Slot-independent global I/O device declared directly on this machine
     # (e.g. a built-in Kanji font ROM), as opposed to one supplied by an
     # --extension overlay. Same resolved shape as an overlay's own io_device
-    # (_ExpandedSubslotDevice) -- see load_machine_spec's io_device parsing
+    # (ExpandedSubslotDevice) -- see load_machine_spec's io_device parsing
     # and build_machine's KanjiRom construction, either of which SHALL NOT
     # both resolve a device at once (build_machine raises MachineLoadError).
-    io_device: _ExpandedSubslotDevice | None = None
+    io_device: ExpandedSubslotDevice | None = None
 
     # Video standard from the YAML (NTSC default); the frame timing derives
-    # from it (VideoStandard.cycles_per_frame / lines_per_frame).
+    # from it (msx/vdp/_geometry.py cycles_per_frame / lines_per_frame).
     video_standard: VideoStandard = VideoStandard.NTSC
 
     # Extra T-states per Z80 M1 (opcode fetch), from the YAML `cpu:` block.
@@ -143,18 +148,8 @@ class MachineSpec:
     # as sub_rom_subslot -- independent of sub_rom_subslot (a machine MAY
     # place SUB ROM and the FDC in different sub-slots, e.g. FS-A1F's real
     # hardware layout).
-    fdc: _FdcDef | None = None
+    fdc: FdcDef | None = None
     fdc_subslot: int = 0
-
-    @property
-    def cycles_per_frame(self) -> int:
-        """Z80 T-states per frame, from the video standard."""
-        return self.video_standard.cycles_per_frame
-
-    @property
-    def lines_per_frame(self) -> int:
-        """Scanlines per frame, from the video standard."""
-        return self.video_standard.lines_per_frame
 
 
 @dataclass
@@ -170,12 +165,12 @@ class ExtensionOverlay:
 
     device: str
     rom_base_dir: Path | None = field(default=None, kw_only=True)
-    rom_entry: _RomEntry | None = None
+    rom_entry: RomEntry | None = None
     sram_save_path: Path | None = field(default=None, kw_only=True)
 
 
 @dataclass
-class _ExpandedSubslotDevice:
+class ExpandedSubslotDevice:
     """One sub-slot's (or the io_device's) resolved device declaration
     within an expanded extension overlay -- same shape as ExtensionOverlay
     above, since a sub-slot declaration uses the identical device/rom/sram
@@ -186,7 +181,7 @@ class _ExpandedSubslotDevice:
 
     device: str
     rom_base_dir: Path | None = field(default=None, kw_only=True)
-    rom_entry: _RomEntry | None = None
+    rom_entry: RomEntry | None = None
     sram_save_path: Path | None = field(default=None, kw_only=True)
     size_kb: int | None = None
 
@@ -199,30 +194,11 @@ class ExpandedExtensionOverlay:
     optional slot-independent global I/O device (e.g. the Kanji-ROM font
     device, which has no cartridge-slot address decode of its own)."""
 
-    subslots: dict[int, _ExpandedSubslotDevice]
-    io_device: _ExpandedSubslotDevice | None = None
+    subslots: dict[int, ExpandedSubslotDevice]
+    io_device: ExpandedSubslotDevice | None = None
 
 
 # Either overlay shape, as carried by MachineConfig.extension_overlay1/2.
 AnyExtensionOverlay = ExtensionOverlay | ExpandedExtensionOverlay
 
 
-# ---------------------------------------------------------------------------
-# Raw YAML shapes (TypedDict + TypeGuard)
-#
-# One TypedDict per distinct raw-YAML shape this file validates, named
-# `<Thing>Yaml` to stay visually distinct from the *resolved* dataclasses
-# above (e.g. RomEntryYaml vs _RomEntry). Every shape is a single
-# `total=False` TypedDict, no field statically required: this file's
-# validation style is per-field `.get()` + immediate raise, inline in the
-# same function that uses the value, not an upstream gate that downstream
-# code could trust -- see design.md Decision 2 for why a required/optional
-# split (the originally-planned approach) doesn't fit that style.
-#
-# Each shape's `_is_<thing>_shape(data: object) -> TypeGuard[<Thing>Yaml]`
-# function performs the same isinstance/.get() checks the corresponding
-# parser already performed before this change -- TypeGuard only tells mypy
-# "trust the narrower type once this returns True", it does not generate or
-# replace runtime validation. See openspec/changes/typed-machine-loader-yaml/
-# design.md for the full rationale.
-# ---------------------------------------------------------------------------

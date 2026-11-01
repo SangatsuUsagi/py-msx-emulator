@@ -3,8 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable
 
+from msx.boundary import TRACE_DEBUG, TRACE_EVENT_IO_READ, TRACE_EVENT_IO_WRITE
+
 if TYPE_CHECKING:
-    from msx.diagnostics.logger import DebugLogger
+    from msx.trace import TraceLog
 
 
 @dataclass
@@ -46,21 +48,10 @@ class IOBus:
     _write_handlers: list[tuple[int, int, Callable[[int, int], None]]] = field(
         default_factory=list
     )
-    _logger: DebugLogger | None = field(default=None, repr=False)
-    # PORT-NOTE: _get_pc is a closure assigned at wiring time, capturing the
-    #   owning Z80/Machine.
-    # Rust equivalent: a trait object or feature-flagged field resolved once
-    #   at construction, not a per-call closure capturing the owner.
-    # C++ equivalent: same -- a std::function member or virtual interface
-    #   pointer, assigned once at construction.
-    # Kept as-is here because: only called inside `if self._logger is not
-    #   None:`, so it costs nothing on the always-hot IN/OUT dispatch path in
-    #   normal operation -- confirmed by investigation, not deferred pending
-    #   benchmarking. Full reasoning (including why msx/psg.py's
-    #   PSG._get_cycle -- read unconditionally, not logger-gated -- reached a
-    #   different conclusion) in openspec/changes/archive/
-    #   *-psg-cycle-source-refactor/design.md, Decision 1.
-    _get_pc: Callable[[], int] | None = field(default=None, repr=False)
+    # The machine's trace buffer (msx/trace.py), wired at build time; port
+    # reads and writes are recorded while TRACE_DEBUG is on, stamped with
+    # the address of the instruction that made the access.
+    _trace: TraceLog | None = field(default=None, repr=False)
 
     def register_read(self, start: int, end: int, handler: Callable[[int], int]) -> None:
         self._read_handlers.append((start, end, handler))
@@ -78,20 +69,20 @@ class IOBus:
         for start, end, handler in self._read_handlers:
             if start <= port <= end:
                 value = handler(port)
-                if self._logger is not None:
-                    pc = self._get_pc() if self._get_pc is not None else 0
-                    self._logger.on_io_read(port, value, pc)
+                trace = self._trace
+                if trace is not None and trace.kinds & TRACE_DEBUG:
+                    trace.record(TRACE_EVENT_IO_READ, port, value)
                 return value
-        if self._logger is not None:
-            pc = self._get_pc() if self._get_pc is not None else 0
-            self._logger.on_io_read(port, 0xFF, pc)
+        trace = self._trace
+        if trace is not None and trace.kinds & TRACE_DEBUG:
+            trace.record(TRACE_EVENT_IO_READ, port, 0xFF)
         return 0xFF
 
     def write_port(self, port: int, value: int) -> None:
         port &= 0xFF
-        if self._logger is not None:
-            pc = self._get_pc() if self._get_pc is not None else 0
-            self._logger.on_io_write(port, value, pc)
+        trace = self._trace
+        if trace is not None and trace.kinds & TRACE_DEBUG:
+            trace.record(TRACE_EVENT_IO_WRITE, port, value)
         for start, end, handler in self._write_handlers:
             if start <= port <= end:
                 handler(port, value)

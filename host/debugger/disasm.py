@@ -2,13 +2,29 @@
 
 disassemble(read, addr) -> tuple[str, int]
     Returns (mnemonic_string, bytes_consumed).
+byte_reader(core) -> read
+    The one-byte reader over the core API that the debugger and the RPC
+    server pass to disassemble.
     Covers all documented Z80 opcodes including CB/DD/ED/FD/DDCB/FDCB prefixes.
     Unknown bytes are rendered as "DB XXh".
 """
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
+
+if TYPE_CHECKING:
+    from msx.core_api import CoreApi
+
+
+def byte_reader(core: CoreApi) -> Callable[[int], int]:
+    """A one-byte reader of CPU address space over the core API (no
+    watchpoint), for disassemble."""
+
+    def read(addr: int) -> int:
+        return core.read_memory(addr, 1)[0]
+
+    return read
 
 # ---------------------------------------------------------------------------
 # Template format
@@ -16,9 +32,7 @@ from typing import Callable
 # Each entry: (template_string, total_byte_count_including_prefix)
 # Placeholders in template:
 #   {b0} = byte at offset 1 (after opcode), formatted as 02Xh
-#   {b1} = byte at offset 2 (after opcode+b0), formatted as 02Xh
 #   {w}  = 16-bit word at offset 1 (little-endian), formatted as 04Xh
-#   {d}  = signed displacement at offset 1, formatted as +dd/-dd (decimal)
 #   {r}  = PC-relative jump target: the signed offset at offset 1 resolved to
 #          the absolute destination address, formatted as 04Xh
 #
@@ -392,7 +406,6 @@ def _apply_template(tmpl: str, read: Callable[[int], int], addr: int, prefix_len
     if "{r}" in tmpl:
         raw = read(operand_addr & 0xFFFF)
         # Relative jump: target = addr + total_size + signed_offset
-        # Show signed offset for simplicity (consistent with common Z80 debuggers)
         s = _signed8(raw)
         target = (addr + prefix_len + 2 + s) & 0xFFFF
         return tmpl.replace("{r}", f"{target:04X}h")
@@ -453,6 +466,11 @@ def _apply_xycb_template(tmpl: str, read: Callable[[int], int], addr: int) -> st
     return tmpl.replace("{id}", _fmt_disp(d))
 
 
+def instruction_bytes(read: Callable[[int], int], addr: int, size: int) -> str:
+    """The `size` bytes at `addr` as space-separated hex."""
+    return " ".join(f"{read((addr + i) & 0xFFFF) & 0xFF:02X}" for i in range(size))
+
+
 def disassemble(read: Callable[[int], int], addr: int) -> tuple[str, int]:
     """Decode one Z80 instruction.
 
@@ -461,17 +479,14 @@ def disassemble(read: Callable[[int], int], addr: int) -> tuple[str, int]:
         addr: Address of the first byte of the instruction.
 
     Returns:
-        Tuple of (mnemonic_string, bytes_consumed).
-        Unknown bytes are returned as ("DB XXh", 1).
+        Tuple of (mnemonic_string, bytes_consumed). An unknown opcode is
+        ("DB XXh", n), with n the bytes of its prefixes and the opcode.
     """
     b0 = read(addr & 0xFFFF)
 
     if b0 == 0xCB:
-        b1 = read((addr + 1) & 0xFFFF)
-        entry = _CB_OPS.get(b1)
-        if entry:
-            return entry[0], entry[1]
-        return f"DB {b1:02X}h", 2
+        # _build_cb fills all 256 CB opcodes.
+        return _CB_OPS[read((addr + 1) & 0xFFFF)]
 
     if b0 == 0xED:
         b1 = read((addr + 1) & 0xFFFF)

@@ -7,10 +7,13 @@ instrument ROM and exp/log-sin tables to emu2413's reference values.
 """
 from __future__ import annotations
 
+import math
 from array import array
+from pathlib import Path
 
 import pytest
 
+from msx.boundary import AUDIO_SAMPLE_RATE
 from msx.clock import CPU_CLOCK_HZ
 from msx.opll import (
     _DAMPER_RATE,
@@ -19,16 +22,28 @@ from msx.opll import (
     _EG_MUTE,
     _EXP_TABLE,
     _FULLSIN_TABLE,
+    _HALFSIN_TABLE,
     _PERC_RELEASE_RATE,
     _RELEASE,
     _SUS_RELEASE_RATE,
-    SAMPLE_RATE,
+    _TLL_TABLE,
     Opll,
-    note_frequency,
 )
 from msx.snapshot_schema import SchemaError
+from tests.factories import restore_state
 
 _LOUD_INSTRUMENT_VOL = 0x10  # instrument=1 (violin), vol=0 (loudest)
+
+
+def note_frequency(fnum: int, block: int) -> float:
+    """Return the note frequency in Hz for a 9-bit F-number and 3-bit block.
+
+    Standard YM2413 formula f = Fnum * 2^Block * clock / (2^19 * 72). The
+    synthesis path uses the phase accumulator directly (calc_phase), which is
+    mathematically equivalent; this float form lives here, not in the
+    integer-only core (machine-core "The core computes with integers only").
+    """
+    return fnum * (1 << block) * CPU_CLOCK_HZ / (1 << 19) / 72.0
 
 
 def _key_on(o: Opll, ch: int, fnum: int = 0x150, block: int = 3) -> None:
@@ -161,7 +176,7 @@ def test_multiple_channels_sound_together() -> None:
     assert _max_abs(buf) > 0
 
 
-@pytest.mark.parametrize("sample_rate", [SAMPLE_RATE])
+@pytest.mark.parametrize("sample_rate", [AUDIO_SAMPLE_RATE])
 def test_sample_rate_matches_psg(sample_rate: int) -> None:
     assert sample_rate == 44_100
 
@@ -211,24 +226,53 @@ def test_instrument_rom_matches_emu2413() -> None:
     assert _DEFAULT_INST == emu
 
 
-def test_exp_table_matches_emu2413_formula() -> None:
-    # exp_table[x] = round((2^(x/256) - 1) * 1024)
-    assert _EXP_TABLE[0] == 0
-    assert _EXP_TABLE[1] == 3
-    assert _EXP_TABLE[255] == 1018
-    for x in (5, 64, 128, 200):
-        assert _EXP_TABLE[x] == int((2 ** (x / 256.0) - 1) * 1024 + 0.5)
+# -- audio-ym2413 "OPLL synthesis tables are integer data" --------------------
+# The core holds the tables as integer data; these tests rebuild them with
+# emu2413's floating-point formulas (allowed here, not in msx/) and check
+# every entry.
+
+def test_the_exp_table_matches_the_formula() -> None:
+    expected = [int((2 ** (x / 256.0) - 1) * 1024 + 0.5) for x in range(256)]
+    assert list(_EXP_TABLE) == expected
+    assert (_EXP_TABLE[0], _EXP_TABLE[1], _EXP_TABLE[255]) == (0, 3, 1018)
 
 
-def test_fullsin_table_matches_emu2413_formula() -> None:
-    # First quarter is -log2(sin(...)) * 256; the rest is mirrored/sign-extended.
-    assert _FULLSIN_TABLE[0] == 2137
-    assert _FULLSIN_TABLE[255] == 0
-    # Second quarter mirrors the first (makeSinTable).
-    assert _FULLSIN_TABLE[256] == _FULLSIN_TABLE[255]
-    assert _FULLSIN_TABLE[511] == _FULLSIN_TABLE[0]
-    # Negative half carries the 0x8000 sign bit.
-    assert _FULLSIN_TABLE[512] == (0x8000 | _FULLSIN_TABLE[0])
+def test_the_log_sin_table_matches_the_formula() -> None:
+    quarter = [
+        int(-math.log2(math.sin((x + 0.5) * math.pi / 512)) * 256 + 0.5) for x in range(256)
+    ]
+    full = quarter + quarter[::-1]                 # the second quarter mirrors the first
+    full = full + [0x8000 | v for v in full]       # the negative half carries bit 0x8000
+    half = full[:512] + [0xFFF] * 512              # half-sine: silent second half
+    assert _FULLSIN_TABLE == full
+    assert _HALFSIN_TABLE == half
+    assert (_FULLSIN_TABLE[0], _FULLSIN_TABLE[255]) == (2137, 0)
+
+
+def test_the_key_scale_table_matches_the_floating_point_build() -> None:
+    # emu2413's key-scale levels in dB, on its dB2 scale (dB * 2), and the
+    # 0.375 dB envelope step.
+    kl_db = (0.000, 9.000, 12.000, 13.875, 15.000, 16.125, 16.875, 17.625,
+             18.000, 18.750, 19.125, 19.500, 19.875, 20.250, 20.625, 21.000)
+    for fnum in range(16):
+        for block in range(8):
+            for tl in range(64):
+                for kl in range(4):
+                    expected = tl << 1
+                    if kl:
+                        tmp = int(kl_db[fnum] * 2.0 - 3.000 * 2.0 * (7 - block))
+                        if tmp > 0:
+                            expected = int((tmp >> (3 - kl)) / 0.375) + (tl << 1)
+                    assert _TLL_TABLE[(block << 4) | fnum][tl][kl] == expected
+
+
+def test_no_core_module_imports_math() -> None:
+    msx_dir = Path(__file__).resolve().parent.parent / "msx"
+    for path in sorted(msx_dir.rglob("*.py")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            text = line.strip()
+            imports_math = text == "import math" or text.startswith(("import math ", "from math "))
+            assert not imports_math, f"{path.relative_to(msx_dir.parent)} imports math: {text}"
 
 
 def test_clarinet_pitch_is_accurate() -> None:
@@ -517,7 +561,7 @@ def test_restore_with_missing_key_does_not_partially_mutate() -> None:
     snap = dict(pre)
     del snap["resample_phase"]
     with pytest.raises(SchemaError, match="resample_phase"):
-        o.restore(snap)
+        restore_state(o, snap)
 
     assert o.snapshot() == pre
 
@@ -527,7 +571,7 @@ def test_restore_with_missing_key_does_not_partially_mutate() -> None:
 # integer arithmetic")
 # ---------------------------------------------------------------------------
 
-_PHASE_RANGE = 72 * SAMPLE_RATE
+_PHASE_RANGE = 72 * AUDIO_SAMPLE_RATE
 
 
 def test_the_phase_is_an_integer_in_range() -> None:
@@ -551,9 +595,10 @@ def test_native_ticks_per_sample_follow_the_exact_ratio() -> None:
         return update()
 
     o._update_output = counting_update  # type: ignore[method-assign]
-    o.generate_samples(SAMPLE_RATE)
-    assert ticks == -(-SAMPLE_RATE * CPU_CLOCK_HZ // _PHASE_RANGE) == 49716
-    assert o.snapshot()["resample_phase"] == 49716 * _PHASE_RANGE - SAMPLE_RATE * CPU_CLOCK_HZ
+    o.generate_samples(AUDIO_SAMPLE_RATE)
+    assert ticks == -(-AUDIO_SAMPLE_RATE * CPU_CLOCK_HZ // _PHASE_RANGE) == 49716
+    expected = 49716 * _PHASE_RANGE - AUDIO_SAMPLE_RATE * CPU_CLOCK_HZ
+    assert o.snapshot()["resample_phase"] == expected
     assert o.snapshot()["resample_phase"] == 308700
 
 
@@ -564,3 +609,81 @@ def test_a_phase_outside_the_range_is_rejected(phase: object) -> None:
     state["resample_phase"] = phase
     with pytest.raises(SchemaError, match="resample_phase"):
         o.parse_state(state, "opll")
+
+
+# ---------------------------------------------------------------------------
+# Idle path (generate_samples on a silent chip)
+# ---------------------------------------------------------------------------
+
+def _released_chip(*, rhythm: bool) -> Opll:
+    """A chip that played a vibrato note on a percussive user patch, then
+    released it until silent. fnum != 0 and PM on, so the idle path must
+    still advance the phase generators and the vibrato LFO."""
+    o = Opll()
+    # User patch: PM on for both operators, percussive EG (type bit clear),
+    # AR/DR/SL/RR 0xF so both operators reach EG_MUTE.
+    o.write_reg(0x00, 0x41)
+    o.write_reg(0x01, 0x41)
+    for reg in (0x04, 0x05, 0x06, 0x07):
+        o.write_reg(reg, 0xFF)
+    if rhythm:
+        o.write_reg(0x0E, 0x20)  # rhythm mode, no drum keyed
+    for ch in range(6 if rhythm else 9):
+        o.write_reg(0x30 + ch, 0x00)  # instrument 0 (user), loudest
+        o.write_reg(0x10 + ch, 0x50 + ch)
+        o.write_reg(0x20 + ch, 0x17)  # key on, block 3, fnum bit 8 set
+    for _ in range(20):
+        o.generate_samples(735)
+    for ch in range(9):
+        o.write_reg(0x20 + ch, 0x07)  # key off, fnum kept
+    for _ in range(40):
+        o.generate_samples(735)
+        if o._is_idle():
+            return o
+    raise AssertionError("the chip did not become idle")
+
+
+@pytest.mark.parametrize("rhythm", [False, True])
+def test_idle_tick_matches_the_full_tick(rhythm: bool) -> None:
+    idle = _released_chip(rhythm=rhythm)
+    full = _released_chip(rhythm=rhythm)
+    assert idle.snapshot() == full.snapshot()
+    for _ in range(3000):
+        assert idle._idle_tick() == full._update_output() == 0
+        assert idle.snapshot() == full.snapshot()
+    assert full._is_idle()
+
+
+def test_a_fresh_chip_is_idle_after_its_first_call() -> None:
+    # reset() requests every slot's update; the first call commits them.
+    o = Opll()
+    assert not o._is_idle()
+    assert _max_abs(o.generate_samples(735)) == 0
+    assert o._is_idle()
+
+
+def test_a_key_on_after_a_silent_call_takes_the_full_path() -> None:
+    o = _released_chip(rhythm=False)
+    assert _max_abs(o.generate_samples(735)) == 0
+    _key_on(o, 0)
+    assert not o._is_idle()
+    assert _max_abs(o.generate_samples(735)) > 0
+
+
+def test_the_envelope_counter_wraps_at_32_bits() -> None:
+    # machine-state "The envelope counter wraps".
+    o = Opll()
+    o._eg_counter = 0xFFFFFFFF
+    o._update_output()
+    assert o._eg_counter == 0
+    o._eg_counter = 0xFFFFFFFF
+    o._idle_tick()
+    assert o._eg_counter == 0
+
+
+def test_a_counter_past_32_bits_is_rejected() -> None:
+    # machine-state "A counter past 32 bits is rejected".
+    state = dict(Opll().snapshot())
+    state["eg_counter"] = 0x100000000
+    with pytest.raises(SchemaError, match="eg_counter"):
+        Opll().parse_state(state, "opll")

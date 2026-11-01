@@ -1,6 +1,6 @@
-"""Interactive debug REPL for MSX2 / V9938 emulation.
+"""Interactive debug REPL for MSX1 and MSX2 emulation.
 
-Triggered by breakpoint hit or KeyboardInterrupt in Machine.run_frame().
+Opened by the host after step_frame returns at a stop (host/debugger/stop.py).
 Runs in the main thread; emulation is paused while the REPL is active.
 """
 
@@ -11,8 +11,23 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
-from host.debugger.disasm import disassemble
-from msx.mapper import BankTracingMapper
+from host.debugger.disasm import byte_reader, disassemble, instruction_bytes
+from host.debugger.slots import slot_bank_text, slot_content_text
+from host.debugger.stop import sigint_interrupts, watch_hit_line
+from host.debugger.vdp_view import print_vdp_tms, print_vdp_v9938
+from host.media import DiskFiles, swap_disk
+from host.trace import TraceOutput
+from host.watch import watch_kind, watch_text
+from msx.boundary import (
+    MAX_BREAKPOINTS,
+    MAX_WATCHPOINTS,
+    STATUS_OK,
+    STOP_WATCHPOINT,
+    TRACE_MAPPER,
+    TRACE_VDP,
+    VDP_KIND_V9938,
+    SlotInfo,
+)
 
 try:
     import readline
@@ -20,10 +35,7 @@ except ImportError:  # stock Windows CPython has no readline module
     readline = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:
-    from msx.machine import Machine
-    from msx.memory import Memory
-    from msx.vdp.v9938 import V9938
-    from msx.vdp.vdp import VdpDevice
+    from msx.core_api import CoreApi
 
 
 def _format_disasm(read: Callable[[int], int], addr: int) -> tuple[str, int]:
@@ -34,7 +46,7 @@ def _format_disasm(read: Callable[[int], int], addr: int) -> tuple[str, int]:
     prefix (PC=..., ADDR:, => ...).
     """
     mnem, size = disassemble(read, addr)
-    raw_bytes = " ".join(f"{read((addr + i) & 0xFFFF):02X}" for i in range(size))
+    raw_bytes = instruction_bytes(read, addr, size)
     return f"{raw_bytes:<12}  {mnem}", size
 
 
@@ -45,9 +57,6 @@ _HELP = (
     "sv [TITLE] | ld FILE | fdd1/fdd2 [FILE|-] | reset | c | q"
 )
 
-# The machine caps hardware breakpoints and watchpoints at 4 each.
-MAX_BREAKPOINTS = 4
-MAX_WATCHPOINTS = 4
 # `da` disassembles a fixed window of instructions from the given address.
 _DISASM_WINDOW = 10
 
@@ -55,9 +64,11 @@ _DISASM_WINDOW = 10
 _HISTORY_FILE = Path.home() / ".msx_dbg_history"
 _HISTORY_LENGTH = 500
 
-# Loop-control commands handled inline in Debugger.enter() (see below), not
+# Loop-control commands handled inline in Debugger._repl_loop() (see below), not
 # present in the _COMMANDS dispatch table. Listed here so Tab completion
 # covers them too.
+# The largest frame number, the range of the core's int64_t frame.
+_MAX_FRAME = 0x7FFF_FFFF_FFFF_FFFF
 _INLINE_COMMANDS = ("c", "q", "g", "gf", "so", "reset")
 
 _readline_ready = False
@@ -97,32 +108,52 @@ def _complete_command(text: str, state: int) -> str | None:
 
 
 class Debugger:
-    """Interactive debug prompt attached to a Machine instance."""
+    """Interactive debug prompt over a CoreApi, sharing the run's DiskFiles
+    and TraceOutput."""
 
-    def __init__(self, machine: Machine) -> None:
+    def __init__(
+        self, machine: CoreApi, disk_files: DiskFiles | None = None,
+        trace: TraceOutput | None = None, rom_names: tuple[str, str] = ("", ""),
+    ) -> None:
         self._machine = machine
+        # The main and sub ROM file names `sl`/`st` print ("" for none): the
+        # host loaded them, and the core keeps no name.
+        self._rom_names = rom_names
+        # The file of each drive's disk, shared with the frontend and the RPC
+        # server of the same run (host/media.py DiskFiles).
+        self._disk_files = disk_files if disk_files is not None else DiskFiles()
+        # Where the run's VDP and mapper trace lines go (host/trace.py); the
+        # CLI flags set it up, te/ce turn the traces on.
+        self.trace = trace if trace is not None else TraceOutput()
+
+    def drain_trace(self) -> None:
+        """Write the core's recorded trace events as text. The run loops call
+        it after each step_frame, the step command after each step."""
+        self.trace.drain(self._machine)
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
     def enter(self) -> None:
-        """Suspend emulation and run the debug REPL until 'cont' or 'quit'."""
+        """Suspend emulation and run the debug REPL until 'c' or 'q'."""
         print("\nDebugger entered. Type 'c' to resume, 'q' to exit.")
-        pc = self._machine.cpu.registers.PC
-        read = self._machine.cpu.read_byte
-        line, _ = _format_disasm(read, pc)
+        pc = self._machine.cpu_registers().PC
+        line, _ = _format_disasm(byte_reader(self._machine), pc)
         print(f"  PC={pc:04X}h  {line}")
 
         _setup_readline()
         if readline is not None:
             try:
                 readline.read_history_file(_HISTORY_FILE)
-            except (FileNotFoundError, OSError):
+            except OSError:  # no history file yet, or unreadable
                 pass
 
         try:
-            self._repl_loop()
+            # Ctrl-C at the prompt exits (debug-monitor "Ctrl-C at the prompt
+            # exits"), whatever handler the run loop installed.
+            with sigint_interrupts():
+                self._repl_loop()
         finally:
             if readline is not None:
                 try:
@@ -135,7 +166,7 @@ class Debugger:
         while True:
             try:
                 cyc = self._machine.cycle_count
-                frm = self._machine.vdp.frame_count
+                frm = self._machine.frame_number()
                 line = input(f"(msx-dbg cyc={cyc} frm={frm}) ").strip()
             except EOFError:
                 print()
@@ -191,8 +222,8 @@ class Debugger:
     # ------------------------------------------------------------------
 
     def _cmd_reg_cpu(self) -> None:
-        r = self._machine.cpu.registers
-        f = r.F
+        r = self._machine.cpu_registers()
+        f = r.AF & 0xFF
         print(
             f"AF={r.AF:04X}  BC={r.BC:04X}  DE={r.DE:04X}  HL={r.HL:04X}"
             f"  IX={r.IX:04X}  IY={r.IY:04X}  SP={r.SP:04X}  PC={r.PC:04X}"
@@ -203,17 +234,16 @@ class Debugger:
         )
 
     def _cmd_reg_vdp(self) -> None:
-        from msx.vdp.v9938 import V9938
-        vdp = self._machine.vdp
-        if isinstance(vdp, V9938):
-            regs = vdp.regs
+        info = self._machine.vdp_info()
+        if info.kind == VDP_KIND_V9938:
+            regs = info.regs
             for row_start in range(0, 28, 8):
                 parts = [
                     f"R#{i}={regs[i]:02X}"
                     for i in range(row_start, min(row_start + 8, 28))
                 ]
                 print("  " + "  ".join(parts))
-            cmd = vdp.cmd_regs
+            cmd = info.cmd_regs
             for row_start in range(0, 15, 8):
                 parts = [
                     f"R#{32 + i}={cmd[i]:02X}"
@@ -221,19 +251,18 @@ class Debugger:
                 ]
                 print("  " + "  ".join(parts))
         else:
-            parts = [f"R#{i}={vdp.regs[i]:02X}" for i in range(8)]
+            parts = [f"R#{i}={info.regs[i]:02X}" for i in range(8)]
             print("  " + "  ".join(parts))
 
     def _cmd_reg_palette(self) -> None:
-        from msx.vdp.v9938 import V9938
-        vdp = self._machine.vdp
-        if not isinstance(vdp, V9938):
+        info = self._machine.vdp_info()
+        if info.kind != VDP_KIND_V9938:
             print("rp: TMS9918A has no programmable palette (MSX2 / V9938 only)")
             return
         for row_start in range(0, 16, 8):
             parts = []
             for i in range(row_start, row_start + 8):
-                p = vdp.palette[i]
+                p = info.palette[i]
                 r = (p >> 6) & 0x7
                 g = (p >> 3) & 0x7
                 b = p & 0x7
@@ -241,12 +270,11 @@ class Debugger:
             print("  " + "  ".join(parts))
 
     def _cmd_vdp_status(self) -> None:
-        from msx.vdp.v9938 import V9938
-        vdp = self._machine.vdp
-        if isinstance(vdp, V9938):
-            _print_vdp_fancy(vdp)
+        info = self._machine.vdp_info()
+        if info.kind == VDP_KIND_V9938:
+            print_vdp_v9938(info)
         else:
-            _print_vdp_tms(vdp)
+            print_vdp_tms(info)
 
     def _cmd_dump(self, args: list[str]) -> None:
         if not args:
@@ -259,19 +287,15 @@ class Debugger:
             print("dump: invalid address or size (hex expected)")
             return
 
-        read = self._machine.cpu.read_byte
         for row in range(0, size, 16):
-            row_bytes = [read((addr + row + col) & 0xFFFF) for col in range(16)]
-            hex_part = " ".join(f"{b:02X}" for b in row_bytes)
-            ascii_part = "".join(chr(b) if 0x20 <= b < 0x7F else "." for b in row_bytes)
-            print(f"  {(addr + row) & 0xFFFF:04X}: {hex_part}  {ascii_part}")
+            row_bytes = self._machine.read_memory((addr + row) & 0xFFFF, 16)
+            print(f"  {(addr + row) & 0xFFFF:04X}: {_hex_ascii_row(row_bytes)}")
 
     def _cmd_dump_vram(self, args: list[str]) -> None:
         if not args:
             print("Usage: dv VADDR [SIZE]")
             return
-        vram = self._machine.vdp.vram
-        vram_mask = len(vram) - 1
+        vram_mask = self._machine.vram_size() - 1
         try:
             addr = int(args[0], 16) & vram_mask
             size = int(args[1], 16) if len(args) > 1 else 128
@@ -281,19 +305,17 @@ class Debugger:
 
         addr_fmt = "05X" if vram_mask > 0xFFFF else "04X"
         for row in range(0, size, 16):
-            row_bytes = [vram[(addr + row + col) & vram_mask] for col in range(16)]
-            hex_part = " ".join(f"{b:02X}" for b in row_bytes)
-            ascii_part = "".join(chr(b) if 0x20 <= b < 0x7F else "." for b in row_bytes)
-            print(f"  {(addr + row) & vram_mask:{addr_fmt}}: {hex_part}  {ascii_part}")
+            row_bytes = self._machine.read_vram((addr + row) & vram_mask, 16)
+            print(f"  {(addr + row) & vram_mask:{addr_fmt}}: {_hex_ascii_row(row_bytes)}")
 
     def _cmd_dump_vram_file(self, args: list[str]) -> None:
         if not args:
             print("Usage: dvf FILE  (write full VRAM as raw binary)")
             return
-        vram = self._machine.vdp.vram
+        vram = self._machine.read_vram(0, self._machine.vram_size())
         try:
             with open(args[0], "wb") as f:
-                f.write(bytes(vram))
+                f.write(vram)
         except OSError as exc:
             print(f"dvf: {exc}")
             return
@@ -307,21 +329,9 @@ class Debugger:
             print(f"{cmd}: invalid address (hex expected)")
             return None
 
-    def _cmd_break(self, args: list[str]) -> None:
-        """Dispatch ba/br/bl to add / remove / list breakpoints."""
-        sub = args[0].lower() if args else ""
-        if sub == "l":
-            self._break_list()
-        elif sub == "a":
-            self._break_add(args[1:])
-        elif sub == "r":
-            self._break_remove(args[1:])
-        else:
-            print("Usage: ba ADDR | br ADDR | bl")
-
     def _break_list(self) -> None:
         """List the active breakpoints (bl)."""
-        current = sorted(self._machine._breakpoints)
+        current = self._machine.breakpoints()
         if not current:
             print("  (no breakpoints)")
             return
@@ -336,11 +346,11 @@ class Debugger:
         addr = self._parse_hex_addr(args[0], "ba")
         if addr is None:
             return
-        current = list(self._machine._breakpoints)
-        if len(current) >= MAX_BREAKPOINTS:
-            print(f"ba: maximum {MAX_BREAKPOINTS} breakpoints reached")
-            return
+        current = list(self._machine.breakpoints())
         if addr not in current:
+            if len(current) >= MAX_BREAKPOINTS:
+                print(f"ba: maximum {MAX_BREAKPOINTS} breakpoints reached")
+                return
             current.append(addr)
         self._machine.set_breakpoints(current)
         print(f"  Breakpoint set at {addr:04X}h ({len(current)}/{MAX_BREAKPOINTS})")
@@ -353,7 +363,7 @@ class Debugger:
         addr = self._parse_hex_addr(args[0], "br")
         if addr is None:
             return
-        current = list(self._machine._breakpoints)
+        current = list(self._machine.breakpoints())
         if addr not in current:
             print(f"br: {addr:04X}h not in breakpoint list")
             return
@@ -366,10 +376,8 @@ class Debugger:
         if not args:
             print("Usage: g ADDR")
             return False
-        try:
-            addr = int(args[0], 16) & 0xFFFF
-        except ValueError:
-            print("g: invalid address (hex expected)")
+        addr = self._parse_hex_addr(args[0], "g")
+        if addr is None:
             return False
         self._machine.set_temp_breakpoint(addr)
         print(f"  Running to {addr:04X}h ...")
@@ -385,11 +393,16 @@ class Debugger:
         except ValueError:
             print("gf: invalid frame number (decimal expected)")
             return False
-        current = self._machine.vdp.frame_count
+        if target > _MAX_FRAME:
+            print(f"gf: frame {target} is above {_MAX_FRAME}")
+            return False
+        current = self._machine.frame_number()
         if target <= current:
             print(f"gf: target frame {target} already reached (current: {current})")
             return False
-        self._machine.set_frame_breakpoint(target)
+        if self._machine.set_frame_breakpoint(target) != STATUS_OK:
+            print(f"gf: {self._machine.last_error_text().decode('utf-8')}")
+            return False
         print(f"  Running to frame {target} ...")
         return True
 
@@ -400,30 +413,30 @@ class Debugger:
         inspect at the pre-reset PC.
         """
         self._machine.reset()
-        pc = self._machine.cpu.registers.PC
+        pc = self._machine.cpu_registers().PC
         print(f"  Machine reset. Resuming at PC={pc:04X}h ...")
 
     def _cmd_step_out(self) -> None:
         """Run until the current routine returns (SP rises above its current value)."""
-        sp = self._machine.cpu.registers.SP
+        sp = self._machine.cpu_registers().SP
         self._machine.set_step_out(sp)
         print(f"  Stepping out (SP={sp:04X}h) ...")
 
     def _cmd_break_halt(self) -> None:
         m = self._machine
-        enabled = not m._break_halt_di
+        enabled = not m.break_halt_di()
         m.set_break_halt_di(enabled)
         print(f"  Break on HALT+DI {'enabled' if enabled else 'disabled'}")
 
     def _cmd_break_sp(self, args: list[str]) -> None:
         m = self._machine
         if not args:
-            low, high = m.memory.main_ram_range()
-            m.set_sp_range((low, high))
+            low, high = m.main_ram_range()
+            m.set_sp_range(low, high)
             print(f"  Break on SP outside {low:04X}h-{high:04X}h (auto: machine RAM)")
             return
         if args[0].lower() == "off":
-            m.set_sp_range(None)
+            m.set_sp_range(-1, -1)
             print("  SP-range break disabled")
             return
         if len(args) < 2:
@@ -437,47 +450,25 @@ class Debugger:
             return
         if low > high:
             low, high = high, low
-        m.set_sp_range((low, high))
+        m.set_sp_range(low, high)
         print(f"  Break on SP outside {low:04X}h-{high:04X}h")
 
-    def _cmd_watch(self, args: list[str]) -> None:
-        """Dispatch wa/wd/wl to add / remove / list watchpoints."""
-        sub = args[0].lower() if args else ""
-        if sub == "l":
-            self._watch_list()
-        elif sub == "a":
-            self._watch_add(args[1:])
-        elif sub == "r":
-            self._watch_remove(args[1:])
-        else:
-            print("Usage: wa ADDR[,r|w|rw] | wd ADDR | wl")
-
-    def _watch_entries(self) -> list[tuple[int, str]]:
-        """Current watchpoints as (addr, mode) pairs, sorted by address."""
-        r_set = self._machine._watch_read
-        w_set = self._machine._watch_write
-        result = []
-        for addr in sorted(r_set | w_set):
-            mode = ("r" if addr in r_set else "") + ("w" if addr in w_set else "")
-            result.append((addr, mode))
-        return result
-
-    def _parse_watch_mode(self, mode: str) -> str | None:
-        """Validate an r/w/rw watch mode, or print an error and return None."""
-        mode = mode.lower().strip()
-        if not mode or not all(c in "rw" for c in mode):
-            print(f"wa: invalid mode {mode!r} (use r, w, or rw)")
-            return None
-        return mode
+    def _parse_watch_mode(self, mode: str) -> int | None:
+        """The kind an r/w/rw watch mode spells, or print an error and
+        return None."""
+        kind = watch_kind(mode)
+        if kind is None:
+            print(f"wa: invalid mode {mode.lower().strip()!r} (use r, w, or rw)")
+        return kind
 
     def _watch_list(self) -> None:
         """List the active watchpoints (wl)."""
-        entries = self._watch_entries()
+        entries = list(self._machine.watchpoints())
         if not entries:
             print("  (no watchpoints)")
             return
-        for addr, mode in entries:
-            print(f"  {addr:04X}h [{mode}]")
+        for addr, kind in entries:
+            print(f"  {addr:04X}h [{watch_text(kind)}]")
 
     def _watch_add(self, args: list[str]) -> None:
         """Add/update a watchpoint at ADDR with an r/w/rw mode (wa)."""
@@ -491,22 +482,25 @@ class Debugger:
             addr_str, mode_str = tok, args[1]
         else:
             addr_str, mode_str = tok, "rw"
-        mode = self._parse_watch_mode(mode_str)
-        if mode is None:
+        kind = self._parse_watch_mode(mode_str)
+        if kind is None:
             return
         addr = self._parse_hex_addr(addr_str, "wa")
         if addr is None:
             return
-        entries = self._watch_entries()
+        entries = list(self._machine.watchpoints())
         if addr in [e[0] for e in entries]:
-            entries = [(a, mode if a == addr else m) for a, m in entries]
+            entries = [(a, kind if a == addr else k) for a, k in entries]
         else:
             if len(entries) >= MAX_WATCHPOINTS:
                 print(f"wa: maximum {MAX_WATCHPOINTS} watchpoints reached")
                 return
-            entries.append((addr, mode))
+            entries.append((addr, kind))
         self._machine.set_watchpoints(entries)
-        print(f"  Watchpoint set at {addr:04X}h [{mode}] ({len(entries)}/{MAX_WATCHPOINTS})")
+        print(
+            f"  Watchpoint set at {addr:04X}h [{watch_text(kind)}] "
+            f"({len(entries)}/{MAX_WATCHPOINTS})"
+        )
 
     def _watch_remove(self, args: list[str]) -> None:
         """Remove the watchpoint at ADDR (wd)."""
@@ -516,16 +510,16 @@ class Debugger:
         addr = self._parse_hex_addr(args[0], "wd")
         if addr is None:
             return
-        entries = self._watch_entries()
+        entries = list(self._machine.watchpoints())
         if addr not in [e[0] for e in entries]:
             print(f"wd: {addr:04X}h not in watchpoint list")
             return
-        entries = [(a, m) for a, m in entries if a != addr]
+        entries = [(a, k) for a, k in entries if a != addr]
         self._machine.set_watchpoints(entries)
         print(f"  Watchpoint {addr:04X}h removed ({len(entries)}/{MAX_WATCHPOINTS})")
 
     def _cmd_disasm(self, args: list[str]) -> None:
-        r = self._machine.cpu.registers
+        r = self._machine.cpu_registers()
         if args:
             addr = self._parse_hex_addr(args[0], "disasm")
             if addr is None:
@@ -533,90 +527,67 @@ class Debugger:
         else:
             addr = r.PC
 
-        read = self._machine.cpu.read_byte
         for _ in range(_DISASM_WINDOW):
-            line, size = _format_disasm(read, addr)
+            line, size = _format_disasm(byte_reader(self._machine), addr)
             print(f"  {addr:04X}: {line}")
             addr = (addr + size) & 0xFFFF
 
-    def _cmd_step(self, args: list[str] | None = None) -> None:
+    def _cmd_step(self, args: list[str]) -> None:
         try:
             count = int(args[0]) if args else 1
-        except (ValueError, IndexError):
+        except ValueError:
             print("step: invalid count (decimal integer expected)")
             return
         for _ in range(count):
             self._machine.step()
-        r = self._machine.cpu.registers
+            self.drain_trace()
+            stop = self._machine.last_stop()
+            if stop.reason == STOP_WATCHPOINT:
+                print(watch_hit_line(stop))
+        r = self._machine.cpu_registers()
         print(f"  PC={r.PC:04X}  AF={r.AF:04X}  BC={r.BC:04X}  DE={r.DE:04X}  HL={r.HL:04X}")
-        read = self._machine.cpu.read_byte
-        line, _ = _format_disasm(read, r.PC)
+        line, _ = _format_disasm(byte_reader(self._machine), r.PC)
         print(f"  => {r.PC:04X}: {line}")
 
     def _cmd_trace_enable(self) -> None:
-        from msx.vdp.tracer import Tracer
-        vdp = self._machine.vdp
-        if vdp._get_pc is None:
-            m = self._machine
-            vdp._get_pc    = lambda: m.cpu.instruction_pc
-            vdp._get_cycle = lambda: m.cycle_count
-        if vdp.tracer is None:
-            vdp.tracer = Tracer(enabled=True, output=sys.stdout)
-        else:
-            vdp.tracer.enabled = True
-        print("VDP trace enabled (stdout)")
+        trace = self.trace
+        if trace.vdp_out is None:
+            trace.set_vdp_output(sys.stdout, "stdout")
+        self._machine.set_trace_kinds(self._machine.trace_kinds() | TRACE_VDP)
+        print(f"VDP trace enabled ({trace.vdp_name})")
 
     def _cmd_trace_disable(self) -> None:
-        vdp = self._machine.vdp
-        if vdp.tracer is None or not vdp.tracer.enabled:
+        kinds = self._machine.trace_kinds()
+        if not kinds & TRACE_VDP:
             print("VDP trace already disabled")
             return
-        vdp.tracer.enabled = False
+        self._machine.set_trace_kinds(kinds & ~TRACE_VDP)
         print("VDP trace disabled")
 
-    def _mapper_targets(self) -> list[BankTracingMapper]:
-        """Cartridge ROM mappers (slots 1/2) that support bank-switch tracing."""
-        mem = self._machine.memory
-        result: list[BankTracingMapper] = []
-        for mp in (mem._mapper, mem._mapper2):
-            if isinstance(mp, BankTracingMapper):
-                result.append(mp)
-        return result
-
     def _cmd_mapper_trace_enable(self) -> None:
-        from msx.mapper_tracer import attach_to_machine
-        if attach_to_machine(self._machine, output=sys.stdout) is None:
+        if not self._machine.trace_sources() & TRACE_MAPPER:
             print("ce: no bank-switching ROM mapper present")
             return
-        print("Mapper bank-switch trace enabled (stdout)")
+        trace = self.trace
+        if trace.map_out is None:
+            trace.set_map_output(sys.stdout, "stdout")
+        self._machine.set_trace_kinds(self._machine.trace_kinds() | TRACE_MAPPER)
+        print(f"Mapper bank-switch trace enabled ({trace.map_name})")
 
     def _cmd_mapper_trace_disable(self) -> None:
-        disabled = False
-        for mp in self._mapper_targets():
-            tracer = mp._tracer
-            if tracer is not None and tracer.enabled:
-                tracer.enabled = False
-                disabled = True
-        print("Mapper trace disabled" if disabled else "Mapper trace already disabled")
-
-    def _render_rgb24(self) -> tuple[bytes, int, int]:
-        """Render the current VDP state to RGB24 without perturbing frame state.
-
-        Shared by `ss` (screenshot) and `sv` (state save) so both reflect the
-        paused instant, correlated with the v / dv / db dumps taken at the same
-        moment, without advancing vdp._frame_count.
-        """
-        from msx.screenshot import render_current_rgb24
-        return render_current_rgb24(self._machine.vdp)
+        kinds = self._machine.trace_kinds()
+        if not kinds & TRACE_MAPPER:
+            print("Mapper trace already disabled")
+            return
+        self._machine.set_trace_kinds(kinds & ~TRACE_MAPPER)
+        print("Mapper trace disabled")
 
     def _cmd_screenshot(self) -> None:
+        """`ss`: the paused frame as a PNG (CoreApi.render_preview, which
+        advances no frame, so it matches the v / dv dumps of this moment)."""
         from host.screenshot import save_screenshot
-        try:
-            rgb, w, h = self._render_rgb24()
-        except Exception as exc:  # rendering is best-effort for a debug command
-            print(f"ss: screenshot failed: {exc}")
-            return
-        save_screenshot(rgb, w, h)
+        frame = self._machine.render_preview()
+        save_screenshot(frame.pixels, frame.width, frame.height)
 
     def _cmd_state_save(self, args: list[str]) -> None:
         """`sv [TITLE]`: save full machine state (CPU/VDP/mapper/RAM) to saves/states/.
@@ -625,15 +596,10 @@ class Debugger:
         the RPC `state.save` contract — it is not a file path. REPL stays open.
         """
         from host.state_files import save_state
-        from msx.boundary import RgbFrame
 
         title = args[0] if args else "msx_dbg_checkpoint"
-        try:
-            rgb, w, h = self._render_rgb24()
-        except Exception as exc:  # rendering is best-effort for a debug command
-            print(f"sv: render failed: {exc}")
-            return
-        save_state(self._machine, RgbFrame(w, h, rgb), title)
+        frame = self._machine.render_preview()
+        save_state(self._machine, frame, title, self._disk_files)
 
     def _cmd_state_load(self, args: list[str]) -> None:
         """`ld FILE`: restore machine state from a previously saved .state file.
@@ -641,8 +607,6 @@ class Debugger:
         REPL stays open with no implicit resume, so the loaded state can be
         inspected or advanced precisely with `s` / `gf`.
         """
-        from pathlib import Path
-
         from host.state_files import load_state
 
         if not args:
@@ -657,80 +621,64 @@ class Debugger:
         print(f"  Loaded state from {path}")
 
     def _cmd_disable_sprites(self) -> None:
-        vdp = self._machine.vdp
-        vdp.debug_disable_sprites = not vdp.debug_disable_sprites
-        state = "OFF (background only)" if vdp.debug_disable_sprites else "ON"
+        hidden = not self._machine.sprites_hidden()
+        self._machine.set_sprites_hidden(hidden)
+        state = "OFF (background only)" if hidden else "ON"
         print(f"Sprite rendering: {state}")
 
     def _cmd_slot_active(self) -> None:
-        mem = self._machine.memory
+        layout = self._machine.slot_layout()
         print(f"  {'Page':<6}{'Addr':<12}{'Prim':<6}{'Sec':<5}{'Content':<33}Bank")
         _page_addrs = ["0000-3FFF", "4000-7FFF", "8000-BFFF", "C000-FFFF"]
         for page in range(4):
-            prim = (mem.slot_register >> (page * 2)) & 0x03
-            if mem.sub_slot_enabled and prim == 3:
-                sec = (mem.sub_slot_reg >> (page * 2)) & 0x03
+            prim = (layout.primary >> (page * 2)) & 0x03
+            sec = -1
+            sec_str = "-"
+            if layout.expanded & (1 << prim):
+                sec = (layout.secondary[prim] >> (page * 2)) & 0x03
                 sec_str = str(sec)
-            elif mem.slot2_sub_slot_enabled and prim == 2:
-                sec = (mem.slot2_sub_slot_reg >> (page * 2)) & 0x03
-                sec_str = str(sec)
-            elif mem.slot1_sub_slot_enabled and prim == 1:
-                sec = (mem.slot1_sub_slot_reg >> (page * 2)) & 0x03
-                sec_str = str(sec)
-            else:
-                sec = None
-                sec_str = "-"
-            content = mem.debug_slot_content(prim, sec, page)
-            bank = mem.debug_slot_bank(prim, sec, page)
+            info = self._machine.slot_info(prim, sec, page)
+            content = slot_content_text(info, self._rom_names)
+            bank = slot_bank_text(info, page)
             print(f"  P{page}    {_page_addrs[page]:<12}{prim:<6}{sec_str:<5}{content:<33}{bank}")
 
     def _cmd_slot_tree(self) -> None:
-        mem = self._machine.memory
+        layout = self._machine.slot_layout()
         _roles = {1: "cartridge slot", 2: "cartridge slot"}
         for prim in range(4):
-            if mem.sub_slot_enabled and prim == 3:
-                _print_expanded_slot(mem, prim, mem.sub_slot_reg)
-            elif mem.slot2_sub_slot_enabled and prim == 2:
-                _print_expanded_slot(mem, prim, mem.slot2_sub_slot_reg)
-            elif mem.slot1_sub_slot_enabled and prim == 1:
-                _print_expanded_slot(mem, prim, mem.slot1_sub_slot_reg)
+            if layout.expanded & (1 << prim):
+                _print_expanded_slot(
+                    self._machine, prim, layout.secondary[prim], self._rom_names)
             else:
                 role = _roles.get(prim)
                 role_str = f"  [{role}]" if role else ""
-                content = mem.debug_slot_content(prim, None, None)
-                size = mem.debug_slot_size_kb(prim, None)
-                suffix = f"  {size}" if size else ""
-                print(f"  Primary {prim}{role_str}  {content}{suffix}")
+                info = self._machine.slot_info(prim, -1, -1)
+                print(f"  Primary {prim}{role_str}  {_slot_text(info, self._rom_names)}")
 
     def _cmd_fdd(self, args: list[str], drive_index: int) -> None:
         """`fddN [FILE|-]`: show, swap, or eject the disk in floppy drive N.
 
         No argument prints the current mount; a path mounts that *.dsk (relative
-        to the cwd or absolute, ~ expanded); `-` ejects. On `c` the WD2793 uses
-        the new disk. Errors are reported without changing the current disk.
+        to the cwd or absolute, ~ expanded); `-` ejects. The FDC sees the new
+        disk once emulation resumes. Errors are reported without changing the current disk.
         """
-        # Local imports keep the debugger free of an FDC import at module load.
-        from pathlib import Path
-
-        from host.media import swap_disk
-
         label = f"fdd{drive_index + 1}"
-        fdc = self._machine.fdc
-        if fdc is None:
+        drives = self._machine.drive_count()
+        if drives == 0:
             print(f"{label}: this machine has no floppy interface")
             return
-        if drive_index >= len(fdc.drives):
-            print(f"{label}: machine has only {len(fdc.drives)} drive(s)")
+        if drive_index >= drives:
+            print(f"{label}: machine has only {drives} drive(s)")
             return
         if not args:
             if self._machine.disk_mounted(drive_index):
-                print(f"{label}: {self._machine.disk_path(drive_index)}")
+                print(f"{label}: {self._disk_files.path(drive_index)}")
             else:
                 print(f"{label}: empty")
             return
         arg = args[0]
         if arg == "-":
-            swap_disk(self._machine, drive_index, None)
+            swap_disk(self._machine, self._disk_files, drive_index, None)
             print(f"{label}: ejected")
             return
         path = Path(arg).expanduser()
@@ -738,60 +686,28 @@ class Debugger:
             print(f"{label}: file not found: {path}")
             return
         try:
-            swap_disk(self._machine, drive_index, path)
+            swap_disk(self._machine, self._disk_files, drive_index, path)
         except (ValueError, OSError) as exc:
             print(f"{label}: cannot mount {path}: {exc}")
             return
         print(f"{label}: mounted {path}")
 
 
+def _hex_ascii_row(row_bytes: bytes) -> str:
+    """One dump row: the bytes in hex, then as ASCII (. for a non-printable)."""
+    hex_part = " ".join(f"{b:02X}" for b in row_bytes)
+    ascii_part = "".join(chr(b) if 0x20 <= b < 0x7F else "." for b in row_bytes)
+    return f"{hex_part}  {ascii_part}"
+
+
 # ---------------------------------------------------------------------------
 # VDP fancy display helpers (module-level, no instance state needed)
 # ---------------------------------------------------------------------------
 
-_CMD_NAMES: dict[int, str] = {
-    0x0: "ABRT", 0x4: "POINT", 0x5: "PSET", 0x6: "SRCH",
-    0x7: "LINE", 0x8: "LMMV", 0x9: "LMMM", 0xA: "LMCM",
-    0xB: "LMMC", 0xC: "HMMV", 0xD: "HMMM", 0xE: "YMMM", 0xF: "HMMC",
-}
-_LOG_OPS: dict[int, str] = {
-    0: "IMP", 1: "AND", 2: "OR", 3: "XOR", 4: "NOT",
-}
 
-
-def _decode_screen_mode(r0: int, r1: int) -> str:
-    m1 = (r1 >> 4) & 1
-    m2 = (r1 >> 3) & 1
-    m3 = (r0 >> 1) & 1  # R#0 bit1
-    m4 = (r0 >> 2) & 1  # R#0 bit2
-    m5 = (r0 >> 3) & 1  # R#0 bit3
-    modes: dict[tuple[int, ...], str] = {
-        (0, 0, 0, 0, 0): "SCREEN1 (GRAPHIC1)",
-        (1, 0, 0, 0, 0): "SCREEN0 (TEXT1/40col)",
-        (1, 0, 0, 1, 0): "SCREEN0 (TEXT2/80col)",
-        (0, 0, 1, 0, 0): "SCREEN2 (GRAPHIC2)",
-        (0, 1, 0, 0, 0): "SCREEN3 (MULTICOLOR)",
-        (0, 0, 0, 1, 0): "SCREEN4 (GRAPHIC3)",
-        (0, 0, 1, 1, 0): "SCREEN5 (GRAPHIC4)",
-        (0, 0, 0, 0, 1): "SCREEN6 (GRAPHIC5)",
-        (0, 0, 1, 0, 1): "SCREEN7 (GRAPHIC6)",
-        (0, 0, 1, 1, 1): "SCREEN8 (GRAPHIC7)",
-    }
-    return modes.get((m1, m2, m3, m4, m5), f"UNKNOWN (M={m1}{m2}{m3}{m4}{m5})")
-
-
-def _decode_cmr(cmr: int) -> tuple[str, str]:
-    cmd_code = (cmr >> 4) & 0xF
-    log_code = cmr & 0x07
-    transparent = bool(cmr & 0x08)
-    cmd = _CMD_NAMES.get(cmd_code, f"CMD{cmd_code:X}")
-    log = _LOG_OPS.get(log_code, f"LOG{log_code}")
-    if transparent:
-        log += "/T"
-    return cmd, log
-
-
-def _print_expanded_slot(mem: "Memory", prim: int, raw: int) -> None:
+def _print_expanded_slot(
+    machine: CoreApi, prim: int, raw: int, rom_names: tuple[str, str]
+) -> None:
     print(f"  Primary {prim} [EXPANDED]  secondary-select(raw)={raw:02X}h")
     parts = []
     for pg in range(4):
@@ -799,139 +715,20 @@ def _print_expanded_slot(mem: "Memory", prim: int, raw: int) -> None:
         parts.append(f"P{pg}->{prim}-{s}")
     print(f"    page-map: {'  '.join(parts)}")
     for sec in range(4):
-        content = mem.debug_slot_content(prim, sec, None)
-        size = mem.debug_slot_size_kb(prim, sec)
-        suffix = f"  {size}" if size else ""
-        print(f"    {prim}-{sec}  {content}{suffix}")
+        info = machine.slot_info(prim, sec, -1)
+        print(f"    {prim}-{sec}  {_slot_text(info, rom_names)}")
 
 
-def _print_vdp_fancy(vdp: object) -> None:
-    from msx.vdp.v9938 import V9938
-    assert isinstance(vdp, V9938)
-    print(f"  Screen : {_decode_screen_mode(vdp.regs[0], vdp.regs[1])}")
-    _print_vdp_vram_layout(vdp)
-    _print_vdp_display_control(vdp)
-    _print_vdp_command_state(vdp)
-    _print_vdp_status(vdp)
+def _slot_text(info: SlotInfo, rom_names: tuple[str, str]) -> str:
+    """The `st` line text of a slot: its content, then its size if any."""
+    content = slot_content_text(info, rom_names)
+    if info.size_kb:
+        return f"{content}  {info.size_kb}KB"
+    return content
 
 
-def _print_vdp_vram_layout(vdp: V9938) -> None:
-    r = vdp.regs          # R#0-R#27
-    m1 = (r[1] >> 4) & 1  # R#1 bit4
-    m3 = (r[0] >> 1) & 1  # R#0 bit1
-    m4 = (r[0] >> 2) & 1  # R#0 bit2
-    m5 = (r[0] >> 3) & 1  # R#0 bit3
-    is_text2 = bool(m4 and m1 and not m3)
-    if is_text2:
-        name_base = (r[2] & 0x7C) << 10  # TEXT2: 5 bits, 4 KB aligned
-    elif m4 or m5:
-        name_base = (r[2] & 0x60) << 10
-    else:
-        name_base = (r[2] & 0x0F) << 10
-    color_base   = ((r[10] & 0x07) << 14) | ((r[3]  & 0xFF) << 6)
-    pattern_base = (r[4]  & 0x3F) << 11
-    # R#5/R#11 → SAT base (512-byte aligned; colour table sits at SAT-0x200)
-    attr_reg     = (((r[11] & 0x03) << 15) | (r[5] << 7)) & 0x1FFFF
-    sprite_attr  = attr_reg & ~0x1FF & 0x1FFFF
-    sprite_pat   = (r[6]  & 0x3F) << 11
-    print(
-        f"  VRAM   : Name={name_base:05X}  Color={color_base:05X}"
-        f"  Pattern={pattern_base:05X}  SprAttr={sprite_attr:05X}  SprPat={sprite_pat:05X}"
-    )
-
-
-def _print_vdp_display_control(vdp: V9938) -> None:
-    r = vdp.regs
-    disp    = "ON " if r[1] & 0x40 else "OFF"
-    sprites = "OFF" if r[8] & 0x02 else "ON "
-    height  = 212 if r[9] & 0x80 else 192
-    timing  = "PAL " if r[9] & 0x02 else "NTSC"
-    ilace   = " IL" if r[9] & 0x08 else "   "
-    spr_sz  = "16x16" if r[1] & 0x02 else " 8x8 "
-    spr_mag = "x2" if r[1] & 0x01 else "x1"
-    fg      = (r[7] >> 4) & 0xF
-    bg      = r[7] & 0xF
-    ie0     = "IE0" if r[1] & 0x20 else "   "
-    ie1     = "IE1" if r[0] & 0x10 else "   "
-    print(
-        f"  Disp   : EN={disp}  SPR={sprites}  {height}L  {timing}{ilace}"
-        f"  Spr={spr_sz}/mag={spr_mag}  FG={fg:X} BG={bg:X}  {ie0} {ie1}"
-    )
-
-
-def _print_vdp_command_state(vdp: V9938) -> None:
-    c = vdp.cmd_regs      # R#32-R#46 (index 0-14)
-    s2 = vdp._status2
-    sx  = c[0]  | (c[1]  & 0x01) << 8
-    sy  = c[2]  | (c[3]  & 0x03) << 8
-    dx  = c[4]  | (c[5]  & 0x01) << 8
-    dy  = c[6]  | (c[7]  & 0x03) << 8
-    nx  = c[8]  | (c[9]  & 0x01) << 8
-    ny  = c[10] | (c[11] & 0x03) << 8
-    clr = c[12]
-    arg = c[13]
-    cmr = c[14]
-    cmd_name, log_op = _decode_cmr(cmr)
-    dix  = "←" if arg & 0x04 else "→"
-    diy  = "↑" if arg & 0x08 else "↓"
-    if s2 & 0x01:
-        rem = vdp._cmd_remaining
-        if rem > 0:
-            busy = f"BUSY({rem}cyc)"
-        else:
-            total = (vdp._cmd_nx // 2) * vdp._cmd_ny
-            done  = vdp._cmd_y * (vdp._cmd_nx // 2) + vdp._cmd_x // 2
-            busy  = f"BUSY(CPU-feed rem={total - done}/{total})"
-    else:
-        busy = "IDLE"
-    print(
-        f"  CMD    : {cmd_name}  {log_op}  [{busy}]"
-        f"  SRC=({sx},{sy})  DST=({dx},{dy})  SIZE=({nx},{ny})"
-        f"  CLR={clr:02X}  DIR={dix}{diy}"
-    )
-
-
-def _print_vdp_status(vdp: V9938) -> None:
-    s0 = vdp.status
-    s2 = vdp._status2
-    tr  = "TR" if s2 & 0x80 else "  "
-    ce  = "CE" if s2 & 0x01 else "  "
-    vf  = "F"  if s0 & 0x80 else " "
-    sp  = f"5S={(s0 >> 6) & 1}"
-    col = f"C={(s0 >> 5) & 1}"
-    print(f"  Status : S#0={s0:02X} ({vf} {sp} {col})  S#2={s2:02X} ({tr} {ce})")
-
-
-def _print_vdp_tms(vdp: "VdpDevice") -> None:
-    r = vdp.regs
-    s0 = vdp.status
-
-    print(f"  Screen : {_decode_screen_mode(r[0], r[1])}")
-
-    name_base    = (r[2] & 0x0F) << 10
-    color_base   = r[3] << 6
-    pattern_base = (r[4] & 0x07) << 11
-    sprite_attr  = (r[5] & 0x7F) << 7
-    sprite_pat   = (r[6] & 0x07) << 11
-    print(
-        f"  VRAM   : Name={name_base:04X}  Color={color_base:04X}"
-        f"  Pat={pattern_base:04X}  SprAttr={sprite_attr:04X}  SprPat={sprite_pat:04X}"
-    )
-
-    en      = (r[1] >> 6) & 1
-    fg      = (r[7] >> 4) & 0xF
-    bg      = r[7] & 0xF
-    spr_sz  = 16 if r[1] & 0x02 else 8
-    spr_mag = r[1] & 0x01
-    print(
-        f"  Disp   : EN={en}  h=192  FG={fg:X}  BG={bg:X}  size={spr_sz}  mag={spr_mag}"
-    )
-
-    print(f"  Status : S#0={s0:02X}")
-
-
-# REPL command dispatch table (see Debugger.enter). Loop-control commands
-# (c/q/g/gf/so/reset) are handled inline in enter(); everything else maps here.
+# REPL command dispatch table (see Debugger._repl_loop). Loop-control commands
+# (c/q/g/gf/so/reset) are handled inline in _repl_loop(); everything else maps here.
 # The short lambdas adapt each command's argument shape to its _cmd_* handler.
 _COMMANDS: dict[str, Callable[["Debugger", list[str]], None]] = {
     "h": lambda d, a: print(f"  {_HELP}"),
@@ -943,14 +740,14 @@ _COMMANDS: dict[str, Callable[["Debugger", list[str]], None]] = {
     "dm": lambda d, a: d._cmd_dump(a),
     "dv": lambda d, a: d._cmd_dump_vram(a),
     "dvf": lambda d, a: d._cmd_dump_vram_file(a),
-    "ba": lambda d, a: d._cmd_break(["a"] + a),
-    "br": lambda d, a: d._cmd_break(["r"] + a),
-    "bl": lambda d, a: d._cmd_break(["l"]),
+    "ba": lambda d, a: d._break_add(a),
+    "br": lambda d, a: d._break_remove(a),
+    "bl": lambda d, a: d._break_list(),
     "bh": lambda d, a: d._cmd_break_halt(),
     "bs": lambda d, a: d._cmd_break_sp(a),
-    "wa": lambda d, a: d._cmd_watch(["a"] + a),
-    "wd": lambda d, a: d._cmd_watch(["r"] + a),
-    "wl": lambda d, a: d._cmd_watch(["l"]),
+    "wa": lambda d, a: d._watch_add(a),
+    "wd": lambda d, a: d._watch_remove(a),
+    "wl": lambda d, a: d._watch_list(),
     "da": lambda d, a: d._cmd_disasm(a),
     "s": lambda d, a: d._cmd_step(a),
     "te": lambda d, a: d._cmd_trace_enable(),

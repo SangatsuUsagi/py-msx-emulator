@@ -8,11 +8,11 @@ from PIL import Image
 
 from host.machine_config import build_machine_from_spec
 from host.state_files import load_state, save_state
-from msx.boundary import RgbFrame
-from msx.machine_spec import MachineSpec, _RomEntry, _Slot0RamEntry
+from msx.boundary import STATUS_OK, STATUS_STATE_REJECTED, RgbFrame
+from msx.machine_spec import MachineSpec, RomEntry, Slot0RamEntry
 from msx.snapshot_schema import SnapshotMismatchError
 from msx.state import CURRENT_FORMAT_VERSION, StateLoadError
-from tests.factories import make_machine
+from tests.factories import load_state_file, make_machine, make_machine_msx2
 
 _CART_64K = b"\x00" * 0x10000
 
@@ -32,9 +32,9 @@ def _make_msx1_machine_with_slot0_ram():
         name="test_msx1_slot0ram",
         generation="msx1",
         rom_base_dir=Path("."),
-        main_rom_entry=_RomEntry(file="", size_kb=0, pages=[0, 1]),
+        main_rom_entry=RomEntry(file="", size_kb=0, pages=[0, 1]),
         logo_rom_entry=None,
-        slot0_ram_entry=_Slot0RamEntry(size_kb=16, page=3),
+        slot0_ram_entry=Slot0RamEntry(size_kb=16, page=3),
         sub_rom_entry=None,
         has_ram_mapper=False,
         ram_size_kb=32,
@@ -59,6 +59,29 @@ def test_save_state_creates_state_file(machine, saves_dir):
     assert path.exists()
     assert path.suffix == ".state"
     assert "test_" in path.name
+
+
+def test_save_state_reads_the_pixels_before_other_core_calls(machine, saves_dir):
+    # Core-owned pixels are valid only until the next core call
+    # (include/msx_core.h), so the thumbnail is written first.
+    calls: list[str] = []
+
+    class _Frame:
+        width, height = 256, 192
+
+        @property
+        def pixels(self):
+            calls.append("pixels")
+            return bytes(256 * 192 * 3)
+
+    class _Core:
+        def __getattr__(self, name):
+            calls.append(name)
+            return getattr(machine, name)
+
+    save_state(_Core(), _Frame(), "order")
+    assert calls[0] == "pixels"
+    assert "save_state" in calls
 
 
 def test_save_state_creates_png(machine, saves_dir):
@@ -122,7 +145,7 @@ def test_load_state_restores_cpu_registers(machine, saves_dir):
     machine.cpu.registers.PC = 0x0000
     machine.memory.ram[0] = 0x00
 
-    load_state(machine)
+    load_state_file(machine)
 
     assert machine.cpu.registers.A == 0x42
     assert machine.cpu.registers.PC == 0x1234
@@ -134,6 +157,34 @@ def test_load_state_missing_file_raises(machine, saves_dir):
         load_state(machine)
 
 
+def test_a_rejected_state_returns_a_status_and_a_message() -> None:
+    # machine-core "A rejected state returns a status and a message".
+    msx2 = make_machine_msx2(_ROM, bytes(0x4000))
+    msx1 = make_machine(rom=_ROM)
+    before = msx1.save_state()
+    assert msx1.load_state(msx2.save_state()) == STATUS_STATE_REJECTED
+    assert msx1.save_state() == before
+    assert b"machine type mismatch" in msx1.last_error_text()
+
+
+def test_an_accepted_state_returns_ok_and_clears_the_message() -> None:
+    m = make_machine(rom=_ROM)
+    assert m.load_state(b"not a state") == STATUS_STATE_REJECTED
+    assert m.last_error_text() != b""
+    assert m.load_state(m.save_state()) == STATUS_OK
+    assert m.last_error_text() == b""
+
+
+def test_the_host_load_names_the_file_in_the_error(machine, saves_dir):
+    rgb = RgbFrame(256, 192, bytes(256 * 192 * 3))
+    msx2 = make_machine_msx2(_ROM, bytes(0x4000))
+    state_path = save_state(msx2, rgb, "msx2")
+    with pytest.raises(ValueError) as exc_info:
+        load_state(machine, state_path)
+    message = str(exc_info.value)
+    assert message.startswith(f"{state_path}: machine type mismatch")
+
+
 # --- slot 0 flat RAM (Sony HB-10 shape) ----------------------------------------
 
 def test_slot0_ram_round_trips_through_save_load(saves_dir):
@@ -143,7 +194,7 @@ def test_slot0_ram_round_trips_through_save_load(saves_dir):
     save_state(machine, rgb, "test")
 
     machine.memory.write(0xC000, 0x00)
-    load_state(machine)
+    load_state_file(machine)
 
     assert machine.memory.read(0xC000) == 0x77
 
@@ -156,7 +207,7 @@ def test_load_state_rejects_slot0_ram_wiring_mismatch(machine, saves_dir):
     save_state(slot0_machine, rgb, "test")
 
     with pytest.raises(SnapshotMismatchError, match="slot 0 RAM"):
-        load_state(machine)
+        load_state_file(machine)
 
 
 def test_load_state_wrong_version_raises(machine, saves_dir):
@@ -178,7 +229,7 @@ def test_load_state_wrong_version_raises(machine, saves_dir):
     os.symlink(bad_path.name, latest)
 
     with pytest.raises(ValueError, match="version"):
-        load_state(machine)
+        load_state_file(machine)
 
 
 def test_load_state_rejects_previous_version_mapper_class_save(machine, saves_dir):
@@ -199,7 +250,7 @@ def test_load_state_rejects_previous_version_mapper_class_save(machine, saves_di
         json.dump(data, f)
 
     with pytest.raises(ValueError, match="version"):
-        load_state(machine, state_path)
+        load_state_file(machine, state_path)
 
 
 def test_legacy_pickle_state_rejected(machine, saves_dir):
@@ -209,7 +260,7 @@ def test_legacy_pickle_state_rejected(machine, saves_dir):
     with open(bad, "wb") as f:
         _pickle.dump({"format_version": 4}, f)
     with pytest.raises(ValueError, match="legacy pickle"):
-        load_state(machine, bad)
+        load_state_file(machine, bad)
 
 
 # --- StateLoadError -------------------------------------------------------------
@@ -230,7 +281,7 @@ def test_malformed_mapper_state_raises_state_load_error(saves_dir):
         json.dump(data, f)
 
     with pytest.raises(StateLoadError) as exc_info:
-        load_state(machine, state_path)
+        load_state_file(machine, state_path)
     assert "mapper" in str(exc_info.value)
     assert isinstance(exc_info.value.__cause__, ValueError)
 
@@ -248,7 +299,7 @@ def test_malformed_psg_synth_raises_state_load_error(machine, saves_dir):
         json.dump(data, f)
 
     with pytest.raises(StateLoadError) as exc_info:
-        load_state(machine, state_path)
+        load_state_file(machine, state_path)
     assert "psg" in str(exc_info.value)
     assert isinstance(exc_info.value.__cause__, ValueError)
 
@@ -256,7 +307,7 @@ def test_malformed_psg_synth_raises_state_load_error(machine, saves_dir):
 def test_well_formed_state_does_not_raise_state_load_error(machine, saves_dir):
     rgb = RgbFrame(256, 192, bytes(256 * 192 * 3))
     save_state(machine, rgb, "test")
-    load_state(machine)  # must not raise StateLoadError (or anything else)
+    load_state_file(machine)  # must not raise StateLoadError (or anything else)
 
 
 # --- mapper_kind ------------------------------------------------------------
@@ -281,7 +332,7 @@ def test_mapper_kind_mismatch_raises_value_error(saves_dir):
 
     running_machine = make_machine(rom=_ROM, cartridge=_CART_64K, mapper="ASCII8")
     with pytest.raises(ValueError, match="mapper mismatch") as exc_info:
-        load_state(running_machine)
+        load_state_file(running_machine)
     assert "ascii8" in str(exc_info.value)
     assert "konami" in str(exc_info.value)
 
@@ -307,7 +358,7 @@ def test_mapper2_kind_mismatch_raises_value_error(saves_dir):
 
     running_machine = make_machine(rom=_ROM, cartridge2=_CART_64K, mapper2="ASCII8")
     with pytest.raises(ValueError, match="slot 2 mapper mismatch") as exc_info:
-        load_state(running_machine)
+        load_state_file(running_machine)
     assert "ascii8" in str(exc_info.value)
     assert "konami" in str(exc_info.value)
 
@@ -318,22 +369,22 @@ def test_empty_flat_slot2_roundtrips_without_error(saves_dir):
     machine = make_machine(rom=_ROM)
     rgb = RgbFrame(256, 192, bytes(256 * 192 * 3))
     save_state(machine, rgb, "test")
-    load_state(machine)  # must not raise
+    load_state_file(machine)  # must not raise
 
 
 def test_load_state_restores_vdp_port_state(machine, saves_dir):
     """A half-written control pair, the VRAM pointer and the read-ahead byte
     survive a save/load round trip."""
-    machine.vdp.latch = 0x56
+    machine.vdp.restore_latch(0x56)
     machine.vdp.addr = 0x1256
     machine.vdp.read_buf = 0xAB
     rgb = RgbFrame(256, 192, bytes(256 * 192 * 3))
     save_state(machine, rgb, "test")
 
-    machine.vdp.latch = None
+    machine.vdp.restore_latch(None)
     machine.vdp.addr = 0
     machine.vdp.read_buf = 0
-    load_state(machine)
+    load_state_file(machine)
 
     assert machine.vdp.latch == 0x56
     assert machine.vdp.addr == 0x1256
@@ -353,18 +404,18 @@ def test_load_state_rejects_out_of_range_vdp_latch(machine, saves_dir, value):
         json.dump(data, f)
 
     with pytest.raises(StateLoadError) as exc_info:
-        load_state(machine, state_path)
+        load_state_file(machine, state_path)
     assert exc_info.value.producer == "vdp"
     assert "vdp.latch" in str(exc_info.value)
 
 
 def test_load_state_restores_empty_vdp_latch(machine, saves_dir):
-    machine.vdp.latch = None
+    machine.vdp.restore_latch(None)
     rgb = RgbFrame(256, 192, bytes(256 * 192 * 3))
     save_state(machine, rgb, "test")
 
-    machine.vdp.latch = 0x55
-    load_state(machine)
+    machine.vdp.restore_latch(0x55)
+    load_state_file(machine)
 
     assert machine.vdp.latch is None
 
@@ -377,7 +428,7 @@ def test_memptr_survives_a_save_state(machine, saves_dir):
 
     other = make_machine(rom=_ROM)
     assert other.cpu.registers.WZ == 0xFFFF
-    load_state(other)
+    load_state_file(other)
 
     assert other.cpu.registers.WZ == 0x2805
 
@@ -390,7 +441,7 @@ def test_q_survives_a_save_state(machine, saves_dir):
     save_state(machine, rgb, "test")
 
     other = make_machine(rom=_ROM)
-    load_state(other)
+    load_state_file(other)
 
     assert other.cpu.q == 0xBB
     assert other.cpu.q_next == 0x44
@@ -407,6 +458,6 @@ def test_idle_hint_follows_halted_on_load(machine, saves_dir, halted):
 
     other = make_machine(rom=_ROM)
     other.cpu.idle_hint = not halted
-    load_state(other)
+    load_state_file(other)
 
     assert other.cpu.idle_hint is halted

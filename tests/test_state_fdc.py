@@ -7,15 +7,16 @@ from typing import cast
 import pytest
 
 from host.machine_config import build_machine_from_spec
-from host.state_files import load_state, save_state
+from host.state_files import save_state
 from msx.boundary import RgbFrame
 from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.disk_image import DskDiskImage
 from msx.fdc.interface import REG_DRIVE, FloppyDiskState
 from msx.fdc.tc8566af import TC8566AF
 from msx.fdc.wd2793 import WD2793
-from msx.machine_spec import MachineSpec, _FdcDef, _RomEntry
+from msx.machine_spec import FdcDef, MachineSpec, RomEntry
 from tests.disk_factories import dsk_image
+from tests.factories import load_state_file, restore_state
 
 _2DD = 737280
 _RGB_MSX2 = RgbFrame(256, 192, bytes(256 * 192 * 3))
@@ -38,17 +39,17 @@ def _fdc_spec(tmp_path: Path, *, controller: str, connection_style: str) -> Mach
         name="test_fdc_state",
         generation="msx2",
         rom_base_dir=tmp_path,
-        main_rom_entry=_RomEntry(file="main.rom", size_kb=32, pages=[0, 1]),
+        main_rom_entry=RomEntry(file="main.rom", size_kb=32, pages=[0, 1]),
         logo_rom_entry=None,
-        sub_rom_entry=_RomEntry(file="sub.rom", size_kb=16, pages=[0]),
+        sub_rom_entry=RomEntry(file="sub.rom", size_kb=16, pages=[0]),
         has_ram_mapper=False,
         ram_size_kb=32,
         has_v9938=True,
         has_rtc=False,
         flat_ram_subslot=3,
         flat_ram_size_kb=64,
-        fdc=_FdcDef(
-            disk_rom_entry=_RomEntry(file="disk.rom", size_kb=16, pages=[1]),
+        fdc=FdcDef(
+            disk_rom_entry=RomEntry(file="disk.rom", size_kb=16, pages=[1]),
             controller=controller,
             connection_style=connection_style,
             drives=1,
@@ -96,7 +97,7 @@ def test_wd2793_roundtrip(tmp_path: Path, saves_dir: Path) -> None:
     ctrl.sector_reg = 1
     ctrl.status_reg = 0
 
-    load_state(machine)
+    load_state_file(machine)
 
     assert drive.track == 5
     assert drive.side == 1
@@ -124,7 +125,7 @@ def test_wd2793_restore_reselects_no_drive(tmp_path: Path, saves_dir: Path) -> N
 
     ctrl.drive = machine.fdc.drives[0]
 
-    load_state(machine)
+    load_state_file(machine)
 
     assert ctrl.drive is None
 
@@ -147,7 +148,7 @@ def test_tc8566af_roundtrip(tmp_path: Path, saves_dir: Path) -> None:
     drive.side = 0
     ctrl.control_reg0 = 0
 
-    load_state(machine)
+    load_state_file(machine)
 
     assert drive.track == 7
     assert drive.side == 1
@@ -171,7 +172,42 @@ def test_different_mounted_disk_is_rejected(tmp_path: Path, saves_dir: Path) -> 
     machine.fdc.mount(dsk_image(dsk_b), drive=0)
 
     with pytest.raises(ValueError, match="(?i)disk"):
-        load_state(machine)
+        load_state_file(machine)
+
+
+def test_the_snapshot_holds_no_disk_file_name(tmp_path: Path, saves_dir: Path) -> None:
+    # machine-state "The snapshot holds no disk file name".
+    import hashlib
+    import json
+
+    _make_roms(tmp_path)
+    dsk = tmp_path / "named_game.dsk"
+    _make_disk(dsk, 0x3C)
+    machine = build_machine_from_spec(_wd2793_spec(tmp_path), fdd1=dsk)
+    data = machine.save_state()
+    drive = json.loads(data)["fdc"]["drives"][0]
+    assert drive["disk_size"] == _2DD
+    assert drive["disk_sha1"] == hashlib.sha1(dsk.read_bytes()).hexdigest()
+    assert "disk_path" not in drive
+    assert b"named_game" not in data
+
+
+def test_the_same_content_from_another_file_is_accepted(
+    tmp_path: Path, saves_dir: Path
+) -> None:
+    # machine-state "The same content from another file is accepted".
+    _make_roms(tmp_path)
+    original, copy = tmp_path / "a.dsk", tmp_path / "copy_of_a.dsk"
+    _make_disk(original, 0x11)
+    _make_disk(copy, 0x11)
+    saved = build_machine_from_spec(_wd2793_spec(tmp_path), fdd1=original)
+    assert saved.fdc is not None
+    saved.fdc.drives[0].track = 7
+    state_path = save_state(saved, _RGB_MSX2, "test")
+
+    machine = build_machine_from_spec(_wd2793_spec(tmp_path), fdd1=copy)
+    load_state_file(machine, state_path)
+    assert machine.fdc is not None and machine.fdc.drives[0].track == 7
 
 
 def test_unmounted_vs_mounted_is_rejected(tmp_path: Path, saves_dir: Path) -> None:
@@ -185,7 +221,7 @@ def test_unmounted_vs_mounted_is_rejected(tmp_path: Path, saves_dir: Path) -> No
     machine.fdc.mount(None, drive=0)
 
     with pytest.raises(ValueError, match="(?i)disk"):
-        load_state(machine)
+        load_state_file(machine)
 
 
 def test_fdc_kind_mismatch_is_rejected(tmp_path: Path, saves_dir: Path) -> None:
@@ -200,7 +236,7 @@ def test_fdc_kind_mismatch_is_rejected(tmp_path: Path, saves_dir: Path) -> None:
 
     tc_machine = build_machine_from_spec(_tc8566af_spec(tmp_path), fdd1=dsk)
     with pytest.raises(ValueError, match="(?i)kind"):
-        load_state(tc_machine)
+        load_state_file(tc_machine)
 
 
 def test_fdc_unwired_machine_rejects_fdc_state(tmp_path: Path, saves_dir: Path) -> None:
@@ -216,7 +252,7 @@ def test_fdc_unwired_machine_rejects_fdc_state(tmp_path: Path, saves_dir: Path) 
     assert no_fdc_machine.fdc is None
 
     with pytest.raises(ValueError, match="(?i)fdc"):
-        load_state(no_fdc_machine)
+        load_state_file(no_fdc_machine)
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +260,7 @@ def test_fdc_unwired_machine_rejects_fdc_state(tmp_path: Path, saves_dir: Path) 
 # ---------------------------------------------------------------------------
 
 def test_floppy_disk_state_drive_count_mismatch_rejected_before_restore() -> None:
-    """FloppyDiskState.restore() must reject a drive-count mismatch before
+    """restore_state(FloppyDiskState, ) must reject a drive-count mismatch before
     restoring the controller or any drive, not partway through the
     drive-restore loop."""
     drive = DiskDrive()
@@ -237,7 +273,7 @@ def test_floppy_disk_state_drive_count_mismatch_rejected_before_restore() -> Non
     snap["drives"] = list(snap["drives"]) + [dict(snap["drives"][0])]  # type: ignore[list-item]
 
     with pytest.raises(ValueError, match="(?i)drive count"):
-        state.restore(snap)
+        restore_state(state, snap)
 
     assert drive.track == 5
     assert controller.track_reg == 9
@@ -260,7 +296,7 @@ def test_load_parses_each_producer_once_and_hashes_each_disk_once(
     real_sha1 = DskDiskImage.content_sha1
     real_fdc_parse = type(machine.fdc).parse_state
     real_psg_parse = PSG.parse_synth_state
-    mapper_cls = type(machine.memory._mapper)
+    mapper_cls = type(machine.memory.mapper1)
     real_mapper_parse = mapper_cls.parse_state
 
     def sha1(self):
@@ -284,13 +320,13 @@ def test_load_parses_each_producer_once_and_hashes_each_disk_once(
     monkeypatch.setattr(PSG, "parse_synth_state", psg_parse)
     monkeypatch.setattr(mapper_cls, "parse_state", mapper_parse)
 
-    load_state(machine)
+    load_state_file(machine)
 
     assert counts["fdc"] == 1
     assert counts["psg"] == 1
     assert counts["sha1"] == 1  # one mounted disk
     # slot 1 and slot 2 each hold a mapper; count parses of this class's instances
-    same_class = int(type(machine.memory._mapper2) is mapper_cls) + 1
+    same_class = int(type(machine.memory.mapper2) is mapper_cls) + 1
     assert counts["mapper"] == same_class
 
 
@@ -319,6 +355,6 @@ def test_fdc_identity_mismatch_is_reported_as_an_fdc_state_load_error(
         target = build_machine_from_spec(_tc8566af_spec(tmp_path), fdd1=dsk)
 
     with pytest.raises(StateLoadError) as exc_info:
-        load_state(target)
+        load_state_file(target)
     assert exc_info.value.producer == "fdc"
     assert isinstance(exc_info.value.__cause__, SnapshotMismatchError)

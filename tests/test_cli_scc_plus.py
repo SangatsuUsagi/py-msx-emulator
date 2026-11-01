@@ -13,7 +13,7 @@ from unittest.mock import patch
 import pytest
 
 from host.machine_config import build_machine_from_spec
-from msx.machine_spec import ExtensionOverlay, MachineLoadError, MachineSpec, _RomEntry
+from msx.machine_spec import ExtensionOverlay, MachineLoadError, MachineSpec, RomEntry
 from msx.mapper import SCCICart
 
 _MAIN_PATH = Path(__file__).parent.parent / "__main__.py"
@@ -138,7 +138,7 @@ def _msx1_spec(tmp_path: Path) -> MachineSpec:
         name="test_msx1",
         generation="msx1",
         rom_base_dir=tmp_path,
-        main_rom_entry=_RomEntry(file="main.rom", size_kb=32, pages=[0, 1]),
+        main_rom_entry=RomEntry(file="main.rom", size_kb=32, pages=[0, 1]),
         logo_rom_entry=None,
         sub_rom_entry=None,
         has_ram_mapper=False,
@@ -157,17 +157,17 @@ def _make_fmpac_overlay(tmp_path: Path) -> ExtensionOverlay:
     return ExtensionOverlay(
         device="fmpac",
         rom_base_dir=tmp_path,
-        rom_entry=_RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
+        rom_entry=RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
         sram_save_path=tmp_path / "fmpac.sram",
     )
 
 
 def test_build_machine_installs_scci_cart_in_slot2(tmp_path: Path) -> None:
     machine = build_machine_from_spec(_msx1_spec(tmp_path), extension_overlay2=_scc_plus_overlay())
-    assert isinstance(machine.memory._mapper2, SCCICart)
-    assert not isinstance(machine.memory._mapper, SCCICart)
+    assert isinstance(machine.memory.mapper2, SCCICart)
+    assert not isinstance(machine.memory.mapper1, SCCICart)
     assert machine.scc is not None
-    assert machine.scc is machine.memory._mapper2.scc
+    assert machine.scc is machine.memory.mapper2.scc
 
 
 def test_build_machine_rejects_scc_plus_when_slot1_is_konamiscc(tmp_path: Path) -> None:
@@ -182,13 +182,13 @@ def test_build_machine_rejects_scc_plus_when_slot1_is_konamiscc(tmp_path: Path) 
 def test_machine_reset_restores_scci_cartridge_to_compatible_mode(tmp_path: Path) -> None:
     """Machine.reset() resets both the carried SCC chip (scc.reset()) and,
     as of openspec/changes/wire-cartridge-mapper-and-ppi-reset, the SCCICart
-    itself (memory._mapper2.reset()): the mode register and bank registers
+    itself (memory.mapper2.reset()): the mode register and bank registers
     return to their power-on values (0x00, [0, 1, 2, 3]), so a Plus-mode
     cartridge does not survive a reset -- it comes back in Compatible mode
     with no active SCC window, matching the chip's own reset() rather than
     being resynced to its pre-reset state."""
     machine = build_machine_from_spec(_msx1_spec(tmp_path), extension_overlay2=_scc_plus_overlay())
-    cart = machine.memory._mapper2
+    cart = machine.memory.mapper2
     assert isinstance(cart, SCCICart)
 
     cart.write(0xBFFE, 0x20)  # mode register: select Plus mode
@@ -201,12 +201,12 @@ def test_machine_reset_restores_scci_cartridge_to_compatible_mode(tmp_path: Path
     assert machine.scc._plus_mode is False
     assert cart._mode_register == 0x00
     assert cart._banks == [0, 1, 2, 3]
-    assert cart._scc_window_base is None
+    assert cart._scc_window_base == 0x10000
 
 
 def test_build_machine_no_extension_preserves_normal_slot2_resolution(tmp_path: Path) -> None:
     machine = build_machine_from_spec(_msx1_spec(tmp_path))
-    assert not isinstance(machine.memory._mapper2, SCCICart)
+    assert not isinstance(machine.memory.mapper2, SCCICart)
 
 
 def test_build_machine_scc_plus_with_slot1_cartridge(tmp_path: Path) -> None:
@@ -216,8 +216,8 @@ def test_build_machine_scc_plus_with_slot1_cartridge(tmp_path: Path) -> None:
         _msx1_spec(tmp_path), cartridge1=bytes(65536), mapper1="ASCII8",
         extension_overlay2=_scc_plus_overlay(),
     )
-    assert isinstance(machine.memory._mapper2, SCCICart)
-    assert not isinstance(machine.memory._mapper, SCCICart)
+    assert isinstance(machine.memory.mapper2, SCCICart)
+    assert not isinstance(machine.memory.mapper1, SCCICart)
 
 
 @pytest.mark.parametrize("addr", [0x9800, 0xB800])

@@ -5,9 +5,9 @@ The mixer hands off the unfiltered mix; the output filter is the frontend's
 """
 
 from msx.audio_mixer import AudioMixer
-from msx.psg import SAMPLES_PER_FRAME
+from msx.boundary import AUDIO_SAMPLE_RATE
 
-N = SAMPLES_PER_FRAME
+N = AUDIO_SAMPLE_RATE // 60
 
 
 def _pcm(value: int, n: int = N) -> bytes:

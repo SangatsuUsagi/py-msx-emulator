@@ -10,17 +10,16 @@ from host.app_config import VALID_EXTENSIONS, VALID_MAPPERS
 
 if TYPE_CHECKING:
     from host.app_config import AppConfig
+    from host.debugger.prompt import Debugger
+    from host.media import DiskFiles
     from host.rpc_server import DebugServer
-    from msx.boundary import MediaId, RtcTime
-    from msx.diagnostics.logger import DebugLogger
-    from msx.machine import Machine
+    from host.trace import TraceOutput
+    from msx.boundary import RtcTime
+    from msx.core_api import CoreApi
     from msx.machine_spec import AnyExtensionOverlay, MachineSpec
 
 _PROJECT_ROOT = Path(__file__).parent
 _CONFIG_DIR = _PROJECT_ROOT / "config"
-
-# Hardware debug register count (MSX2): caps the breakpoint/watchpoint lists.
-_MAX_BREAKPOINTS = 4
 
 _T = TypeVar("_T")
 
@@ -35,7 +34,10 @@ def _first_set(*candidates: _T | None, default: _T) -> _T:
 
 
 def _parse_breakpoints(spec: str | None) -> list[int]:
-    """Parse a comma-separated hex breakpoint list into up to 4 addresses."""
+    """Parse a comma-separated hex breakpoint list into up to MAX_BREAKPOINTS
+    (4) addresses."""
+    from msx.boundary import MAX_BREAKPOINTS
+
     addrs: list[int] = []
     if spec is None:
         return addrs
@@ -49,17 +51,31 @@ def _parse_breakpoints(spec: str | None) -> list[int]:
             print(f"error: invalid breakpoint address: {tok!r} (expected hex)",
                   file=sys.stderr)
             sys.exit(1)
-    if len(addrs) > _MAX_BREAKPOINTS:
-        print(f"warning: more than {_MAX_BREAKPOINTS} breakpoints given; "
-              f"only first {_MAX_BREAKPOINTS} will be used", file=sys.stderr)
-        addrs = addrs[:_MAX_BREAKPOINTS]
+    if len(addrs) > MAX_BREAKPOINTS:
+        print(f"warning: more than {MAX_BREAKPOINTS} breakpoints given; "
+              f"only first {MAX_BREAKPOINTS} will be used", file=sys.stderr)
+        addrs = addrs[:MAX_BREAKPOINTS]
     return addrs
 
 
-def _parse_watchpoints(spec: str | None) -> list[tuple[int, str]]:
+def _watch_summary(entries: list[tuple[int, int]]) -> str:
+    """The startup line's list of watchpoints: "C000h[rw], ..."."""
+    from host.watch import watch_text
+
+    parts: list[str] = []
+    for addr, kind in entries:
+        parts.append(f"{addr:04X}h[{watch_text(kind)}]")
+    return ", ".join(parts)
+
+
+def _parse_watchpoints(spec: str | None) -> list[tuple[int, int]]:
     """Parse a comma-separated `addr[,mode]` watchpoint list (mode in r/w/rw,
-    default rw) into up to 4 (addr, mode) entries."""
-    entries: list[tuple[int, str]] = []
+    default rw) into up to MAX_WATCHPOINTS (4) (addr, kind) entries
+    (host/watch.py)."""
+    from host.watch import watch_kind_exact
+    from msx.boundary import MAX_WATCHPOINTS, WATCH_READ, WATCH_WRITE
+
+    entries: list[tuple[int, int]] = []
     if spec is None:
         return entries
     pending_addr: int | None = None
@@ -67,16 +83,17 @@ def _parse_watchpoints(spec: str | None) -> list[tuple[int, str]]:
         tok = tok.strip().lower()
         if not tok:
             continue
-        if tok in ("r", "w", "rw"):
+        kind = watch_kind_exact(tok)
+        if kind is not None:
             if pending_addr is not None:
-                entries.append((pending_addr, tok))
+                entries.append((pending_addr, kind))
                 pending_addr = None
             else:
                 print(f"error: mode {tok!r} without preceding address", file=sys.stderr)
                 sys.exit(1)
         else:
             if pending_addr is not None:
-                entries.append((pending_addr, "rw"))
+                entries.append((pending_addr, WATCH_READ | WATCH_WRITE))
             try:
                 pending_addr = int(tok, 16) & 0xFFFF
             except ValueError:
@@ -87,11 +104,11 @@ def _parse_watchpoints(spec: str | None) -> list[tuple[int, str]]:
                 )
                 sys.exit(1)
     if pending_addr is not None:
-        entries.append((pending_addr, "rw"))
-    if len(entries) > _MAX_BREAKPOINTS:
-        print(f"warning: more than {_MAX_BREAKPOINTS} watchpoints given; "
-              f"only first {_MAX_BREAKPOINTS} will be used", file=sys.stderr)
-        entries = entries[:_MAX_BREAKPOINTS]
+        entries.append((pending_addr, WATCH_READ | WATCH_WRITE))
+    if len(entries) > MAX_WATCHPOINTS:
+        print(f"warning: more than {MAX_WATCHPOINTS} watchpoints given; "
+              f"only first {MAX_WATCHPOINTS} will be used", file=sys.stderr)
+        entries = entries[:MAX_WATCHPOINTS]
     return entries
 
 
@@ -105,7 +122,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--debug", action="store_true",
                         help="Enable diagnostic logging")
     parser.add_argument("--log", metavar="FILE",
-                        help="Write diagnostic log to FILE (requires --debug)")
+                        help="Also append the --debug log to FILE (requires --debug)")
     parser.add_argument("--speed", type=float, default=None,
                         help="Emulation speed multiplier (default: 1.0)")
     parser.add_argument("--scale", type=int, default=None, metavar="N",
@@ -179,11 +196,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                              "and report average FPS (no SDL window)")
     parser.add_argument("--break-point", metavar="ADDRS", default=None,
                         dest="break_point",
-                        help="Comma-separated hex breakpoint addresses, max 4 (MSX2 only)")
+                        help="Comma-separated hex breakpoint addresses, max 4")
     parser.add_argument("--watch-point", metavar="ADDRS", default=None,
                         dest="watch_point",
-                        help="Comma-separated watchpoint addresses, max 4 (MSX2 only; "
-                             "breaks on read or write)")
+                        help="Comma-separated watchpoints, each ADDR[,MODE], max 4 "
+                             "(MODE is r, w or rw, default rw)")
     parser.add_argument("--rpc", action="store_const", const=True, default=None,
                         help="Enable the embedded Unix-socket JSON-RPC control server "
                              "(interactive SDL run mode only; off by default)")
@@ -193,8 +210,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 
 class _ResolvedPaths(NamedTuple):
-    cart_path: Path | None
-    slot2_path: Path | None
     fdd1_paths: list[Path]
     fdd2_path: Path | None
     cartridge: bytes | None
@@ -234,7 +249,7 @@ def _resolve_paths(
 
     cartridge = cart_path.read_bytes() if cart_path else None
     cartridge2 = slot2_path.read_bytes() if slot2_path else None
-    return _ResolvedPaths(cart_path, slot2_path, fdd1_paths, fdd2_path, cartridge, cartridge2)
+    return _ResolvedPaths(fdd1_paths, fdd2_path, cartridge, cartridge2)
 
 
 def _check_identical_cartridges(cartridge: bytes | None, cartridge2: bytes | None) -> None:
@@ -330,19 +345,39 @@ def _print_startup_summary(
         print(f"benchmark: {args.benchmark} frames (headless)")
 
 
-def _run_headless_frames(machine: "Machine", count_frame: int, resume: str | None) -> None:
+def _run_headless_frames(
+    machine: "CoreApi", count_frame: int, resume: str | None, debugger: "Debugger"
+) -> None:
     """Run exactly `count_frame` frames headlessly (no SDL window).
 
     No host input and no video: emulated state does not depend on rendering.
+    A break opens the debugger; the stopped frame then continues and counts
+    once.
     """
-    from msx.input import InputFrame
-
     if resume is not None:
         from host.state_files import resume_state
         resume_state(machine, resume)
+    _run_frames(machine, count_frame, False, debugger)
+
+
+def _run_frames(
+    machine: "CoreApi", count: int, render_video: bool, debugger: "Debugger"
+) -> None:
+    """Run `count` complete frames with no host input. A break opens the
+    debugger; the stopped frame then continues and counts once."""
+    from host.debugger.stop import handle_stop, sigint_requests_break
+    from msx.input import InputFrame
+
     no_input = InputFrame()
-    for _ in range(count_frame):
-        machine.step_frame(no_input, render_video=False)
+    done = 0
+    with sigint_requests_break(machine):
+        while done < count:
+            out = machine.step_frame(no_input, render_video=render_video)
+            debugger.drain_trace()
+            if out.stop_reason:
+                handle_stop(machine, out.stop_reason, debugger, None)
+            if out.frame_complete:
+                done += 1
 
 
 def _host_rtc_time() -> "RtcTime":
@@ -355,21 +390,20 @@ def _host_rtc_time() -> "RtcTime":
     return RtcTime(now.year, now.month, now.day, now.hour, now.minute, now.second)
 
 
-def _run_benchmark(machine: "Machine", frames: int, resume: str | None) -> None:
-    """Run `frames` frames unthrottled and report average FPS (no SDL window)."""
+def _run_benchmark(
+    machine: "CoreApi", frames: int, resume: str | None, debugger: "Debugger"
+) -> None:
+    """Run `frames` frames unthrottled and report average FPS (no SDL window).
+    A break opens the debugger, and the time spent there counts."""
     import time
 
     from host.state_files import resume_state
     if resume is not None:
         resume_state(machine, resume)
 
-    from msx.input import InputFrame
-
     # Every frame renders RGB video, as interactive play does.
-    no_input = InputFrame()
     start = time.perf_counter()
-    for _ in range(frames):
-        machine.step_frame(no_input, render_video=True)
+    _run_frames(machine, frames, True, debugger)
     elapsed = time.perf_counter() - start
 
     print(f"frames  : {frames}")
@@ -378,15 +412,15 @@ def _run_benchmark(machine: "Machine", frames: int, resume: str | None) -> None:
 
 
 def _cleanup(
-    machine: "Machine | None", rpc_server: "DebugServer | None", logger: "DebugLogger | None",
+    machine: "CoreApi | None", rpc_server: "DebugServer | None", log_file: TextIO | None,
     trace_file: TextIO | None, mapper_trace_file: TextIO | None,
-    sram_files: "dict[MediaId, Path]",
+    sram_files: "dict[int, Path]", disk_files: "DiskFiles",
 ) -> None:
     """Tear down open resources and flush SRAM / disk writes on exit."""
     if rpc_server is not None:
         rpc_server.stop()
-    if logger is not None:
-        logger.close()
+    if log_file is not None:
+        log_file.close()
     if trace_file is not None:
         trace_file.close()
     if mapper_trace_file is not None:
@@ -395,7 +429,9 @@ def _cleanup(
         # Write every dirty medium (SRAM, RTC CMOS RAM, disk writes from
         # FORMAT / file save) back to its file.
         from host.media import persist_dirty_media
-        persist_dirty_media(machine, sram_files)
+        persist_dirty_media(machine, sram_files, disk_files)
+        from msx.machine_loader import release_machine
+        release_machine(machine)
 
 
 class _EffectiveOptions(NamedTuple):
@@ -466,6 +502,16 @@ def _resolve_effective_options(
     )
 
 
+def _check(machine: "CoreApi", status: int) -> None:
+    """Stop with the core's message when a setup call did not return
+    STATUS_OK (the CLI checks its values first, so this guards a core that
+    disagrees)."""
+    from msx.boundary import STATUS_OK
+
+    if status != STATUS_OK:
+        _fail(machine.last_error_text().decode("utf-8"))
+
+
 def _fail(msg: str) -> NoReturn:
     """Print a startup-validation error to stderr and exit (code 1)."""
     print(f"error: {msg}", file=sys.stderr)
@@ -511,6 +557,116 @@ def _validate_options(args: argparse.Namespace, opts: _EffectiveOptions) -> None
               "slots is not supported")
 
 
+def _load_spec_and_overlays(
+    machine_id: str, opts: _EffectiveOptions,
+) -> tuple["MachineSpec", "AnyExtensionOverlay | None", "AnyExtensionOverlay | None"]:
+    """The machine spec and the two extension overlays from the YAML, or
+    stop with the loader's message."""
+    from host.machine_config import (
+        load_device_registry,
+        load_extension_overlay,
+        load_machine_spec,
+    )
+    from msx.machine_spec import MachineLoadError
+
+    try:
+        device_registry = load_device_registry(_CONFIG_DIR)
+        spec = load_machine_spec(machine_id, _CONFIG_DIR, device_registry, _PROJECT_ROOT)
+        extension_overlay1 = (
+            load_extension_overlay(opts.extension1, _CONFIG_DIR, _PROJECT_ROOT)
+            if opts.extension1 is not None else None
+        )
+        extension_overlay2 = (
+            load_extension_overlay(opts.extension2, _CONFIG_DIR, _PROJECT_ROOT)
+            if opts.extension2 is not None else None
+        )
+    except MachineLoadError as exc:
+        _fail(str(exc))
+    return spec, extension_overlay1, extension_overlay2
+
+
+def _rom_names(spec: "MachineSpec") -> tuple[str, str]:
+    """The main and sub ROM file names the debugger's sl/st print ("" for
+    none): the core keeps no ROM name."""
+    sub = spec.sub_rom_entry.file if spec.sub_rom_entry is not None else ""
+    return spec.main_rom_entry.file, sub
+
+
+def _disks_for(
+    spec: "MachineSpec", fdd1_paths: list[Path], fdd2_path: Path | None,
+) -> tuple[list[Path], Path | None]:
+    """The disk images to mount: none, with a warning, on a machine without
+    a floppy interface."""
+    if (fdd1_paths or fdd2_path is not None) and spec.fdc is None:
+        print("warning: --fdd1/--fdd2 given but machine has no floppy interface; "
+              "ignoring", file=sys.stderr)
+        return [], None
+    return fdd1_paths, fdd2_path
+
+
+def _set_break_points(
+    machine: "CoreApi", breakpoint_addrs: list[int], watchpoint_entries: list[tuple[int, int]],
+) -> None:
+    """Set the --break-point and --watch-point lists and print them."""
+    if breakpoint_addrs:
+        _check(machine, machine.set_breakpoints(breakpoint_addrs))
+        print(f"break   : {', '.join(f'{a:04X}h' for a in breakpoint_addrs)}")
+    if watchpoint_entries:
+        _check(machine, machine.set_watchpoints(watchpoint_entries))
+        print(f"watch   : {_watch_summary(watchpoint_entries)}")
+
+
+def _open_trace_outputs(
+    args: argparse.Namespace,
+) -> tuple["TraceOutput", TextIO | None, TextIO | None]:
+    """The run's trace outputs, opened before the build: the VDP trace
+    stream and, with --debug, the debug log (stderr, and with --log appended
+    to FILE). Returns the outputs, the VDP trace file and the log file (None
+    when not opened)."""
+    from host.trace import TraceOutput
+
+    trace_output = TraceOutput()
+    trace_file = None
+    if args.vdp_trace:
+        if args.vdp_trace_out:
+            trace_file = open(args.vdp_trace_out, "w", encoding="utf-8")
+            trace_output.set_vdp_output(trace_file, args.vdp_trace_out)
+        else:
+            trace_output.set_vdp_output(sys.stdout, "stdout")
+    log_file = None
+    if args.debug:
+        if args.log:
+            log_file = open(args.log, "a", encoding="utf-8")
+        trace_output.set_debug_output(log_file)
+    return trace_output, trace_file, log_file
+
+
+def _start_traces(
+    machine: "CoreApi", args: argparse.Namespace, trace_output: "TraceOutput"
+) -> TextIO | None:
+    """Turn on the trace kinds the flags ask for, after the build, and open
+    the mapper trace output. Returns the mapper trace file (None when not
+    opened)."""
+    from msx.boundary import TRACE_DEBUG, TRACE_MAPPER, TRACE_VDP
+
+    if args.debug:
+        _check(machine, machine.set_trace_kinds(machine.trace_kinds() | TRACE_DEBUG))
+    if args.vdp_trace:
+        _check(machine, machine.set_trace_kinds(machine.trace_kinds() | TRACE_VDP))
+    mapper_trace_file = None
+    if args.mapper_trace:
+        if args.mapper_trace_out:
+            mapper_trace_file = open(args.mapper_trace_out, "w", encoding="utf-8")
+            trace_output.set_map_output(mapper_trace_file, args.mapper_trace_out)
+        else:
+            trace_output.set_map_output(sys.stdout, "stdout")
+        if machine.trace_sources() & TRACE_MAPPER:
+            _check(machine, machine.set_trace_kinds(machine.trace_kinds() | TRACE_MAPPER))
+        else:
+            print("mapper-trace: no bank-switching ROM mapper present", file=sys.stderr)
+    return mapper_trace_file
+
+
 def main() -> None:
     args = _build_arg_parser().parse_args()
 
@@ -536,43 +692,18 @@ def main() -> None:
     machine_id = _resolve_machine_id(args, app_cfg, db_system)
 
     # --- Load machine spec from YAML ---
-    from host.machine_config import (
-        load_device_registry,
-        load_extension_overlay,
-        load_machine_config,
-        load_machine_spec,
-        sram_paths,
-    )
-    from msx.machine_loader import build_machine
+    from host.machine_config import load_machine_config, sram_paths
+    from msx.machine_loader import create_machine
     from msx.machine_spec import MachineLoadError
-    try:
-        device_registry = load_device_registry(_CONFIG_DIR)
-        spec = load_machine_spec(machine_id, _CONFIG_DIR, device_registry, _PROJECT_ROOT)
-        extension_overlay1 = (
-            load_extension_overlay(opts.extension1, _CONFIG_DIR, _PROJECT_ROOT)
-            if opts.extension1 is not None else None
-        )
-        extension_overlay2 = (
-            load_extension_overlay(opts.extension2, _CONFIG_DIR, _PROJECT_ROOT)
-            if opts.extension2 is not None else None
-        )
-    except MachineLoadError as exc:
-        _fail(str(exc))
 
-    # --- Disk image only applies to machines with a floppy interface ---
-    if (fdd1_paths or fdd2_path is not None) and spec.fdc is None:
-        print("warning: --fdd1/--fdd2 given but machine has no floppy interface; "
-              "ignoring", file=sys.stderr)
-        fdd1_paths = []
-        fdd2_path = None
+    spec, extension_overlay1, extension_overlay2 = _load_spec_and_overlays(machine_id, opts)
+
+    fdd1_paths, fdd2_path = _disks_for(spec, fdd1_paths, fdd2_path)
 
     # --- Resolve display mapper for summary ---
-    if opts.mapper1 != "auto":
-        display_mapper = opts.mapper1
-    elif cartridge:
+    display_mapper = opts.mapper1
+    if display_mapper == "auto" and cartridge:
         display_mapper = lookup(cartridge) or "auto"
-    else:
-        display_mapper = "auto"
 
     breakpoint_addrs = _parse_breakpoints(args.break_point)
     watchpoint_entries = _parse_watchpoints(args.watch_point)
@@ -582,23 +713,18 @@ def main() -> None:
         opts.mouse_port, args,
     )
 
-    from msx.diagnostics.logger import DebugLogger
-    from msx.vdp.tracer import Tracer
-
-    # --- Build tracer ---
-    tracer: Tracer | None = None
-    _trace_file = None
-    _mapper_trace_file = None
-    if args.vdp_trace:
-        if args.vdp_trace_out:
-            _trace_file = open(args.vdp_trace_out, "w", encoding="utf-8")
-        tracer = Tracer(enabled=True, output=_trace_file if _trace_file else sys.stdout)
+    # --- Trace outputs (the kinds are turned on after the build) ---
+    trace_output, trace_file, log_file = _open_trace_outputs(args)
+    mapper_trace_file = None
 
     game_title = (lookup_title(cartridge) if cartridge else None) or "py-msx-emulator"
-    logger = DebugLogger(log_path=args.log) if args.debug else None
     machine = None
     rpc_server = None
-    sram_files: "dict[MediaId, Path]" = {}
+    sram_files: "dict[int, Path]" = {}
+    from host.media import DiskFiles
+    # The file of each drive's disk: one table for the debugger, the RPC
+    # server, the frontend and the write-back on exit.
+    disk_files = DiskFiles()
     try:
         try:
             config = load_machine_config(
@@ -614,39 +740,40 @@ def main() -> None:
                 rtc_initial_time=_host_rtc_time(),
             )
             sram_files = sram_paths(config)
-            machine = build_machine(config, logger=logger, tracer=tracer)
+            disk_files = DiskFiles(config.disk_files)
         except MachineLoadError as exc:
             _fail(str(exc))
+        result = create_machine(config.config)
+        if result.machine is None:
+            _fail(result.error_text.decode("utf-8"))
+        machine = result.machine
 
-        # Attach the interactive debugger for all machines so Ctrl-C drops into
-        # the REPL on MSX1 too (the slot/mapper tools are most useful there).
+        # The interactive debugger for all machines, so Ctrl-C drops into the
+        # REPL on MSX1 too (the slot/mapper tools are most useful there). The
+        # host opens it when step_frame stops (host/debugger/stop.py).
         from host.debugger.prompt import Debugger
-        machine.attach_debugger(Debugger(machine))
+        debugger = Debugger(machine, disk_files, trace_output, _rom_names(spec))
 
-        if breakpoint_addrs:
-            machine.set_breakpoints(breakpoint_addrs)
-            print(f"break   : {', '.join(f'{a:04X}h' for a in breakpoint_addrs)}")
-        if watchpoint_entries:
-            machine.set_watchpoints(watchpoint_entries)
-            print(f"watch   : {', '.join(f'{a:04X}h[{m}]' for a, m in watchpoint_entries)}")
+        _set_break_points(machine, breakpoint_addrs, watchpoint_entries)
 
-        if args.mapper_trace:
-            from msx.mapper_tracer import attach_to_machine
-            if args.mapper_trace_out:
-                _mapper_trace_file = open(args.mapper_trace_out, "w", encoding="utf-8")
-            if attach_to_machine(machine, output=_mapper_trace_file or sys.stdout) is None:
-                print("mapper-trace: no bank-switching ROM mapper present", file=sys.stderr)
+        mapper_trace_file = _start_traces(machine, args, trace_output)
 
+        headless = args.count_frame is not None or args.benchmark is not None
+        if headless and opts.mouse_port is not None:
+            # The SDL2 run attaches in run(), with the host mouse. A headless
+            # run attaches here, before its resume: a state saved with a mouse
+            # loads only on a machine with one (machine-core "The host
+            # attaches the mouse at run time").
+            _check(machine, machine.attach_mouse(opts.mouse_port))
         if args.count_frame is not None:
-            _run_headless_frames(machine, args.count_frame, args.resume)
+            _run_headless_frames(machine, args.count_frame, args.resume, debugger)
         elif args.benchmark is not None:
-            _run_benchmark(machine, args.benchmark, args.resume)
+            _run_benchmark(machine, args.benchmark, args.resume, debugger)
         else:
             if opts.rpc_enabled:
                 from host.rpc_server import DEFAULT_SOCKET_PATH, DebugServer
                 sock_path = args.rpc_socket or app_cfg.rpc_socket or DEFAULT_SOCKET_PATH
-                rpc_server = DebugServer(machine, sock_path=sock_path)
-                machine.set_pause_hook(rpc_server.on_pause)
+                rpc_server = DebugServer(machine, sock_path=sock_path, disk_files=disk_files)
                 rpc_server.start()
                 print(f"rpc     : {sock_path}")
             from frontend.sdl2_frontend import run
@@ -658,9 +785,12 @@ def main() -> None:
                 turbo_period=app_cfg.turbo_period(),
                 mouse_port=opts.mouse_port, fdd1_images=fdd1_paths,
                 hotkey_bindings=resolve_hotkeys(app_cfg.hotkey_bindings()),
-                keyboard_joystick=app_cfg.keyboard_joystick_buttons)
+                keyboard_joystick=app_cfg.keyboard_joystick_buttons,
+                debugger=debugger, disk_files=disk_files)
     finally:
-        _cleanup(machine, rpc_server, logger, _trace_file, _mapper_trace_file, sram_files)
+        _cleanup(
+            machine, rpc_server, log_file, trace_file, mapper_trace_file, sram_files, disk_files
+        )
 
 
 if __name__ == "__main__":

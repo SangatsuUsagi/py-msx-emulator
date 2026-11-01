@@ -46,7 +46,6 @@ class FdcController(Protocol[S]):
     drive: DiskDrive | None
     def abort(self) -> None: ...
     def snapshot(self) -> Mapping[str, object]: ...
-    def restore(self, state: dict[str, object]) -> None: ...
     def parse_state(self, obj: object, label: str) -> S: ...
     def apply_state(self, state: S) -> None: ...
 
@@ -223,11 +222,6 @@ class FloppyDiskState(Generic[S]):
             drives.append(drive.parse_state(drive_objs[i], f"{label}.drives[{i}]"))
         return controller, drives
 
-    def restore(self, state: dict[str, object]) -> None:
-        """Restore the controller's and every drive's own state produced by
-        snapshot(); the whole state is validated before anything is assigned."""
-        self.apply_state(self.parse_state(state, "fdc"))
-
     def apply_state(self, state: FloppyDiskStateParsed[S]) -> None:
         """Assign a state returned by parse_state()."""
         self.controller.apply_state(state.controller)
@@ -381,15 +375,6 @@ class FloppyDiskBase(abc.ABC, Generic[S, C]):
         (it reselects the controller's drive), then controller and drives."""
         self._apply_connection_style(state.connection_style)
         self.state.apply_state(state)
-
-    def restore(self, state: dict[str, object]) -> None:
-        """Restore state produced by snapshot(). The whole state is
-        validated by parse_state() before anything is assigned.
-
-        Raises:
-            ValueError: See parse_state().
-        """
-        self.apply_state(self.parse_state(state, "fdc"))
 
     @abc.abstractmethod
     def read_mem(self, addr: int) -> int:

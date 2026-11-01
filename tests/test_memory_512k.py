@@ -22,8 +22,8 @@ from host.state_files import load_state, save_state
 from msx.boundary import RgbFrame
 from msx.machine_spec import (
     ExpandedExtensionOverlay,
+    ExpandedSubslotDevice,
     MachineLoadError,
-    _ExpandedSubslotDevice,
 )
 from msx.ram_mapper import RamMapper
 
@@ -300,7 +300,7 @@ def test_two_ram_mapper_subslots_in_one_overlay_rejected(tmp_path: Path) -> None
 
 def _ram_mapper_overlay(size_kb: int = 512) -> ExpandedExtensionOverlay:
     return ExpandedExtensionOverlay(
-        subslots={0: _ExpandedSubslotDevice(device="ram_mapper", size_kb=size_kb)},
+        subslots={0: ExpandedSubslotDevice(device="ram_mapper", size_kb=size_kb)},
     )
 
 
@@ -311,7 +311,7 @@ def test_build_machine_wires_ram_mapper_subslot(tmp_path: Path) -> None:
         extension_overlay2=_ram_mapper_overlay()
     )
     assert machine.memory.slot2_sub_slot_enabled is True
-    sub0 = machine.memory._mapper2_subslots[0]
+    sub0 = machine.memory.mapper2_subslots[0]
     assert isinstance(sub0, RamMapper)
     assert len(sub0.ram) == 512 * 1024
 
@@ -323,7 +323,7 @@ def test_ram_mapper_subslot_responds_on_standard_ports(tmp_path: Path) -> None:
         extension_overlay2=_ram_mapper_overlay()
     )
     machine.io.write_port(0xFF, 0x05)
-    sub0 = machine.memory._mapper2_subslots[0]
+    sub0 = machine.memory.mapper2_subslots[0]
     assert isinstance(sub0, RamMapper)
     assert sub0.banks[3] == 5
     assert machine.io.read_port(0xFE) is not None  # port reachable, no exception
@@ -335,7 +335,7 @@ def test_ram_mapper_cartridge_starts_blank(tmp_path: Path) -> None:
         spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K,
         extension_overlay2=_ram_mapper_overlay()
     )
-    sub0 = machine.memory._mapper2_subslots[0]
+    sub0 = machine.memory.mapper2_subslots[0]
     assert isinstance(sub0, RamMapper)
     assert all(b == 0 for b in sub0.ram)
 
@@ -346,7 +346,7 @@ def test_machine_reset_resets_slot2_subslot_ram_mapper_banks(tmp_path: Path) -> 
         spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K,
         extension_overlay2=_ram_mapper_overlay()
     )
-    sub0 = machine.memory._mapper2_subslots[0]
+    sub0 = machine.memory.mapper2_subslots[0]
     assert isinstance(sub0, RamMapper)
     sub0.banks = [3, 0, 0, 5]
     sub0.write(0xC000, 0x77)  # page 3 -> bank 5, physical offset 5 * 0x4000
@@ -361,9 +361,9 @@ def test_unpopulated_subslots_read_open_bus(tmp_path: Path) -> None:
         spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K,
         extension_overlay2=_ram_mapper_overlay()
     )
-    assert machine.memory._mapper2_subslots[1] is None
-    assert machine.memory._mapper2_subslots[2] is None
-    assert machine.memory._mapper2_subslots[3] is None
+    assert machine.memory.mapper2_subslots[1] is None
+    assert machine.memory.mapper2_subslots[2] is None
+    assert machine.memory.mapper2_subslots[3] is None
 
 
 # ---------------------------------------------------------------------------
@@ -379,7 +379,7 @@ def test_build_machine_wires_ram_mapper_subslot_on_slot1(tmp_path: Path) -> None
     )
     assert machine.memory.slot1_sub_slot_enabled is True
     assert machine.memory.slot2_sub_slot_enabled is False
-    sub0 = machine.memory._mapper1_subslots[0]
+    sub0 = machine.memory.mapper1_subslots[0]
     assert isinstance(sub0, RamMapper)
     assert len(sub0.ram) == 512 * 1024
     machine.io.write_port(0xFF, 0x05)
@@ -421,7 +421,7 @@ def test_accepted_on_machine_with_no_ram_mapper(tmp_path: Path) -> None:
         spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K,
         extension_overlay2=_ram_mapper_overlay()
     )
-    assert isinstance(machine.memory._mapper2_subslots[0], RamMapper)
+    assert isinstance(machine.memory.mapper2_subslots[0], RamMapper)
 
 
 def test_rejected_on_msx1_base_machine(tmp_path: Path) -> None:
@@ -482,7 +482,7 @@ def test_roundtrip_preserves_ram_mapper_banks_and_contents(
         spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K,
         extension_overlay2=_ram_mapper_overlay()
     )
-    sub0 = machine.memory._mapper2_subslots[0]
+    sub0 = machine.memory.mapper2_subslots[0]
     assert isinstance(sub0, RamMapper)
     sub0.banks = [1, 2, 3, 4]
     sub0.write(0xC000, 0xAB)

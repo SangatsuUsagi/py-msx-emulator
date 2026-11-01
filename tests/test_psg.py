@@ -1,10 +1,9 @@
-from types import SimpleNamespace
-
 import pytest
 
 from msx.input import InputLines
 from msx.mouse import MouseDevice
-from msx.psg import PSG, PSG_CLOCK, SAMPLE_RATE, JoystickPort, MouseSlot
+from msx.psg import PSG, PSG_CLOCK, JoystickPort, MouseSlot
+from tests.factories import restore_psg_synth
 
 
 def _press(lines: InputLines, port: int, bit: int) -> None:
@@ -292,7 +291,7 @@ def test_reset_restores_register_defaults() -> None:
 
 def test_reset_clears_pending_events() -> None:
     psg = PSG()
-    psg._machine = SimpleNamespace(cycle_count=5)
+    psg._clock.cycle = 5
     psg.write_port(0xA0, 8)
     psg.write_port(0xA1, 0x0F)
     assert psg._events
@@ -317,10 +316,6 @@ def test_unmapped_data_write_port_read_returns_ff() -> None:
 
 def test_psg_clock_constant() -> None:
     assert PSG_CLOCK == 223722
-
-
-def test_sample_rate_constant() -> None:
-    assert SAMPLE_RATE == 44100
 
 
 def test_max_events_constant() -> None:
@@ -360,7 +355,7 @@ def _program_tone_noise_envelope(psg: PSG) -> None:
     psg.write_port(0xA1, 0x0E)  # envelope shape (continuing ramp)
 
 
-def test_snapshot_synth_and_restore_synth_round_trip() -> None:
+def test_snapshot_synth_and_apply_synth_state_round_trip() -> None:
     psg = PSG()
     _program_tone_noise_envelope(psg)
     psg.generate_samples(500)  # advance tone/noise/envelope counters
@@ -370,12 +365,33 @@ def test_snapshot_synth_and_restore_synth_round_trip() -> None:
     psg.generate_samples(500)  # mutate further so restore is meaningfully exercised
     assert psg.snapshot_synth() != snapshot
 
-    psg.restore_synth(snapshot)
+    restore_psg_synth(psg, snapshot)
     assert psg.snapshot_synth() == snapshot
 
 
-def test_restore_synth_with_missing_key_does_not_partially_mutate() -> None:
-    """restore_synth() parses the whole object before assigning any field,
+def test_a_state_load_discards_the_pending_events() -> None:
+    # audio-psg "A state load discards the pending events": writes in a
+    # frame, then a state load before generate_samples. The frame continues
+    # from the loaded generator state, not the one before the load.
+    source = PSG()
+    _program_tone_noise_envelope(source)
+    source.generate_samples(500)
+    loaded_state = source.snapshot_synth()
+
+    psg = PSG()
+    _program_tone_noise_envelope(psg)  # recorded as this frame's events
+    restore_psg_synth(psg, loaded_state)
+    out = psg.generate_samples(500, frame_start=0, frame_end=1000)
+
+    reference = PSG()
+    reference.regs[:] = psg.regs
+    restore_psg_synth(reference, loaded_state)
+    assert out == reference.generate_samples(500)
+    assert psg.snapshot_synth() == reference.snapshot_synth()
+
+
+def test_a_synth_state_with_a_missing_key_does_not_partially_mutate() -> None:
+    """The state is parsed whole before any field is assigned,
     so a missing key fails before earlier fields are touched."""
     psg = PSG()
     _program_tone_noise_envelope(psg)
@@ -385,7 +401,7 @@ def test_restore_synth_with_missing_key_does_not_partially_mutate() -> None:
 
     del snapshot["clk_frac"]
     with pytest.raises(ValueError, match="clk_frac"):
-        psg.restore_synth(snapshot)
+        restore_psg_synth(psg, snapshot)
 
     assert dict(psg.snapshot_synth()) == pre
 
@@ -395,5 +411,5 @@ def test_snapshot_synth_on_silent_psg_round_trips() -> None:
     # actively-generating one.
     psg = PSG()
     snapshot = psg.snapshot_synth()
-    psg.restore_synth(snapshot)
+    restore_psg_synth(psg, snapshot)
     assert psg.snapshot_synth() == snapshot

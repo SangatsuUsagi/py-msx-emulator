@@ -13,10 +13,10 @@ from host.machine_config import (
     load_machine_config,
     load_machine_spec,
 )
-from msx.boundary import DiskMedium, MediaId
+from msx.boundary import DiskMount, MediaId, MediaImage, RomImage
 from msx.fdc.disk_image import DskDiskImage
 from msx.machine_loader import build_machine
-from msx.machine_spec import MachineLoadError, MachineSpec, _FdcDef, _RomEntry
+from msx.machine_spec import FdcDef, MachineLoadError, MachineSpec, RomEntry
 
 _ROOT = Path(__file__).resolve().parent.parent
 _CONFIG = _ROOT / "config"
@@ -158,17 +158,17 @@ def _fdc_spec(tmp_path: Path) -> MachineSpec:
         name="test_fdc",
         generation="msx2",
         rom_base_dir=tmp_path,
-        main_rom_entry=_RomEntry(file="main.rom", size_kb=32, pages=[0, 1]),
+        main_rom_entry=RomEntry(file="main.rom", size_kb=32, pages=[0, 1]),
         logo_rom_entry=None,
-        sub_rom_entry=_RomEntry(file="sub.rom", size_kb=16, pages=[0]),
+        sub_rom_entry=RomEntry(file="sub.rom", size_kb=16, pages=[0]),
         has_ram_mapper=False,
         ram_size_kb=32,
         has_v9938=True,
         has_rtc=True,
         flat_ram_subslot=3,
         flat_ram_size_kb=64,
-        fdc=_FdcDef(
-            disk_rom_entry=_RomEntry(file="disk.rom", size_kb=16, pages=[1]),
+        fdc=FdcDef(
+            disk_rom_entry=RomEntry(file="disk.rom", size_kb=16, pages=[1]),
             controller="wd2793",
             connection_style="sony",
             drives=1,
@@ -208,7 +208,7 @@ def test_fdd1_mounts_into_drive_a(tmp_path: Path) -> None:
 
 def _fdc_spec_two_drives(tmp_path: Path) -> MachineSpec:
     spec = _fdc_spec(tmp_path)
-    spec.fdc = _FdcDef(
+    spec.fdc = FdcDef(
         disk_rom_entry=spec.fdc.disk_rom_entry,
         controller=spec.fdc.controller,
         connection_style=spec.fdc.connection_style,
@@ -237,25 +237,60 @@ def test_fdd2_on_single_drive_machine_is_skipped_by_the_host(
     _make_roms(tmp_path)
     dsk = tmp_path / "b.dsk"
     dsk.write_bytes(bytes(_2DD))
-    config = load_machine_config(_fdc_spec(tmp_path), fdd2=dsk)
-    assert "drive_b" not in config.disks
+    config = load_machine_config(_fdc_spec(tmp_path), fdd2=dsk).config
+    assert [disk.drive for disk in config.disks] == []
     assert "only 1 drive" in capsys.readouterr().err
 
 
 def test_build_rejects_a_disk_for_a_missing_drive(tmp_path: Path) -> None:
+    # machine-loader "A disk for a missing drive is rejected".
     _make_roms(tmp_path)
-    config = load_machine_config(_fdc_spec(tmp_path))
-    config.disks[MediaId.DRIVE_B] = DiskMedium(bytes(_2DD))
-    # The message names the id by its value (not "MediaId.DRIVE_B").
-    with pytest.raises(MachineLoadError, match="disk for drive_b but"):
+    config = load_machine_config(_fdc_spec(tmp_path)).config
+    config.disks = (DiskMount(1, bytes(_2DD)),)
+    with pytest.raises(MachineLoadError, match=r"disk for drive 1 but the machine has 1 drive"):
         build_machine(config)
+
+
+def test_two_disks_for_one_drive_are_rejected(tmp_path: Path) -> None:
+    _make_roms(tmp_path)
+    config = load_machine_config(_fdc_spec(tmp_path)).config
+    config.disks = (DiskMount(0, bytes(_2DD)), DiskMount(0, bytes(_2DD)))
+    with pytest.raises(MachineLoadError, match="two disks for drive 0"):
+        build_machine(config)
+
+
+def test_the_images_are_flat_records(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # machine-loader "The images are flat records".
+    import hashlib
+
+    monkeypatch.chdir(tmp_path)
+    _make_roms(tmp_path)
+    cartridge = bytes(range(256)) * 128
+    sram_dir = tmp_path / "saves" / "sram"
+    sram_dir.mkdir(parents=True)
+    sha1 = hashlib.sha1(cartridge).hexdigest()
+    (sram_dir / f"{sha1}.sram").write_bytes(bytes([0x5A]) * 2048)
+    dsk = tmp_path / "a.dsk"
+    dsk.write_bytes(bytes(_2DD))
+    config = load_machine_config(
+        _fdc_spec(tmp_path), cartridge1=cartridge, mapper1="ASCII8SRAM2", fdd1=dsk
+    ).config
+    for images in (config.roms, config.media, config.disks):
+        assert isinstance(images, tuple) and images
+    assert all(isinstance(rom, RomImage) for rom in config.roms)
+    assert config.media == (MediaImage(MediaId.SLOT1_SRAM, bytes([0x5A]) * 2048),)
+    assert config.disks == (DiskMount(0, bytes(_2DD), False),)
+    for rom in config.roms:
+        assert len(rom.sha1) == 40 and rom.sha1 == hashlib.sha1(rom.data).hexdigest()
 
 
 def test_every_drive_of_a_four_drive_fdc_has_a_media_id(tmp_path: Path) -> None:
     # machine-core "Every drive of a four-drive FDC has a media id".
     _make_roms(tmp_path)
     spec = _fdc_spec(tmp_path)
-    spec.fdc = _FdcDef(
+    spec.fdc = FdcDef(
         disk_rom_entry=spec.fdc.disk_rom_entry,
         controller="tc8566af",
         connection_style="tc8566af",
@@ -265,5 +300,20 @@ def test_every_drive_of_a_four_drive_fdc_has_a_media_id(tmp_path: Path) -> None:
     assert machine.fdc is not None
     assert len(machine.fdc.drives) == 4
     image = bytes([0x5A]) * _2DD
-    machine.mount_disk(2, DiskMedium(image, False, None))
+    machine.mount_disk(2, image, False)
     assert machine.read_media(MediaId.DRIVE_C) == image
+
+
+@pytest.mark.parametrize("size", [100, 0])
+def test_a_disk_of_a_bad_size_is_rejected(tmp_path: Path, size: int) -> None:
+    # machine-core "A disk of a bad size is rejected".
+    from msx.boundary import STATUS_BAD_CONFIG
+    from msx.machine_loader import create_machine
+
+    _make_roms(tmp_path)
+    config = load_machine_config(_fdc_spec(tmp_path)).config
+    config.disks = (DiskMount(0, bytes(size)),)
+    result = create_machine(config)
+    assert result.status == STATUS_BAD_CONFIG
+    assert result.machine is None
+    assert f"size {size}".encode() in result.error_text

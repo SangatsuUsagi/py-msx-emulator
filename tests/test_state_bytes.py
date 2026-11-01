@@ -21,7 +21,7 @@ from msx.canonical_json import encode_canonical
 from msx.input import InputFrame
 from msx.machine import Machine
 from msx.machine_loader import build_machine
-from msx.machine_spec import MachineSpec, _FdcDef, _RomEntry
+from msx.machine_spec import FdcDef, MachineSpec, RomEntry
 from msx.snapshot_schema import SnapshotMismatchError
 from tests.factories import make_machine, make_machine_msx2
 
@@ -112,31 +112,6 @@ def test_saved_bytes_are_already_canonical() -> None:
     data = state.save_state(_ran(3))
     assert _canonical(data) == data
     assert b" " not in data and b"\n" not in data
-
-
-def test_a_non_ascii_disk_path_is_written_as_utf8(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    for name, size in (("main.rom", 32768), ("sub.rom", 16384), ("disk.rom", 16384)):
-        (tmp_path / name).write_bytes(bytes(size))
-    disk = tmp_path / "ゲーム.dsk"
-    disk.write_bytes(bytes(737280))
-    spec = MachineSpec(
-        name="non_ascii_disk", generation="msx2", rom_base_dir=tmp_path,
-        main_rom_entry=_RomEntry(file="main.rom", size_kb=32, pages=[0, 1]),
-        logo_rom_entry=None,
-        sub_rom_entry=_RomEntry(file="sub.rom", size_kb=16, pages=[0]),
-        has_ram_mapper=False, ram_size_kb=32, has_v9938=True, has_rtc=False,
-        flat_ram_subslot=3, flat_ram_size_kb=64,
-        fdc=_FdcDef(
-            disk_rom_entry=_RomEntry(file="disk.rom", size_kb=16, pages=[1]),
-            controller="wd2793", connection_style="sony", drives=1,
-        ),
-    )
-    data = state.save_state(build_machine_from_spec(spec, fdd1=disk))
-    assert "ゲーム.dsk".encode("utf-8") in data
-    assert b"\\u" not in data
 
 
 def test_the_same_state_gives_the_same_bytes() -> None:
@@ -251,7 +226,6 @@ def _loaded_machine(tmp_path: Path) -> Machine:
     a Konami SCC cartridge in slot 1, an FM-PAC in slot 2 and a mouse."""
     from msx.boundary import RtcTime
     from msx.machine_spec import ExtensionOverlay
-    from msx.mouse import MouseDevice
     from msx.psg import JoystickPort
 
     for name, size in (("main.rom", 32768), ("sub.rom", 16384), ("disk.rom", 16384),
@@ -264,25 +238,25 @@ def _loaded_machine(tmp_path: Path) -> Machine:
         disk.write_bytes(bytes(737280))
     spec = MachineSpec(
         name="round_trip", generation="msx2", rom_base_dir=tmp_path,
-        main_rom_entry=_RomEntry(file="main.rom", size_kb=32, pages=[0, 1]),
+        main_rom_entry=RomEntry(file="main.rom", size_kb=32, pages=[0, 1]),
         logo_rom_entry=None,
-        sub_rom_entry=_RomEntry(file="sub.rom", size_kb=16, pages=[0]),
-        has_ram_mapper=True, ram_size_kb=128, has_v9938=True, has_rtc=True,
-        fdc=_FdcDef(
-            disk_rom_entry=_RomEntry(file="disk.rom", size_kb=16, pages=[1]),
+        sub_rom_entry=RomEntry(file="sub.rom", size_kb=16, pages=[0]),
+        has_ram_mapper=True, ram_size_kb=64, has_v9938=True, has_rtc=True,
+        fdc=FdcDef(
+            disk_rom_entry=RomEntry(file="disk.rom", size_kb=16, pages=[1]),
             controller="wd2793", connection_style="sony", drives=1,
         ),
     )
     fmpac = ExtensionOverlay(
         device="fmpac", rom_base_dir=tmp_path,
-        rom_entry=_RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
+        rom_entry=RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
         sram_save_path=tmp_path / "fmpac.sram",
     )
     machine = build_machine_from_spec(
         spec, cartridge1=bytes(0x20000), mapper1="KonamiSCC", fdd1=disk,
         extension_overlay2=fmpac, rtc_initial_time=RtcTime(2026, 10, 24, 12, 0, 0),
     )
-    machine.attach_mouse(MouseDevice(), JoystickPort.JOY2)
+    machine.attach_mouse(JoystickPort.JOY2)
     return machine
 
 
@@ -293,11 +267,11 @@ def test_round_trip_is_byte_identical(tmp_path: Path) -> None:
     for reg, value in ((8, 0x0F), (0, 0x40)):          # PSG channel A audible
         saved.io.write_port(0xA0, reg)
         saved.io.write_port(0xA1, value)
-    saved.memory._mapper.write(0x9000, 0x3F)           # SCC on, then a wave and a tone
-    saved.memory._mapper.write(0x9800, 0x7F)
-    saved.memory._mapper.write(0x9880, 0x20)
-    saved.memory._mapper.write(0x988A, 0x0F)
-    saved.memory._mapper.write(0x988F, 0x01)
+    saved.memory.mapper1.write(0x9000, 0x3F)           # SCC on, then a wave and a tone
+    saved.memory.mapper1.write(0x9800, 0x7F)
+    saved.memory.mapper1.write(0x9880, 0x20)
+    saved.memory.mapper1.write(0x988A, 0x0F)
+    saved.memory.mapper1.write(0x988F, 0x01)
     saved.fmpac.write(0x7FF4, 0x30)                    # OPLL channel 0: key on
     saved.fmpac.write(0x7FF5, 0x10)
     saved.fmpac.write(0x7FF4, 0x10)
@@ -326,7 +300,7 @@ def test_an_earlier_version_with_a_float_is_rejected_as_a_version_mismatch() -> 
     decoded["out_time"] = 22458.33333141287   # an older format with a float
     target = _ran(1)
     before = state.save_state(target)
-    with pytest.raises(ValueError, match="incompatible state file: version 16, expected 20"):
+    with pytest.raises(ValueError, match="incompatible state file: version 16, expected 21"):
         state.load_state(target, json.dumps(decoded).encode("utf-8"))
     assert state.save_state(target) == before
 
@@ -390,7 +364,7 @@ def test_a_difference_the_specific_checks_see_is_named_by_them(
     (fmpac_dir / "fmpac.rom").write_bytes(bytes(65536))
     fmpac = ExtensionOverlay(
         device="fmpac", rom_base_dir=fmpac_dir,
-        rom_entry=_RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
+        rom_entry=RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
         sram_save_path=fmpac_dir / "fmpac.sram",
     )
     data = state.save_state(make_machine(rom=_ROM, extension_overlay=fmpac))

@@ -562,10 +562,6 @@ class TC8566AF:
             "format_fill": check_int(fields["format_fill"], f"{label}.format_fill", 0, 0xFF),
         }
 
-    def restore(self, state: dict[str, object]) -> None:
-        """Restore register/phase/buffer state produced by snapshot()."""
-        self.apply_state(self.parse_state(state, "tc8566af"))
-
     def apply_state(self, state: TC8566AFState) -> None:
         """Assign a state returned by parse_state()."""
         c, h, r, n = state["exec_ctr"]

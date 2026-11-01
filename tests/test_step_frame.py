@@ -1,10 +1,19 @@
 """Machine.step_frame: the core's per-frame API (machine-core "step_frame is the
-core's per-frame API" / "One InputFrame value per frame")."""
+core's per-frame API" / "One InputFrame value per frame" / "A stopped frame's
+video and audio come from the calls that reach them" / "Continuing a stopped
+frame applies input but no motion")."""
 from __future__ import annotations
 
 from host.input_state import InputState
+from msx.boundary import (
+    MOUSE_LEFT,
+    MOUSE_RIGHT,
+    STATUS_BAD_ARGUMENT,
+    STATUS_OK,
+    STOP_BREAKPOINT,
+    STOP_NONE,
+)
 from msx.input import InputFrame
-from msx.mouse import MouseDevice
 from msx.psg import JoystickPort
 from tests.factories import make_machine, make_machine_msx2
 
@@ -14,9 +23,8 @@ _ROM = bytes([0xF3, 0x18, 0xFE]) + bytes(0x8000 - 3)   # DI; JR $
 def test_rendered_frame_returns_rgb_video_and_audio() -> None:
     machine = make_machine(_ROM)
     out = machine.step_frame(InputFrame(), render_video=True)
-    assert out.video is not None
-    assert (out.video.width, out.video.height) == (256, 212)
-    assert len(out.video.pixels) == 256 * 212 * 3
+    assert (out.video_width, out.video_height) == (256, 212)
+    assert len(out.video_pixels) == 256 * 212 * 3
     assert len(out.audio) == 735 * 2
     assert out.frame_number == machine.vdp.frame_count == 1
 
@@ -24,7 +32,7 @@ def test_rendered_frame_returns_rgb_video_and_audio() -> None:
 def test_skipped_video_still_returns_audio() -> None:
     machine = make_machine(_ROM)
     out = machine.step_frame(InputFrame(), render_video=False)
-    assert out.video is None
+    assert (out.video_width, out.video_height, out.video_pixels) == (0, 0, b"")
     assert len(out.audio) == 735 * 2
 
 
@@ -33,9 +41,8 @@ def test_512_wide_frame_reports_its_width() -> None:
     machine.vdp.regs[0] = 0x08            # GRAPHIC5 (SCREEN 6, 512 wide)
     machine.vdp.regs[1] = 0x40
     out = machine.step_frame(InputFrame(), render_video=True)
-    assert out.video is not None
-    assert out.video.width == 512
-    assert len(out.video.pixels) == 512 * 212 * 3
+    assert out.video_width == 512
+    assert len(out.video_pixels) == 512 * 212 * 3
 
 
 def test_matrix_row_reaches_the_ppi_for_the_whole_frame() -> None:
@@ -63,9 +70,10 @@ def test_input_replaces_the_previous_frames_lines() -> None:
 
 def test_mouse_motion_is_applied_once_per_frame() -> None:
     machine = make_machine(_ROM)
-    mouse = MouseDevice()
-    machine.attach_mouse(mouse, JoystickPort.JOY2)
-    frame_input = InputFrame(mouse_dx=5, mouse_dy=-3, mouse_left=True)
+    machine.attach_mouse(JoystickPort.JOY2)
+    mouse = machine.psg.mouse
+    assert mouse is not None
+    frame_input = InputFrame(mouse_dx=5, mouse_dy=-3, mouse_buttons=MOUSE_LEFT)
     machine.step_frame(frame_input, render_video=False)
     assert (mouse._cur_x_rel, mouse._cur_y_rel) == (5, -3)
     assert mouse.read() & 0x10 == 0                 # left button pressed (active-low)
@@ -74,10 +82,10 @@ def test_mouse_motion_is_applied_once_per_frame() -> None:
     assert mouse.read() & 0x10
 
 
-def _row_pressed(row: int, bit: int) -> tuple[int, ...]:
+def _row_pressed(row: int, bit: int) -> bytes:
     rows = [0xFF] * 11
     rows[row] &= ~(1 << bit) & 0xFF
-    return tuple(rows)
+    return bytes(rows)
 
 
 def test_injected_key_is_visible_to_a_paused_single_step() -> None:
@@ -89,14 +97,75 @@ def test_injected_key_is_visible_to_a_paused_single_step() -> None:
     assert machine.ppi.read_port(0xA9) & 1 == 0
 
 
+def test_the_mouse_attaches_by_port_number() -> None:
+    # machine-core "The mouse attaches by port number".
+    machine = make_machine(_ROM)
+    assert machine.attach_mouse(1) == STATUS_OK
+    mouse = machine.psg.mouse
+    assert mouse is not None
+    assert machine.psg._mouse is not None
+    assert machine.psg._mouse.port == JoystickPort.JOY2
+    machine.step_frame(InputFrame(mouse_dx=4, mouse_dy=2), render_video=False)
+    assert (mouse._cur_x_rel, mouse._cur_y_rel) == (4, 2)
+
+
+def test_an_invalid_mouse_port_is_rejected() -> None:
+    # machine-core "An invalid mouse port is rejected".
+    machine = make_machine(_ROM)
+    for port in (2, -1):
+        assert machine.attach_mouse(port) == STATUS_BAD_ARGUMENT
+        assert machine.last_error_text() == f"no joystick port {port}".encode()
+    assert machine.psg.mouse is None
+
+
 def test_apply_input_does_not_move_the_mouse() -> None:
     # machine-core "apply_input does not move the mouse".
     machine = make_machine(_ROM)
-    mouse = MouseDevice()
-    machine.attach_mouse(mouse, JoystickPort.JOY2)
-    machine.apply_input(InputFrame(mouse_dx=7, mouse_right=True))
+    machine.attach_mouse(JoystickPort.JOY2)
+    mouse = machine.psg.mouse
+    assert mouse is not None
+    machine.apply_input(InputFrame(mouse_dx=7, mouse_buttons=MOUSE_RIGHT))
     assert mouse._cur_x_rel == 0
     assert mouse.read() & 0x20 == 0                 # right button pressed (active-low)
+
+
+def test_a_mouse_button_is_a_bit_flag() -> None:
+    # machine-core "A mouse button is a bit flag".
+    machine = make_machine(_ROM)
+    machine.attach_mouse(JoystickPort.JOY2)
+    mouse = machine.psg.mouse
+    assert mouse is not None
+    machine.step_frame(InputFrame(mouse_buttons=MOUSE_LEFT), render_video=False)
+    assert mouse.read() & 0x10 == 0                 # left pressed (active-low)
+    assert mouse.read() & 0x20                      # right released
+
+
+def test_a_joystick_value_above_6_bits_is_masked() -> None:
+    # machine-core "A joystick value above 6 bits is masked".
+    machine = make_machine(_ROM)
+    assert machine.apply_input(InputFrame(joy1=0xFE)) == STATUS_OK
+    assert machine.input.joy1 == 0x3E
+
+
+def test_unknown_button_bits_are_ignored() -> None:
+    # machine-core "Unknown button bits are ignored".
+    machine = make_machine(_ROM)
+    machine.attach_mouse(JoystickPort.JOY2)
+    mouse = machine.psg.mouse
+    assert mouse is not None
+    machine.apply_input(InputFrame(mouse_buttons=0xFC))
+    assert mouse.read() & 0x30 == 0x30              # both released
+
+
+def test_mouse_motion_outside_16_bits_is_clamped() -> None:
+    # machine-core "Mouse motion outside 16 bits is clamped".
+    machine = make_machine(_ROM)
+    machine.attach_mouse(JoystickPort.JOY2)
+    mouse = machine.psg.mouse
+    assert mouse is not None
+    machine.step_frame(InputFrame(mouse_dx=100000, mouse_dy=-100000), render_video=False)
+    assert mouse._cur_x_rel == 32767
+    assert mouse._cur_y_rel == -32767
 
 
 def test_a_frame_value_cannot_be_changed_after_it_is_passed() -> None:
@@ -106,8 +175,9 @@ def test_a_frame_value_cannot_be_changed_after_it_is_passed() -> None:
     import pytest
 
     machine = make_machine(_ROM)
-    mouse = MouseDevice()
-    machine.attach_mouse(mouse, JoystickPort.JOY2)
+    machine.attach_mouse(JoystickPort.JOY2)
+    mouse = machine.psg.mouse
+    assert mouse is not None
     frame = InputFrame(key_matrix=_row_pressed(2, 6), mouse_dx=3)
     machine.step_frame(frame, render_video=False)
     with pytest.raises(dataclasses.FrozenInstanceError):
@@ -115,3 +185,40 @@ def test_a_frame_value_cannot_be_changed_after_it_is_passed() -> None:
     machine.step_frame(frame, render_video=False)
     assert machine.input.matrix[2] & (1 << 6) == 0
     assert mouse._cur_x_rel == 6                    # 3 per frame, twice
+
+
+def test_a_frame_without_a_break_reports_no_stop() -> None:
+    out = make_machine(_ROM).step_frame(InputFrame(), render_video=False)
+    assert out.stop_reason == STOP_NONE
+    assert out.frame_complete == 1
+
+
+def test_a_stopped_call_returns_no_video_and_no_audio() -> None:
+    machine = make_machine(_ROM)
+    machine.set_breakpoints([0x0001])  # the JR $ loop
+    out = machine.step_frame(InputFrame(), render_video=True)
+    assert out.stop_reason == STOP_BREAKPOINT
+    assert (out.video_width, out.video_pixels) == (0, b"")
+    assert out.audio == b""
+    assert out.frame_complete == 0
+
+
+def test_continuing_a_stopped_frame_feeds_no_motion() -> None:
+    machine = make_machine(_ROM)
+    machine.attach_mouse(JoystickPort.JOY2)
+    mouse = machine.psg.mouse
+    assert mouse is not None
+    machine.set_breakpoints([0x0001])
+    frame_input = InputFrame(mouse_dx=5)
+    assert not machine.step_frame(frame_input, render_video=False).frame_complete
+    machine.set_breakpoints([])
+    assert machine.step_frame(frame_input, render_video=False).frame_complete
+    assert mouse._cur_x_rel == 5
+
+
+def test_a_stopped_run_frame_produces_no_audio() -> None:
+    # machine-core "run_frame produces the frame's audio": a stopped call.
+    machine = make_machine(_ROM)
+    machine.set_breakpoints([0x0001])
+    machine.run_frame()
+    assert machine.take_audio() == b""

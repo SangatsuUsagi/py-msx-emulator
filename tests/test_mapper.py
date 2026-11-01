@@ -3,6 +3,7 @@ import struct
 import pytest
 
 from msx.mapper import (
+    NO_BANK,
     Ascii8Mapper,
     Ascii16Mapper,
     FixedPageMapper,
@@ -10,6 +11,7 @@ from msx.mapper import (
     KonamiMapper,
     MajutsushiMapper,
 )
+from tests.factories import restore_state
 
 _PAGE_8K = 8192
 _PAGE_16K = 16384
@@ -95,7 +97,7 @@ def test_flat_snapshot_restore_is_empty_and_noop() -> None:
     m = FlatMapper(cart)
     snap = m.snapshot()
     assert snap == {}
-    m.restore(snap)
+    restore_state(m, snap)
     assert m.read(0x4000) == 0xAB
 
 
@@ -150,14 +152,14 @@ def test_fixed_page_snapshot_restore_is_empty_and_noop() -> None:
     m = FixedPageMapper(rom, base=0x8000)
     snap = m.snapshot()
     assert snap == {}
-    m.restore(snap)
+    restore_state(m, snap)
     assert m.read(0x8000) == 0xAB
 
 
 def test_fixed_page_has_no_bank_info() -> None:
     rom = bytes([0xAB] + [0] * (16384 - 1))
     m = FixedPageMapper(rom, base=0x8000)
-    assert m.debug_bank_info(1) is None
+    assert m.debug_bank(1) == NO_BANK
 
 
 # ---------------------------------------------------------------------------
@@ -279,7 +281,7 @@ def test_ascii8_snapshot_restore_roundtrips_banks() -> None:
     snap = m.snapshot()
 
     m2 = Ascii8Mapper(rom)
-    m2.restore(snap)
+    restore_state(m2, snap)
     assert m2._banks == m._banks
     assert m2.read(0x4000) == 3
     assert m2.read(0xA000) == 7
@@ -397,7 +399,7 @@ def test_ascii16_snapshot_restore_roundtrips_banks() -> None:
     snap = m.snapshot()
 
     m2 = Ascii16Mapper(rom)
-    m2.restore(snap)
+    restore_state(m2, snap)
     assert m2._banks == m._banks
     assert m2.read(0x4000) == 2
     assert m2.read(0x8000) == 3
@@ -511,7 +513,7 @@ def test_konami_snapshot_restore_roundtrips_banks() -> None:
     snap = m.snapshot()
 
     m2 = KonamiMapper(rom)
-    m2.restore(snap)
+    restore_state(m2, snap)
     assert m2._banks == m._banks
     assert m2.read(0x6000) == 4
     assert m2.read(0xA000) == 7
@@ -522,16 +524,16 @@ def test_konami_restore_rejects_negative_bank() -> None:
     # a negative start, which Python resolves by wrapping from the end of
     # the ROM instead of raising -- silently wrong content rather than a
     # clear failure. restore() must reject this instead of trusting the
-    # save-state file (matching SCCICart.restore()'s existing precedent).
+    # save-state file (matching restore_state(SCCICart, )'s existing precedent).
     m = KonamiMapper(_rom_8k_pages(8))
     with pytest.raises(ValueError):
-        m.restore({"banks": [0, 1, 2, -1]})
+        restore_state(m, {"banks": [0, 1, 2, -1]})
 
 
 def test_konami_restore_rejects_wrong_bank_count() -> None:
     m = KonamiMapper(_rom_8k_pages(8))
     with pytest.raises(ValueError):
-        m.restore({"banks": [0, 1, 2]})
+        restore_state(m, {"banks": [0, 1, 2]})
 
 
 # ---------------------------------------------------------------------------
@@ -539,14 +541,7 @@ def test_konami_restore_rejects_wrong_bank_count() -> None:
 # ---------------------------------------------------------------------------
 
 def _maj(n_pages: int = 4) -> MajutsushiMapper:
-    m = MajutsushiMapper(_rom_8k_pages(n_pages))
-    cycle = 0
-
-    def _get_cycle() -> int:
-        return cycle
-
-    m._get_cycle = _get_cycle
-    return m
+    return MajutsushiMapper(_rom_8k_pages(n_pages))
 
 
 def test_majutsushi_dac_write_stored() -> None:
@@ -636,8 +631,7 @@ def test_majutsushi_generate_samples_mid_frame_write() -> None:
     # Samples 0-1: threshold < 50 → silence (0x80).
     # Samples 2-3: threshold >= 50 → 0xFF.
     m = MajutsushiMapper(_rom_8k_pages(4))
-    cycle_val = [50]
-    m._get_cycle = lambda: cycle_val[0]
+    m._clock.cycle = 50
     m.write(0x5000, 0xFF)
     buf = m.generate_samples(4, 0, 100)
     # sample 0: threshold = 0*100//4 = 0 < 50 → silence
@@ -654,7 +648,7 @@ def test_majutsushi_snapshot_restore_roundtrips_banks_and_last_dac() -> None:
     snap = m.snapshot()
 
     m2 = MajutsushiMapper(_rom_8k_pages(4))
-    m2.restore(snap)
+    restore_state(m2, snap)
     assert m2._banks == m._banks
     assert m2._last_dac == 0xC0
 
@@ -665,7 +659,7 @@ def test_majutsushi_restored_level_holds_after_load() -> None:
     snap = m.snapshot()
 
     m2 = MajutsushiMapper(_rom_8k_pages(4))
-    m2.restore(snap)
+    restore_state(m2, snap)
     buf = m2.generate_samples(2, 0, 100)
     assert buf is not None
     for i in range(2):

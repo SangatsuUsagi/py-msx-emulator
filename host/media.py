@@ -1,74 +1,130 @@
 """Host side of the machine's writable media: files <-> media bytes.
 
 The core exposes SRAM, RTC CMOS RAM and mounted disk images as bytes with
-dirty flags (Machine.dirty_media/read_media/mark_persisted/mount_disk); this
-module reads disk files, writes dirty media back to their files and resolves
-swap paths.
+dirty flags (CoreApi.dirty_media/read_media/mark_persisted/mount_disk/eject_disk); this
+module reads disk files, keeps the file of each drive's disk (DiskFiles),
+writes dirty media back to their files and resolves swap paths.
 """
 from __future__ import annotations
 
 import os
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from msx.boundary import DiskMedium, MediaId, drive_media_id
+from msx.boundary import STATUS_OK, drive_media_id
 
 if TYPE_CHECKING:
-    from msx.machine import Machine
+    from msx.core_api import CoreApi
+
+
+@dataclass(frozen=True)
+class DiskMedium:
+    """A disk image the host read from a .dsk file."""
+
+    data: bytes
+    write_protected: bool = False
 
 
 def read_disk_medium(path: Path) -> DiskMedium:
     """Read a .dsk file, write-protected when the file is not writable.
     Raises OSError when it cannot be read."""
-    return DiskMedium(path.read_bytes(), not os.access(path, os.W_OK), path)
+    return DiskMedium(path.read_bytes(), not os.access(path, os.W_OK))
+
+
+class DiskFiles:
+    """The file of the disk image in each floppy drive (0 = A), by drive
+    index. The core keeps no file name for a disk: the host writes a dirty
+    image back to the file named here and shows it in the window title and
+    the debugger's fdd command. One table is shared by everything that
+    swaps or persists disks in a run."""
+
+    def __init__(self, paths: Mapping[int, Path] | None = None) -> None:
+        self._paths: dict[int, Path] = dict(paths) if paths is not None else {}
+
+    def path(self, drive: int) -> Path | None:
+        """The file of the image in `drive`, or None when the drive is
+        empty or its image has no file."""
+        return self._paths.get(drive)
+
+    def set(self, drive: int, path: Path | None) -> None:
+        """Record `path` (None: no file) as the file of `drive`."""
+        if path is None:
+            self._paths.pop(drive, None)
+        else:
+            self._paths[drive] = path
+
+    def items(self) -> list[tuple[int, Path]]:
+        """(drive, file) pairs, ascending by drive."""
+        return sorted(self._paths.items())
 
 
 def media_paths(
-    machine: Machine, sram_paths: Mapping[MediaId, Path]
-) -> dict[MediaId, Path]:
+    machine: CoreApi, sram_paths: Mapping[int, Path], disk_files: DiskFiles
+) -> dict[int, Path]:
     """The file each persisted medium is written to, by media id: the SRAM
     files `sram_paths` names (host.machine_config.sram_paths of the
-    machine's config) plus each mounted disk's own file."""
-    paths = dict(sram_paths)
-    if machine.fdc is not None:
-        for index in range(len(machine.fdc.drives)):
-            path = machine.disk_path(index)
-            if path is not None:
-                paths[drive_media_id(index)] = path
+    machine's config) plus the file `disk_files` records for each mounted
+    disk."""
+    paths: dict[int, Path] = dict(sram_paths)
+    for drive, path in disk_files.items():
+        if machine.disk_mounted(drive):
+            paths[int(drive_media_id(drive))] = path
     return paths
 
 
+def _write_back(machine: CoreApi, media_id: int, path: Path) -> None:
+    """Write a dirty medium to its file and clear its dirty flag. The id came
+    from dirty_media(), so the bytes are there."""
+    data = machine.read_media(media_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    machine.mark_persisted(media_id)
+
+
 def persist_dirty_media(
-    machine: Machine, sram_paths: Mapping[MediaId, Path] | None = None
+    machine: CoreApi,
+    sram_paths: Mapping[int, Path] | None = None,
+    disk_files: DiskFiles | None = None,
 ) -> None:
     """Write every dirty medium that has a file back to it. Without
-    `sram_paths` only disk images are written."""
-    paths = media_paths(machine, sram_paths if sram_paths is not None else {})
+    `sram_paths` no SRAM is written, and without `disk_files` no disk."""
+    paths = media_paths(
+        machine,
+        sram_paths if sram_paths is not None else {},
+        disk_files if disk_files is not None else DiskFiles(),
+    )
     for media_id in machine.dirty_media():
         path = paths.get(media_id)
         if path is None:
             continue
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(machine.read_media(media_id))
-        machine.mark_persisted(media_id)
+        _write_back(machine, media_id, path)
 
 
-def swap_disk(machine: Machine, drive: int, path: Path | None) -> None:
+def swap_disk(
+    machine: CoreApi, disk_files: DiskFiles, drive: int, path: Path | None
+) -> None:
     """Mount the .dsk at `path` (None ejects) in `drive` (0 = A), writing the
-    outgoing image back to its file first when it is dirty. `path` is taken
-    relative to the working directory, with `~` expanded. Raises OSError or
-    ValueError, leaving the drive as it was, when the file cannot be read, is
-    not a valid image, the drive does not exist, or the outgoing image cannot
-    be written back (it then stays dirty)."""
-    medium = read_disk_medium(path.expanduser()) if path is not None else None
-    outgoing_path = machine.disk_path(drive)
+    outgoing image back to its file in `disk_files` first when it is dirty,
+    and record `path` as the drive's file. `path` is taken relative to the
+    working directory, with `~` expanded. Raises OSError or ValueError,
+    leaving the drive and its recorded file as they were, when the file
+    cannot be read, is not a valid image, the drive does not exist, or the
+    outgoing image cannot be written back (it then stays dirty)."""
+    full_path = path.expanduser() if path is not None else None
+    medium = read_disk_medium(full_path) if full_path is not None else None
+    outgoing_path = disk_files.path(drive)
     if outgoing_path is not None:
-        media_id = drive_media_id(drive)
+        media_id = int(drive_media_id(drive))
         if media_id in machine.dirty_media():
-            outgoing_path.write_bytes(machine.read_media(media_id))
-            machine.mark_persisted(media_id)
-    outgoing = machine.mount_disk(drive, medium)
-    # Normally None: the image was persisted just above.
-    if outgoing is not None and outgoing_path is not None:
-        outgoing_path.write_bytes(outgoing)
+            _write_back(machine, media_id, outgoing_path)
+    if medium is None:
+        status = machine.eject_disk(drive)
+    else:
+        status = machine.mount_disk(drive, medium.data, medium.write_protected)
+    if status != STATUS_OK:
+        message = machine.last_error_text().decode("utf-8")
+        name = path if path is not None else f"drive {drive}"
+        raise ValueError(f"{name}: {message}")
+    disk_files.set(drive, full_path)

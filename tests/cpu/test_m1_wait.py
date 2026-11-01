@@ -14,7 +14,7 @@ def _cpu(rom: list[int], wait: int) -> Z80:
     mem = Memory(
         rom=bytes(rom + [0] * (32768 - len(rom))),
         ram=bytearray(32768),
-        _mapper=FlatMapper(None),
+        mapper1=FlatMapper(None),
     )
     return Z80(read_byte=mem.read, write_byte=mem.write, m1_wait_states=wait)
 

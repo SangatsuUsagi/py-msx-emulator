@@ -7,6 +7,7 @@ import pytest
 
 from host.machine_config import sram_paths
 from host.media import persist_dirty_media
+from msx.boundary import MediaId
 from msx.machine_loader import build_machine
 from msx.mapper import (
     Ascii8Sram2Mapper,
@@ -15,7 +16,7 @@ from msx.mapper import (
     Ascii16Sram8Mapper,
     KoeiSRAM32Mapper,
 )
-from tests.factories import make_config
+from tests.factories import make_loaded_config, restore_state
 
 # 16 KB = 2 pages of 8 KB. ASCII8 SRAM enable bit = num_pages = 2.
 _ROM_16K = bytes(range(256)) * 64
@@ -263,11 +264,11 @@ class TestAscii8Sram8:
         m = Ascii8Sram8Mapper(rom=_ROM_16K)
         state = m.snapshot()
         state["sram"] = bytearray(b"\x5A" * 8192)
-        m.restore(dict(state))
+        restore_state(m, dict(state))
         assert m.sram_image.dirty is True
         assert m.sram_image.read(0) == 0x5A
         clean = Ascii8Sram8Mapper(rom=_ROM_16K)
-        clean.restore(dict(clean.snapshot()))  # same image: stays clean
+        restore_state(clean, dict(clean.snapshot()))  # same image: stays clean
         assert clean.sram_image.dirty is False
 
     def test_sram_shared_across_windows(self):
@@ -331,7 +332,7 @@ class TestKoeiSRAM32:
         snap = m.snapshot()
 
         m2 = KoeiSRAM32Mapper(rom=_ROM_16K)
-        m2.restore(snap)
+        restore_state(m2, snap)
         assert m2._banks == m._banks
         assert m2.read(0x4100) == 0x5A
 
@@ -614,10 +615,10 @@ class TestMachineLoaderSramIntegration:
         sram_file.write_bytes(bytes([0xAB] * expected_size))
 
         monkeypatch.chdir(tmp_path)
-        config = make_config(rom=rom, cartridge=cartridge, mapper="ASCII8SRAM2")
-        machine = build_machine(config)
-        assert sram_paths(config)["slot1.sram"].name == f"{sha1}.sram"
-        assert machine.memory._mapper.sram_image.read(0) == 0xAB
+        config = make_loaded_config(rom=rom, cartridge=cartridge, mapper="ASCII8SRAM2")
+        machine = build_machine(config.config)
+        assert sram_paths(config)[MediaId.SLOT1_SRAM].name == f"{sha1}.sram"
+        assert machine.memory.mapper1.sram_image.read(0) == 0xAB
 
     def test_no_sram_file_gives_zeroed_sram(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         from tests.factories import make_machine
@@ -626,7 +627,7 @@ class TestMachineLoaderSramIntegration:
         cartridge = bytes(range(256)) * 32
         monkeypatch.chdir(tmp_path)
         machine = make_machine(rom=rom, cartridge=cartridge, mapper="ASCII8SRAM2")
-        assert machine.memory._mapper.sram_image.data() == bytearray(2048)
+        assert machine.memory.mapper1.sram_image.data() == bytearray(2048)
 
     # -----------------------------------------------------------------------
     # Slot 2 (openspec/changes/slot1-slot2-symmetrization, design.md D1):
@@ -652,12 +653,12 @@ class TestMachineLoaderSramIntegration:
         sram_file.write_bytes(bytes([0xAB] * expected_size))
 
         monkeypatch.chdir(tmp_path)
-        config = make_config(rom=rom, cartridge2=cartridge2, mapper2="ASCII8SRAM2")
-        machine = build_machine(config)
-        assert sram_paths(config)["slot2.sram"].name == f"{sha1}.sram"
-        assert machine.memory._mapper2.sram_image.read(0) == 0xAB
+        config = make_loaded_config(rom=rom, cartridge2=cartridge2, mapper2="ASCII8SRAM2")
+        machine = build_machine(config.config)
+        assert sram_paths(config)[MediaId.SLOT2_SRAM].name == f"{sha1}.sram"
+        assert machine.memory.mapper2.sram_image.read(0) == 0xAB
         # Slot 1 (empty here) must not be perturbed by slot 2's SRAM load.
-        assert "slot1.sram" not in sram_paths(config)
+        assert MediaId.SLOT1_SRAM not in sram_paths(config)
 
     def test_no_sram_file_gives_zeroed_sram_slot2(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -668,7 +669,7 @@ class TestMachineLoaderSramIntegration:
         cartridge2 = bytes(range(256)) * 32
         monkeypatch.chdir(tmp_path)
         machine = make_machine(rom=rom, cartridge2=cartridge2, mapper2="ASCII8SRAM2")
-        assert machine.memory._mapper2.sram_image.data() == bytearray(2048)
+        assert machine.memory.mapper2.sram_image.data() == bytearray(2048)
 
     def test_both_slots_persist_sram_independently(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -678,20 +679,20 @@ class TestMachineLoaderSramIntegration:
         cartridge = bytes(range(256)) * 32
         cartridge2 = bytes(range(256))[::-1] * 32  # distinct content -> distinct SHA1
         monkeypatch.chdir(tmp_path)
-        config = make_config(
+        config = make_loaded_config(
             rom=rom, cartridge=cartridge, mapper="ASCII8SRAM2",
             cartridge2=cartridge2, mapper2="GameMaster2",
         )
-        machine = build_machine(config)
+        machine = build_machine(config.config)
         paths = sram_paths(config)
-        assert paths["slot1.sram"] != paths["slot2.sram"]
+        assert paths[MediaId.SLOT1_SRAM] != paths[MediaId.SLOT2_SRAM]
 
-        machine.memory._mapper.sram_image.write(0, 0x11)
-        machine.memory._mapper2.sram_image.write(0, 0x22)
-        assert sorted(machine.dirty_media()) == ["slot1.sram", "slot2.sram"]
+        machine.memory.mapper1.sram_image.write(0, 0x11)
+        machine.memory.mapper2.sram_image.write(0, 0x22)
+        assert sorted(machine.dirty_media()) == [MediaId.SLOT1_SRAM, MediaId.SLOT2_SRAM]
         persist_dirty_media(machine, paths)
-        assert paths["slot1.sram"].read_bytes()[0] == 0x11
-        assert paths["slot2.sram"].read_bytes()[0] == 0x22
+        assert paths[MediaId.SLOT1_SRAM].read_bytes()[0] == 0x11
+        assert paths[MediaId.SLOT2_SRAM].read_bytes()[0] == 0x22
 
 
 # ---------------------------------------------------------------------------
@@ -707,7 +708,7 @@ class TestSnapshotRestore:
         snap = m.snapshot()
 
         m2 = Ascii8Sram2Mapper(rom=_ROM_16K)
-        m2.restore(snap)
+        restore_state(m2, snap)
         assert m2._banks == m._banks
         assert m2.read(0x8100) == 0x5A
 
@@ -718,7 +719,7 @@ class TestSnapshotRestore:
         snap = m.snapshot()
 
         m2 = Ascii16Sram2Mapper(rom=_ROM_32K)
-        m2.restore(snap)
+        restore_state(m2, snap)
         assert m2._banks == m._banks
         assert m2.read(0x8200) == 0x3C
 
@@ -728,7 +729,7 @@ class TestSnapshotRestore:
         m.write(0x8000, 0x11)
         snap = m.snapshot()
         m.write(0x8000, 0x22)         # mutate after snapshot
-        m.restore(snap)
+        restore_state(m, snap)
         assert m.read(0x8000) == 0x11
 
 

@@ -20,13 +20,16 @@ _2DD = 737280
 
 # The real media/swap methods, so host.media.swap_disk drives the FloppyDisk.
 _MEDIA_API = (
-    "mount_disk", "disk_mounted", "disk_path", "_mounted_image",
+    "mount_disk", "eject_disk", "disk_mounted", "last_error_text", "_fail", "_mounted_image",
+    "_has_drive",
     "dirty_media", "read_media", "mark_persisted", "_media", "sram_media",
+    "drive_count",
 )
 
 
 def _bind_media_api(machine: types.SimpleNamespace) -> None:
     machine._sram_table = {}
+    machine._error_text = b""
     for name in _MEDIA_API:
         setattr(machine, name, functools.partial(getattr(Machine, name), machine))
 
@@ -60,11 +63,12 @@ def test_fdd1_status_empty(capsys: pytest.CaptureFixture[str]) -> None:
 
 
 def test_fdd1_status_shows_path(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    dbg, iface = _dbg()
+    dbg, _iface = _dbg()
     p = _dsk(tmp_path / "g.dsk")
-    iface.mount(dsk_image(p), 0)
+    dbg._cmd_fdd([str(p)], 0)
+    capsys.readouterr()
     dbg._cmd_fdd([], 0)
-    assert str(p) in capsys.readouterr().out
+    assert capsys.readouterr().out == f"fdd1: {p}\n"
 
 
 def test_fdd1_eject(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -82,7 +86,9 @@ def test_fdd2_on_single_drive_errors(capsys: pytest.CaptureFixture[str]) -> None
 
 
 def test_fdd_no_fdc_errors(capsys: pytest.CaptureFixture[str]) -> None:
-    dbg = Debugger(types.SimpleNamespace(fdc=None))  # type: ignore[arg-type]
+    machine = types.SimpleNamespace(fdc=None)
+    machine.drive_count = functools.partial(Machine.drive_count, machine)
+    dbg = Debugger(machine)  # type: ignore[arg-type]
     dbg._cmd_fdd(["x.dsk"], 0)
     assert "no floppy" in capsys.readouterr().out.lower()
 
@@ -109,6 +115,9 @@ def _loop_dbg(iface: SonyPhilipsInterface) -> Debugger:
         vdp=types.SimpleNamespace(frame_count=0),
     )
     _bind_media_api(machine)
+    machine.cpu_registers = lambda: types.SimpleNamespace(PC=0x4000)
+    machine.read_memory = lambda addr, length: bytes(length)
+    machine.frame_number = lambda: 0
     return Debugger(machine)  # type: ignore[arg-type]
 
 

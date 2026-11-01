@@ -18,20 +18,20 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TypeVar
 
+from msx.boundary import KeyboardLayout, VideoStandard
 from msx.canonical_json import decode_strict, encode_canonical, mismatched_version
 from msx.machine_spec import (
     AnyExtensionOverlay,
     ExpandedExtensionOverlay,
+    ExpandedSubslotDevice,
     ExtensionOverlay,
-    KeyboardLayout,
+    FdcDef,
     MachineLoadError,
     MachineSpec,
-    _ExpandedSubslotDevice,
-    _FdcDef,
-    _RomEntry,
-    _Slot0RamEntry,
+    PpiControlRead,
+    RomEntry,
+    Slot0RamEntry,
 )
-from msx.ppi import PpiControlRead
 from msx.snapshot_schema import (
     SAFE_INT_MAX,
     SchemaError,
@@ -43,7 +43,6 @@ from msx.snapshot_schema import (
     check_optional_int,
     check_str,
 )
-from msx.vdp._geometry import VideoStandard
 
 _T = TypeVar("_T")
 
@@ -158,7 +157,7 @@ def _entry_ref(
 
 
 def _device_object(
-    device: _ExpandedSubslotDevice, role: str, roms: dict[str, bytes], images: dict[str, bytes]
+    device: ExpandedSubslotDevice, role: str, roms: dict[str, bytes], images: dict[str, bytes]
 ) -> dict[str, object]:
     rom = None
     if device.rom_entry is not None:
@@ -225,9 +224,9 @@ def _machine_object(
         "id": spec.machine_id,
         "name": spec.name,
         "generation": spec.generation,
-        "video_standard": spec.video_standard.value,
+        "video_standard": spec.video_standard.spelling,
         "m1_wait_states": spec.m1_wait_states,
-        "keyboard_layout": spec.keyboard_type.value,
+        "keyboard_layout": spec.keyboard_type.spelling,
         "ppi_control_read": spec.ppi_control_read.value,
         "has_v9938": spec.has_v9938,
         "has_rtc": spec.has_rtc,
@@ -271,7 +270,8 @@ def encode_machine_config(
     extension_overlay2: AnyExtensionOverlay | None = None,
 ) -> tuple[bytes, dict[str, bytes]]:
     """The canonical document of a resolved machine, and the images it
-    references keyed by SHA1 (MachineConfig.roms). `roms` holds the images
+    references keyed by SHA1 (the host makes MachineConfig.roms records
+    from them). `roms` holds the images
     the host loaded, by role; `mapper1`/`mapper2` are resolved names, never
     "auto"."""
     images: dict[str, bytes] = {}
@@ -308,7 +308,13 @@ _SLOT_PAIR_KEYS = frozenset({"slot1", "slot2"})
 _CARTRIDGE_KEYS = frozenset({"mapper", "rom"})
 _FLAT_KEYS = frozenset({"shape", "device", "rom"})
 _EXPANDED_KEYS = frozenset({"shape", "subslots", "io_device"})
-_MAX_KB = 1 << 20      # 1 GB: far above any MSX device, below SAFE_INT_MAX
+_MAX_RAM_KB = 64       # the Z80 address space
+_MAX_MAPPER_KB = 4096  # 256 segments of 16 KB: an 8-bit segment register
+# The I/O devices the build reads a port range for (msx/machine_loader.py).
+_IO_DEVICES = frozenset({
+    "vdp_tms9918a", "vdp_v9938", "psg_ay8910", "ppi8255", "rtc_rp5c01",
+    "memory_mapper_standard",
+})
 _SUBSLOTS = 4
 _PAGES = 4
 
@@ -322,6 +328,12 @@ def _choice(value: object, label: str, choices: frozenset[str]) -> str:
 
 def _enum(value: object, label: str, enum_type: Callable[[str], _T], names: list[str]) -> _T:
     return enum_type(_choice(value, label, frozenset(names)))
+
+
+def _check_mapper_size(size_kb: int, label: str) -> None:
+    """A RAM mapper size is 0 (none) or at least one 16 KB segment."""
+    if 0 < size_kb < 16:
+        raise SchemaError(f"{label} must be 0 or 16-{_MAX_MAPPER_KB}, got {size_kb}")
 
 
 def _rom(value: object, label: str) -> RomRef:
@@ -343,11 +355,11 @@ def _optional_rom(value: object, label: str) -> RomRef | None:
     return None if value is None else _rom(value, label)
 
 
-def _entry(ref: RomRef) -> _RomEntry:
-    return _RomEntry(file=ref.name, size_kb=ref.size // 1024, pages=list(ref.pages), sha1=ref.sha1)
+def _entry(ref: RomRef) -> RomEntry:
+    return RomEntry(file=ref.name, size_kb=ref.size // 1024, pages=list(ref.pages), sha1=ref.sha1)
 
 
-def _add_rom(roms: dict[str, RomRef], role: str, ref: RomRef | None) -> _RomEntry | None:
+def _add_rom(roms: dict[str, RomRef], role: str, ref: RomRef | None) -> RomEntry | None:
     if ref is None:
         return None
     roms[role] = ref
@@ -358,7 +370,7 @@ def _device(
     value: object, label: str, role: str, roms: dict[str, RomRef],
     devices: frozenset[str], requiring_rom: frozenset[str],
     requiring_size: frozenset[str] = frozenset(),
-) -> _ExpandedSubslotDevice:
+) -> ExpandedSubslotDevice:
     """A sub-slot or io_device entry whose `device` is one of `devices`, with
     the ROM / size_kb the requiring sets demand."""
     obj = check_object(value, label, _DEVICE_KEYS)
@@ -366,10 +378,12 @@ def _device(
     rom = _optional_rom(obj["rom"], f"{label}.rom")
     if rom is None and device in requiring_rom:
         raise SchemaError(f"{label}.rom is required for device {device!r}")
-    size_kb = check_optional_int(obj["size_kb"], f"{label}.size_kb", 0, _MAX_KB)
+    size_kb = check_optional_int(obj["size_kb"], f"{label}.size_kb", 0, _MAX_MAPPER_KB)
+    if size_kb is not None:
+        _check_mapper_size(size_kb, f"{label}.size_kb")
     if size_kb is None and device in requiring_size:
         raise SchemaError(f"{label}.size_kb is required for device {device!r}")
-    return _ExpandedSubslotDevice(
+    return ExpandedSubslotDevice(
         device=device,
         rom_entry=_add_rom(roms, role, rom),
         size_kb=size_kb,
@@ -378,7 +392,7 @@ def _device(
 
 def _optional_io_device(
     value: object, label: str, role: str, roms: dict[str, RomRef]
-) -> _ExpandedSubslotDevice | None:
+) -> ExpandedSubslotDevice | None:
     if value is None:
         return None
     return _device(value, label, role, roms, IO_DEVICES, IO_DEVICES_REQUIRING_ROM)
@@ -392,7 +406,7 @@ def _parse_machine(value: object, roms: dict[str, RomRef]) -> MachineSpec:
     slot0_ram = None
     if obj["slot0_ram"] is not None:
         ram = check_object(obj["slot0_ram"], f"{label}.slot0_ram", _SLOT0_RAM_KEYS)
-        slot0_ram = _Slot0RamEntry(
+        slot0_ram = Slot0RamEntry(
             size_kb=check_int(ram["size_kb"], f"{label}.slot0_ram.size_kb", 0, 64),
             page=check_int(ram["page"], f"{label}.slot0_ram.page", 0, _PAGES - 1),
         )
@@ -411,7 +425,7 @@ def _parse_machine(value: object, roms: dict[str, RomRef]) -> MachineSpec:
                 f"{label}.fdc: controller {controller!r} with connection_style {style!r} "
                 f"is not a supported pair {sorted(FDC_PAIRS)}"
             )
-        fdc = _FdcDef(
+        fdc = FdcDef(
             disk_rom_entry=disk,
             controller=controller,
             connection_style=style,
@@ -420,8 +434,17 @@ def _parse_machine(value: object, roms: dict[str, RomRef]) -> MachineSpec:
     io_ports_obj = check_object(obj["device_io_ports"], f"{label}.device_io_ports")
     io_ports: dict[str, tuple[int, int]] = {}
     for device_id, pair in io_ports_obj.items():
-        ports = check_int_list(pair, f"{label}.device_io_ports.{device_id}", 2, 0, 0xFF)
+        ports_label = f"{label}.device_io_ports.{device_id}"
+        if device_id not in _IO_DEVICES:
+            raise SchemaError(f"{ports_label}: unknown I/O device")
+        ports = check_int_list(pair, ports_label, 2, 0, 0xFF)
+        if ports[0] > ports[1]:
+            raise SchemaError(f"{ports_label}: first port above last port")
         io_ports[device_id] = (ports[0], ports[1])
+    mapper_kb = check_int(
+        obj["ram_mapper_size_kb"], f"{label}.ram_mapper_size_kb", 0, _MAX_MAPPER_KB
+    )
+    _check_mapper_size(mapper_kb, f"{label}.ram_mapper_size_kb")
     return MachineSpec(
         name=check_str(obj["name"], f"{label}.name"),
         generation=_choice(obj["generation"], f"{label}.generation", frozenset({"msx1", "msx2"})),
@@ -431,34 +454,32 @@ def _parse_machine(value: object, roms: dict[str, RomRef]) -> MachineSpec:
         ),
         sub_rom_entry=_add_rom(roms, "sub", _optional_rom(obj["sub_rom"], f"{label}.sub_rom")),
         has_ram_mapper=check_bool(obj["has_ram_mapper"], f"{label}.has_ram_mapper"),
-        ram_size_kb=check_int(obj["ram_size_kb"], f"{label}.ram_size_kb", 0, _MAX_KB),
+        ram_size_kb=check_int(obj["ram_size_kb"], f"{label}.ram_size_kb", 0, _MAX_RAM_KB),
         has_v9938=check_bool(obj["has_v9938"], f"{label}.has_v9938"),
         has_rtc=check_bool(obj["has_rtc"], f"{label}.has_rtc"),
         slot0_ram_entry=slot0_ram,
         keyboard_type=_enum(
-            obj["keyboard_layout"], f"{label}.keyboard_layout", KeyboardLayout,
-            [layout.value for layout in KeyboardLayout],
+            obj["keyboard_layout"], f"{label}.keyboard_layout",
+            KeyboardLayout.from_spelling, [layout.spelling for layout in KeyboardLayout],
         ),
         ppi_control_read=_enum(
             obj["ppi_control_read"], f"{label}.ppi_control_read", PpiControlRead,
             [mode.value for mode in PpiControlRead],
         ),
-        ram_mapper_size_kb=check_int(
-            obj["ram_mapper_size_kb"], f"{label}.ram_mapper_size_kb", 0, _MAX_KB
-        ),
+        ram_mapper_size_kb=mapper_kb,
         machine_id=check_str(obj["id"], f"{label}.id"),
         device_io_ports=io_ports,
         io_device=_optional_io_device(obj["io_device"], f"{label}.io_device", "io_device", roms),
         video_standard=_enum(
-            obj["video_standard"], f"{label}.video_standard", VideoStandard,
-            [standard.value for standard in VideoStandard],
+            obj["video_standard"], f"{label}.video_standard",
+            VideoStandard.from_spelling, [standard.spelling for standard in VideoStandard],
         ),
         m1_wait_states=check_int(obj["m1_wait_states"], f"{label}.m1_wait_states", 0, 15),
         flat_ram_subslot=check_optional_int(
             obj["flat_ram_subslot"], f"{label}.flat_ram_subslot", 0, _SUBSLOTS - 1
         ),
         flat_ram_size_kb=check_int(
-            obj["flat_ram_size_kb"], f"{label}.flat_ram_size_kb", 0, _MAX_KB
+            obj["flat_ram_size_kb"], f"{label}.flat_ram_size_kb", 0, _MAX_RAM_KB
         ),
         sub_rom_subslot=check_int(
             obj["sub_rom_subslot"], f"{label}.sub_rom_subslot", 0, _SUBSLOTS - 1
@@ -501,7 +522,7 @@ def _parse_overlay(
         )
     obj = check_object(value, label, _EXPANDED_KEYS)
     subslots_obj = check_object(obj["subslots"], f"{label}.subslots")
-    subslots: dict[int, _ExpandedSubslotDevice] = {}
+    subslots: dict[int, ExpandedSubslotDevice] = {}
     for key, device in subslots_obj.items():
         if key not in ("0", "1", "2", "3"):
             raise SchemaError(f"{label}.subslots has a key {key!r} that is not a sub-slot 0-3")

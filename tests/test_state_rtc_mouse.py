@@ -39,12 +39,12 @@ def _msx2(start: RtcTime) -> Machine:
 
 def test_rtc_time_and_cmos_ram_round_trip() -> None:
     saved = _msx2(RtcTime(2026, 10, 23, 12, 0, 0))
-    saved.cycle_count += 10 * _SECOND                 # 10 emulated seconds
+    saved.clock.cycle += 10 * _SECOND                 # 10 emulated seconds
     _rtc_write(saved, 2, 3, 0x9)                      # a CMOS RAM nibble
     snap = _snapshot_from_machine(saved)
 
     loaded = _msx2(RtcTime(1990, 1, 1, 0, 0, 0))      # different start time
-    loaded.cycle_count = 123_456                      # and a different clock
+    loaded.clock.cycle = 123_456                      # and a different clock
     _restore_snapshot(loaded, snap)
 
     for block in (0, 2):
@@ -52,13 +52,14 @@ def test_rtc_time_and_cmos_ram_round_trip() -> None:
             assert _rtc_read(loaded, block, reg) == _rtc_read(saved, block, reg)
     assert (_rtc_read(loaded, 0, 0), _rtc_read(loaded, 0, 1)) == (0, 1)   # 12:00:10
 
-    loaded.cycle_count += _SECOND                     # and keeps advancing
+    loaded.clock.cycle += _SECOND                     # and keeps advancing
     assert _rtc_read(loaded, 0, 0) == 1
 
 
 def _with_mouse(machine: Machine) -> MouseDevice:
-    mouse = MouseDevice()
-    machine.attach_mouse(mouse, JoystickPort.JOY2)
+    machine.attach_mouse(JoystickPort.JOY2)
+    mouse = machine.psg.mouse
+    assert mouse is not None
     return mouse
 
 
@@ -66,15 +67,15 @@ def test_mouse_mid_scan_round_trips() -> None:
     saved = make_machine(_ROM)
     saved_mouse = _with_mouse(saved)
     saved_mouse.add_motion(40, -7)
-    saved.cycle_count = 1_000
+    saved.clock.cycle = 1_000
     for level in (1, 0, 1):                           # advance part-way through a scan
         saved_mouse.write_pin8(level, saved.cycle_count)
-        saved.cycle_count += 100
+        saved.clock.cycle += 100
     snap = _snapshot_from_machine(saved)
 
     loaded = make_machine(_ROM)
     loaded_mouse = _with_mouse(loaded)
-    loaded.cycle_count = saved.cycle_count + 50_000_000   # unrelated clock value
+    loaded.clock.cycle = saved.cycle_count + 50_000_000   # unrelated clock value
     _restore_snapshot(loaded, snap)
 
     # The same pin-8 toggles, at the same distances, read the same nibbles.
@@ -141,3 +142,20 @@ def test_a_resynced_scan_may_hold_a_delta_in_its_last_phase() -> None:
     assert snap.mouse is not None
     snap.mouse.update({"phase": 7, "x_rel": 3})
     _restore_snapshot(_with_mouse_machine(), snap)
+
+
+def test_a_long_session_loads_into_a_fresh_machine() -> None:
+    # machine-state "A long session loads into a fresh machine".
+    from msx import state
+
+    saved = make_machine_msx2(_ROM, _EXTROM)
+    _with_mouse(saved)
+    saved.clock.cycle = 10_000_000
+    data = state.save_state(saved)
+    fresh = make_machine_msx2(_ROM, _EXTROM)
+    fresh_mouse = _with_mouse(fresh)
+    state.load_state(fresh, data)
+    assert fresh.rtc is not None
+    assert fresh.rtc._base_cycle >= 0 and fresh_mouse._base_cycle >= 0
+    assert fresh.rtc._elapsed_cycles() == saved.rtc._elapsed_cycles() == 10_000_000
+    assert state.save_state(fresh) == data

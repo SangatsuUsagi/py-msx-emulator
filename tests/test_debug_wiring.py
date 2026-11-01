@@ -1,34 +1,19 @@
+"""The build wires the trace buffer the --debug log uses (diag-debug-logger
+"The debug kind reaches every logging component")."""
 from __future__ import annotations
 
-from msx.diagnostics.logger import DebugLogger
+from msx.boundary import TRACE_DEBUG
 from tests.factories import make_machine
 
 ROM = bytes(32768)
 
 
-def test_make_machine_without_logger_leaves_none() -> None:
+def test_the_build_wires_the_trace_buffer() -> None:
     machine = make_machine(rom=ROM)
-    assert machine.cpu._logger is None
-    assert machine.memory._logger is None
-    assert machine.io._logger is None
-    assert machine.vdp._logger is None
-    assert machine._logger is None
+    assert machine.io._trace is machine._trace
+    assert machine.vdp._trace is machine._trace
+    # The CPU gets it only while TRACE_DEBUG is on.
+    assert machine.cpu._trace is None
+    machine.set_trace_kinds(TRACE_DEBUG)
+    assert machine.cpu._trace is machine._trace
 
-
-def test_make_machine_wires_logger_to_all_subsystems() -> None:
-    logger = DebugLogger()
-    machine = make_machine(rom=ROM, logger=logger)
-    assert machine.cpu._logger is logger
-    assert machine.memory._logger is logger
-    assert machine.io._logger is logger
-    assert machine.vdp._logger is logger
-    assert machine._logger is logger
-
-
-def test_make_machine_wires_get_pc() -> None:
-    logger = DebugLogger()
-    machine = make_machine(rom=ROM, logger=logger)
-    assert machine.io._get_pc is not None
-    # _get_pc should return the CPU's current PC
-    machine.cpu.registers.PC = 0x1234
-    assert machine.io._get_pc() == 0x1234

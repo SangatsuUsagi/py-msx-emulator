@@ -226,21 +226,29 @@ Read all CPU registers (works in any state).
 ### `debug.set_breakpoint`
 
 **Params:** `{ "address": "0xC000" }`  
-**Result:** `{ "id": 0, "address": "0xC000", "active": true }`
+**Result:** `{ "id": 0, "address": "0xC000", "active": true }`  
+**Errors:** `-32602` for a fifth breakpoint. The core holds at most four, and
+the four set stay. The core's set is shared with the command line and the
+debugger REPL, and the limit counts all of them. A breakpoint at an address
+the core already holds adds no entry.
 
 ---
 
 ### `debug.remove_breakpoint`
 
 **Params:** `{ "id": 0 }`  
-**Result:** `{ "removed": true }`
+**Result:** `{ "removed": true }`  
+The address leaves the core's set unless another id holds it. A debugger
+breakpoint at the same address goes too.
 
 ---
 
 ### `debug.list_breakpoints`
 
 **Params:** none  
-**Result:** `{ "breakpoints": [ { "id": 0, "address": "0xC000", "active": true } ] }`
+**Result:** `{ "breakpoints": [ { "id": 0, "address": "0xC000", "active": true } ] }`  
+`active` is `false` when the core no longer holds the address (for example,
+after `br` in the debugger REPL).
 
 ---
 
@@ -248,14 +256,19 @@ Read all CPU registers (works in any state).
 
 **Params:** `{ "address": "0xE000", "mode": "rw" }`  
 `mode`: `"r"` | `"w"` | `"rw"` (default `"rw"`)  
-**Result:** `{ "id": 0, "address": "0xE000", "mode": "rw", "active": true }`
+**Result:** `{ "id": 0, "address": "0xE000", "mode": "rw", "active": true }`  
+**Errors:** `-32602` for a fifth watchpoint. The core holds at most four, and
+the four set stay. The core keeps one mode per address, so a watchpoint at a
+watched address adds its mode to that address.
 
 ---
 
 ### `debug.remove_watchpoint`
 
 **Params:** `{ "id": 0 }`  
-**Result:** `{ "removed": true }`
+**Result:** `{ "removed": true }`  
+The address loses the mode bits that no other id at that address holds. An
+address with no mode left leaves the core's set.
 
 ---
 
@@ -263,6 +276,9 @@ Read all CPU registers (works in any state).
 
 **Params:** `{ "address": "0xC000", "length": 16 }`  
 **Result:** `{ "address": "0xC000", "data": "3E 01 32 00 C0 C9 ..." }`
+
+The length must be 0-0x10000. Any other length gives an invalid-params error
+(`-32602`).
 
 ---
 
@@ -279,6 +295,11 @@ Read all CPU registers (works in any state).
 
 **Params:** `{ "address": "0x0000", "length": 32 }`  
 **Result:** `{ "address": "0x0000", "data": "..." }`
+
+The address wraps at the VRAM size (0x4000 or 0x20000). On an MSX2 machine an
+address above 0xFFFF reads the VRAM above 64 KB, and the result's `address`
+has five hex digits (`"0x1C000"`). The length must be 0 to the VRAM size. Any
+other length gives an invalid-params error (`-32602`).
 
 ---
 
@@ -433,7 +454,8 @@ Clients that do not need push may ignore these frames.
 The frame loop and class skeleton below are design sketches, not extracts from
 the finished code. The shipped `DebugServer` diverges in at least two ways worth
 knowing: `cpu.continue_sync` is handled inline on the socket thread rather than
-queued (it has to block without stalling the emulator), and the queue wait has a
+queued (it has to block without stalling the emulator, and it answers from the
+pause record the emulator thread writes, with no core call), and the queue wait has a
 named `_DISPATCH_TIMEOUT_S` that answers with a `"dispatch timeout"` error.
 
 ### New files

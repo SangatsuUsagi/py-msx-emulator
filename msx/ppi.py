@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import ClassVar, TypedDict
 
+from msx.clock import CoreClock
 from msx.dac import EventDac
 from msx.input import InputLines
+from msx.machine_spec import PpiControlRead
 from msx.memory import Memory
 
 # Key-click output while Port C bit 7 is 1: the PSG single-channel maximum
@@ -14,20 +14,6 @@ from msx.memory import Memory
 # to a DACSound8U (127/128 of full scale), and its machine configs give the PPI
 # sound volume 16000 against the PSG's 21000. 12287 * 127/128 * 16000/21000.
 KEY_CLICK_LEVEL: int = 9288
-
-
-class PpiControlRead(str, Enum):
-    """What a port 0xAB read returns; the 8255A data sheet calls it illegal."""
-
-    # The last mode-set word: CMOS 82C55A, as openMSX I8255::readControlPort.
-    CONTROL = "control"
-    # 0xFF: nothing drives the bus. Verified on a real SONY HB-F1XD (S1985
-    # MSX-ENGINE), extras/HB-F1XD/PORTRD.BAS, 2026-10-05.
-    OPEN_BUS = "open_bus"
-    # The byte latched by the last PPI access (see PPI._bus_latch). Verified
-    # on a real SONY HB-10 (S3527 MSX-ENGINE), extras/HB-10/PORTRD1-4.BAS,
-    # 2026-10-08.
-    BUS_LATCH = "bus_latch"
 
 
 class PpiState(TypedDict):
@@ -42,6 +28,9 @@ class PpiState(TypedDict):
 
 @dataclass
 class PPI:
+    """The 8255 PPI: the primary slot register, the keyboard row select and
+    matrix read, and the key-click bit, on ports 0xA8-0xAB."""
+
     memory: Memory
     _input: InputLines | None = field(default=None, repr=False)
     # Intel 8255 post-reset control word: mode 0, ports A/B/C all input.
@@ -60,8 +49,9 @@ class PPI:
     _bus_latch: int = field(default=0xFF, repr=False)
     # Key click (Port C bit 7) as a 1-bit DAC; the frontend mixes its output.
     click: EventDac = field(default_factory=EventDac, repr=False)
-    # Cycle source for click timestamps, wired by build_machine.
-    _get_cycle: Callable[[], int] | None = field(default=None, repr=False)
+    # The emulated time (msx/clock.py) that timestamps the clicks;
+    # build_machine gives the machine's record.
+    _clock: CoreClock = field(default_factory=CoreClock, repr=False)
 
     @property
     def control(self) -> int:
@@ -96,8 +86,7 @@ class PPI:
     def _set_port_c(self, value: int) -> None:
         # The click sounds only on a bit 7 change (openMSX MSXPPI::writeC1).
         if (self._port_c ^ value) & 0x80:
-            cycle = self._get_cycle() if self._get_cycle is not None else 0
-            self.click.write(cycle, KEY_CLICK_LEVEL if value & 0x80 else 0)
+            self.click.write(self._clock.cycle, KEY_CLICK_LEVEL if value & 0x80 else 0)
         self._port_c = value
 
     def reset(self) -> None:

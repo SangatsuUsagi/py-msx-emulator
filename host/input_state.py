@@ -3,17 +3,23 @@
 The SDL keyboard, the gamepad manager, the host mouse and the RPC server all
 write into one InputState; once per frame the frontend hands the machine its
 current value as an InputFrame (take_frame), and RPC injection applies it at
-once (Machine.apply_input). Each joystick port has a keyboard-sourced and a
+once (CoreApi.apply_input). Each joystick port has a keyboard-sourced and a
 pad-sourced line state: a line reads as pressed while either source holds it.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from msx.boundary import MOUSE_LEFT, MOUSE_RIGHT
 from msx.input import InputFrame
 
 _NUM_ROWS = 11
 _JOY_LINES_MASK = 0x3F  # bits 0-5: up/down/left/right/trigger A/trigger B
+
+
+def _clamp_int32(value: int) -> int:
+    """A motion total in the range of msx_input_frame.mouse_dx and mouse_dy."""
+    return max(-0x8000_0000, min(0x7FFF_FFFF, value))
 
 
 @dataclass
@@ -44,13 +50,18 @@ class InputState:
 
     def frame(self) -> InputFrame:
         """The current input as a frame value (motion included, not reset)."""
+        buttons = 0
+        if self.mouse_left:
+            buttons |= MOUSE_LEFT
+        if self.mouse_right:
+            buttons |= MOUSE_RIGHT
         return InputFrame(
-            key_matrix=tuple(self.matrix),
-            joystick_ports=(self.joy1, self.joy2),
-            mouse_dx=self.mouse_dx,
-            mouse_dy=self.mouse_dy,
-            mouse_left=self.mouse_left,
-            mouse_right=self.mouse_right,
+            key_matrix=bytes(self.matrix),
+            joy1=self.joy1,
+            joy2=self.joy2,
+            mouse_dx=_clamp_int32(self.mouse_dx),
+            mouse_dy=_clamp_int32(self.mouse_dy),
+            mouse_buttons=buttons,
         )
 
     def take_frame(self) -> InputFrame:

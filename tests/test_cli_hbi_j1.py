@@ -17,15 +17,16 @@ import pytest
 from host.machine_config import build_machine_from_spec, load_extension_overlay
 from host.state_files import load_state, save_state
 from msx.boundary import RgbFrame
+from msx.fmpac import FMPAC_ROM_SIZE
 from msx.kanji import KanjiRom
 from msx.machine import Machine
 from msx.machine_spec import (
     ExpandedExtensionOverlay,
+    ExpandedSubslotDevice,
     ExtensionOverlay,
     MachineLoadError,
     MachineSpec,
-    _ExpandedSubslotDevice,
-    _RomEntry,
+    RomEntry,
 )
 from msx.mapper import FixedPageMapper, HalnoteMapper
 
@@ -43,10 +44,10 @@ def _run_main(argv: list[str]) -> tuple[int, str, str]:
     stderr_buf = io.StringIO()
 
     def fake_read_bytes(self: Path) -> bytes:
-        # HalnoteMapper/KanjiRom validate ROM size strictly in __post_init__,
-        # unlike fmpac/scc_plus's tests (which mock every ROM to one fixed
-        # size) -- resolve the right size per filename.
+        # HalnoteMapper/KanjiRom and the FM-PAC build check validate ROM
+        # size strictly -- resolve the right size per filename.
         sizes = {
+            "fmpac.rom": FMPAC_ROM_SIZE,
             "hbi-j1_msx-je.rom": _HALNOTE_ROM_SIZE,
             "hbi-j1_kanjibasic.rom": _KANJIBASIC_ROM_SIZE,
             "hbi-j1_kanjifont.rom": _KANJIFONT_ROM_SIZE,
@@ -206,7 +207,7 @@ def _msx1_spec(main_rom_dir: Path) -> MachineSpec:
         name="test_msx1",
         generation="msx1",
         rom_base_dir=main_rom_dir,
-        main_rom_entry=_RomEntry(file="main.rom", size_kb=32, pages=[0, 1]),
+        main_rom_entry=RomEntry(file="main.rom", size_kb=32, pages=[0, 1]),
         logo_rom_entry=None,
         sub_rom_entry=None,
         has_ram_mapper=False,
@@ -222,19 +223,19 @@ def _hbi_j1_overlay(rom_dir: Path, sram_path: Path | None = None) -> ExpandedExt
     (rom_dir / "kanjifont.rom").write_bytes(bytes(_KANJIFONT_ROM_SIZE))
     return ExpandedExtensionOverlay(
         subslots={
-            0: _ExpandedSubslotDevice(
+            0: ExpandedSubslotDevice(
                 device="halnote", rom_base_dir=rom_dir,
-                rom_entry=_RomEntry(file="msx-je.rom", size_kb=1024, pages=[]),
+                rom_entry=RomEntry(file="msx-je.rom", size_kb=1024, pages=[]),
                 sram_save_path=sram_path,
             ),
-            1: _ExpandedSubslotDevice(
+            1: ExpandedSubslotDevice(
                 device="flat_rom", rom_base_dir=rom_dir,
-                rom_entry=_RomEntry(file="kanjibasic.rom", size_kb=32, pages=[]),
+                rom_entry=RomEntry(file="kanjibasic.rom", size_kb=32, pages=[]),
             ),
         },
-        io_device=_ExpandedSubslotDevice(
+        io_device=ExpandedSubslotDevice(
             device="kanji_rom", rom_base_dir=rom_dir,
-            rom_entry=_RomEntry(file="kanjifont.rom", size_kb=256, pages=[]),
+            rom_entry=RomEntry(file="kanjifont.rom", size_kb=256, pages=[]),
         ),
     )
 
@@ -253,9 +254,8 @@ def _hbi_j1_machine(tmp_path: Path, name: str = "m") -> Machine:
 def test_build_machine_expands_slot2_with_halnote_and_flat_rom(tmp_path: Path) -> None:
     machine = _hbi_j1_machine(tmp_path)
     assert machine.memory.slot2_sub_slot_enabled is True
-    assert isinstance(machine.memory._mapper2_subslots[0], HalnoteMapper)
-    assert isinstance(machine.memory._mapper2_subslots[1], FixedPageMapper)
-    assert machine.halnote_cart is machine.memory._mapper2_subslots[0]
+    assert isinstance(machine.memory.mapper2_subslots[0], HalnoteMapper)
+    assert isinstance(machine.memory.mapper2_subslots[1], FixedPageMapper)
     assert isinstance(machine.kanji, KanjiRom)
 
 
@@ -269,9 +269,9 @@ def _msx2_spec() -> MachineSpec:
         machine_id="test_msx2",
         generation="msx2",
         rom_base_dir=Path("."),
-        main_rom_entry=_RomEntry(file="", size_kb=0, pages=[0, 1]),
+        main_rom_entry=RomEntry(file="", size_kb=0, pages=[0, 1]),
         logo_rom_entry=None,
-        sub_rom_entry=_RomEntry(file="", size_kb=0, pages=[]),
+        sub_rom_entry=RomEntry(file="", size_kb=0, pages=[]),
         has_ram_mapper=True,
         ram_size_kb=32,
         has_v9938=True,
@@ -293,8 +293,8 @@ def test_build_machine_expands_slot2_on_msx2_alongside_slot3(tmp_path: Path) -> 
         extension_overlay2=_hbi_j1_overlay(rom_dir),
     )
     assert machine.memory.slot2_sub_slot_enabled is True
-    assert isinstance(machine.memory._mapper2_subslots[0], HalnoteMapper)
-    assert isinstance(machine.memory._mapper2_subslots[1], FixedPageMapper)
+    assert isinstance(machine.memory.mapper2_subslots[0], HalnoteMapper)
+    assert isinstance(machine.memory.mapper2_subslots[1], FixedPageMapper)
     assert isinstance(machine.kanji, KanjiRom)
     # Slot 3's own sub-slot dispatch (the RAM mapper) is unaffected.
     assert machine.memory.ram_mapper is not None
@@ -318,9 +318,8 @@ def test_build_machine_expands_slot1_with_halnote_and_flat_rom(tmp_path: Path) -
     machine = _hbi_j1_machine_slot1(tmp_path)
     assert machine.memory.slot1_sub_slot_enabled is True
     assert machine.memory.slot2_sub_slot_enabled is False
-    assert isinstance(machine.memory._mapper1_subslots[0], HalnoteMapper)
-    assert isinstance(machine.memory._mapper1_subslots[1], FixedPageMapper)
-    assert machine.halnote_cart is machine.memory._mapper1_subslots[0]
+    assert isinstance(machine.memory.mapper1_subslots[0], HalnoteMapper)
+    assert isinstance(machine.memory.mapper1_subslots[1], FixedPageMapper)
     assert isinstance(machine.kanji, KanjiRom)
 
 
@@ -353,13 +352,12 @@ def test_reset_restores_power_on_slot1_sub_slot_register(tmp_path: Path) -> None
 def test_reset_restores_halnote_mapper_power_on_state_on_slot1(tmp_path: Path) -> None:
     # Mirrors test_reset_restores_halnote_mapper_power_on_state below, with
     # the HalnoteMapper wired into slot 1 instead of slot 2 -- Machine.reset()
-    # reaches it via _mapper1_subslots' per-sub-slot loop the same way it
-    # reaches _mapper2_subslots' (allium/halnote-mapper.allium's Reset rule
+    # reaches it via mapper1_subslots' per-sub-slot loop the same way it
+    # reaches mapper2_subslots' (allium/halnote-mapper.allium's Reset rule
     # is not slot-specific).
     machine = _hbi_j1_machine_slot1(tmp_path)
-    halnote = machine.halnote_cart
-    assert halnote is not None
-    assert halnote is machine.memory._mapper1_subslots[0]
+    halnote = machine.memory.mapper1_subslots[0]
+    assert isinstance(halnote, HalnoteMapper)
     halnote.write(0x8FFF, 0x0A)  # bank 2 -> page 10
     halnote.write(0x4FFF, 0x85)  # bank 0 -> page 5, SRAM enabled
     machine.reset()
@@ -384,8 +382,8 @@ def test_reset_restores_halnote_mapper_power_on_state(tmp_path: Path) -> None:
     # calls a present HalnoteMapper's reset(), restoring bank/sub-bank
     # registers and both enable flags to their construction defaults.
     machine = _hbi_j1_machine(tmp_path)
-    halnote = machine.halnote_cart
-    assert halnote is not None
+    halnote = machine.memory.mapper2_subslots[0]
+    assert isinstance(halnote, HalnoteMapper)
     halnote.write(0x8FFF, 0x0A)  # bank 2 -> page 10
     halnote.write(0x4FFF, 0x85)  # bank 0 -> page 5, SRAM enabled
     machine.reset()
@@ -417,18 +415,18 @@ def test_subslot1_dispatches_to_flat_kanji_driver_rom(tmp_path: Path) -> None:
         (rom_dir / "kanjifont.rom").write_bytes(bytes(_KANJIFONT_ROM_SIZE))
         return ExpandedExtensionOverlay(
             subslots={
-                0: _ExpandedSubslotDevice(
+                0: ExpandedSubslotDevice(
                     device="halnote", rom_base_dir=rom_dir,
-                    rom_entry=_RomEntry(file="msx-je.rom", size_kb=1024, pages=[]),
+                    rom_entry=RomEntry(file="msx-je.rom", size_kb=1024, pages=[]),
                 ),
-                1: _ExpandedSubslotDevice(
+                1: ExpandedSubslotDevice(
                     device="flat_rom", rom_base_dir=rom_dir,
-                    rom_entry=_RomEntry(file="kanjibasic.rom", size_kb=32, pages=[]),
+                    rom_entry=RomEntry(file="kanjibasic.rom", size_kb=32, pages=[]),
                 ),
             },
-            io_device=_ExpandedSubslotDevice(
+            io_device=ExpandedSubslotDevice(
                 device="kanji_rom", rom_base_dir=rom_dir,
-                rom_entry=_RomEntry(file="kanjifont.rom", size_kb=256, pages=[]),
+                rom_entry=RomEntry(file="kanjifont.rom", size_kb=256, pages=[]),
             ),
         )
 
@@ -480,8 +478,8 @@ def test_build_machine_loads_existing_halnote_sram(tmp_path: Path) -> None:
         extension_overlay2=overlay,
     )
 
-    cart = machine.halnote_cart
-    assert cart is not None
+    cart = machine.memory.mapper2_subslots[0]
+    assert isinstance(cart, HalnoteMapper)
     cart.write(0x4FFF, 0x80)  # enable SRAM at bank 0's top bit
     assert cart.read(0x0000) == 0xEE
 
@@ -507,11 +505,14 @@ def test_build_machine_flat_overlay_leaves_expanded_fields_unset(tmp_path: Path)
         _msx1_spec(main_dir),
         extension_overlay2=ExtensionOverlay(
             device="fmpac", rom_base_dir=fmpac_dir,
-            rom_entry=_RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
+            rom_entry=RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
         ),
     )
     assert machine.memory.slot2_sub_slot_enabled is False
-    assert machine.halnote_cart is None
+    assert not any(
+        isinstance(sub, HalnoteMapper)
+        for sub in (*machine.memory.mapper1_subslots, *machine.memory.mapper2_subslots)
+    )
     assert machine.kanji is None
 
 
@@ -520,7 +521,10 @@ def test_build_machine_no_overlay_leaves_expanded_fields_unset(tmp_path: Path) -
     main_dir.mkdir()
     machine = build_machine_from_spec(_msx1_spec(main_dir))
     assert machine.memory.slot2_sub_slot_enabled is False
-    assert machine.halnote_cart is None
+    assert not any(
+        isinstance(sub, HalnoteMapper)
+        for sub in (*machine.memory.mapper1_subslots, *machine.memory.mapper2_subslots)
+    )
     assert machine.kanji is None
 
 
@@ -565,7 +569,7 @@ def test_missing_kanjifont_rom_raises_naming_file(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# machine.halnote_cart save-state round-trip (mirrors
+# HalnoteMapper save-state round-trip (mirrors
 # tests/test_scc_i_cart_state.py's SCCICart precedent)
 # ---------------------------------------------------------------------------
 
@@ -592,26 +596,26 @@ def test_roundtrip_preserves_halnote_sram_and_banks(saves_dir: Path, tmp_path: P
     (rom_dir / "kanjifont.rom").write_bytes(bytes(_KANJIFONT_ROM_SIZE))
     overlay = ExpandedExtensionOverlay(
         subslots={
-            0: _ExpandedSubslotDevice(
+            0: ExpandedSubslotDevice(
                 device="halnote", rom_base_dir=rom_dir,
-                rom_entry=_RomEntry(file="msx-je.rom", size_kb=1024, pages=[]),
+                rom_entry=RomEntry(file="msx-je.rom", size_kb=1024, pages=[]),
             ),
-            1: _ExpandedSubslotDevice(
+            1: ExpandedSubslotDevice(
                 device="flat_rom", rom_base_dir=rom_dir,
-                rom_entry=_RomEntry(file="kanjibasic.rom", size_kb=32, pages=[]),
+                rom_entry=RomEntry(file="kanjibasic.rom", size_kb=32, pages=[]),
             ),
         },
-        io_device=_ExpandedSubslotDevice(
+        io_device=ExpandedSubslotDevice(
             device="kanji_rom", rom_base_dir=rom_dir,
-            rom_entry=_RomEntry(file="kanjifont.rom", size_kb=256, pages=[]),
+            rom_entry=RomEntry(file="kanjifont.rom", size_kb=256, pages=[]),
         ),
     )
     machine = build_machine_from_spec(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
         extension_overlay2=overlay,
     )
-    cart = machine.halnote_cart
-    assert cart is not None
+    cart = machine.memory.mapper2_subslots[0]
+    assert isinstance(cart, HalnoteMapper)
     cart.write(0x4FFF, 0x85)  # SRAM enabled, bank 0 -> page 5
     cart.write(0x0000, 0xAB)  # SRAM byte
     save_state(machine, _RGB, "test")
@@ -648,8 +652,8 @@ def test_loading_hbi_j1_state_into_plain_machine_raises(
     saves_dir: Path, tmp_path: Path
 ) -> None:
     hbi_machine = _hbi_j1_machine(tmp_path, name="hbi")
-    cart = hbi_machine.halnote_cart
-    assert cart is not None
+    cart = hbi_machine.memory.mapper2_subslots[0]
+    assert isinstance(cart, HalnoteMapper)
     cart.write(0x4FFF, 0x85)
     cart.write(0x0000, 0xAB)
     save_state(hbi_machine, _RGB, "test")
@@ -681,14 +685,14 @@ def test_loading_state_with_mismatched_subslot_kind_raises(
     # sub-slot 0 -- a genuine per-index kind mismatch, not a wiring one.
     other_overlay = ExpandedExtensionOverlay(
         subslots={
-            0: _ExpandedSubslotDevice(
+            0: ExpandedSubslotDevice(
                 device="flat_rom", rom_base_dir=other_rom_dir,
-                rom_entry=_RomEntry(file="kanjibasic.rom", size_kb=32, pages=[]),
+                rom_entry=RomEntry(file="kanjibasic.rom", size_kb=32, pages=[]),
             ),
         },
-        io_device=_ExpandedSubslotDevice(
+        io_device=ExpandedSubslotDevice(
             device="kanji_rom", rom_base_dir=other_rom_dir,
-            rom_entry=_RomEntry(file="kanjifont.rom", size_kb=256, pages=[]),
+            rom_entry=RomEntry(file="kanjifont.rom", size_kb=256, pages=[]),
         ),
     )
     other_machine = build_machine_from_spec(
@@ -703,7 +707,7 @@ def test_loading_state_with_mismatched_subslot_kind_raises(
 
 
 # ---------------------------------------------------------------------------
-# machine.halnote_cart save-state round-trip, slot 1
+# HalnoteMapper save-state round-trip, slot 1
 # (openspec/changes/slot1-slot2-symmetrization Phase 5)
 # ---------------------------------------------------------------------------
 
@@ -720,26 +724,26 @@ def test_roundtrip_preserves_halnote_sram_and_banks_on_slot1(
     (rom_dir / "kanjifont.rom").write_bytes(bytes(_KANJIFONT_ROM_SIZE))
     overlay = ExpandedExtensionOverlay(
         subslots={
-            0: _ExpandedSubslotDevice(
+            0: ExpandedSubslotDevice(
                 device="halnote", rom_base_dir=rom_dir,
-                rom_entry=_RomEntry(file="msx-je.rom", size_kb=1024, pages=[]),
+                rom_entry=RomEntry(file="msx-je.rom", size_kb=1024, pages=[]),
             ),
-            1: _ExpandedSubslotDevice(
+            1: ExpandedSubslotDevice(
                 device="flat_rom", rom_base_dir=rom_dir,
-                rom_entry=_RomEntry(file="kanjibasic.rom", size_kb=32, pages=[]),
+                rom_entry=RomEntry(file="kanjibasic.rom", size_kb=32, pages=[]),
             ),
         },
-        io_device=_ExpandedSubslotDevice(
+        io_device=ExpandedSubslotDevice(
             device="kanji_rom", rom_base_dir=rom_dir,
-            rom_entry=_RomEntry(file="kanjifont.rom", size_kb=256, pages=[]),
+            rom_entry=RomEntry(file="kanjifont.rom", size_kb=256, pages=[]),
         ),
     )
     machine = build_machine_from_spec(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
         extension_overlay1=overlay,
     )
-    cart = machine.halnote_cart
-    assert cart is not None
+    cart = machine.memory.mapper1_subslots[0]
+    assert isinstance(cart, HalnoteMapper)
     cart.write(0x4FFF, 0x85)  # SRAM enabled, bank 0 -> page 5
     cart.write(0x0000, 0xAB)  # SRAM byte
     save_state(machine, _RGB, "test")
@@ -764,14 +768,14 @@ def test_loading_state_with_mismatched_slot1_subslot_kind_raises(
     (other_rom_dir / "kanjifont.rom").write_bytes(bytes(_KANJIFONT_ROM_SIZE))
     other_overlay = ExpandedExtensionOverlay(
         subslots={
-            0: _ExpandedSubslotDevice(
+            0: ExpandedSubslotDevice(
                 device="flat_rom", rom_base_dir=other_rom_dir,
-                rom_entry=_RomEntry(file="kanjibasic.rom", size_kb=32, pages=[]),
+                rom_entry=RomEntry(file="kanjibasic.rom", size_kb=32, pages=[]),
             ),
         },
-        io_device=_ExpandedSubslotDevice(
+        io_device=ExpandedSubslotDevice(
             device="kanji_rom", rom_base_dir=other_rom_dir,
-            rom_entry=_RomEntry(file="kanjifont.rom", size_kb=256, pages=[]),
+            rom_entry=RomEntry(file="kanjifont.rom", size_kb=256, pages=[]),
         ),
     )
     other_machine = build_machine_from_spec(

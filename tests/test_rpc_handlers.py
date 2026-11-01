@@ -1,7 +1,7 @@
 """End-to-end tests for the RPC method handlers (phase 3).
 
-A background thread runs a realistic host loop (drain + run_frame when not
-paused) with the pause hook wired to the server, so breakpoints, stepping, and
+A background thread runs a realistic host loop (drain + step_frame when not
+paused, a stop handed to the server), so breakpoints, stepping, and
 continue_sync behave as they will under the real frontend.
 """
 from __future__ import annotations
@@ -15,8 +15,10 @@ from collections.abc import Iterator
 
 import pytest
 
+from host.debugger.stop import handle_stop
 from host.rpc_server import DebugServer
-from tests.factories import make_machine
+from msx.boundary import WATCH_READ, WATCH_WRITE
+from tests.factories import make_machine, make_machine_msx2
 
 
 class _Client:
@@ -62,7 +64,6 @@ def rig(sock_dir) -> Iterator[tuple]:
     machine = make_machine(rom=bytes(32768))  # all NOP
     machine.memory.set_slot_register(0xD4)  # RAM at page 3 (0xC000+)
     srv = DebugServer(machine, sock_path=str(sock_dir / "h.sock"))
-    machine.set_pause_hook(srv.on_pause)
     srv.start()
 
     stop = threading.Event()
@@ -72,7 +73,8 @@ def rig(sock_dir) -> Iterator[tuple]:
             srv.drain()
             if not srv.pause_state.paused:
                 try:
-                    machine.run_frame(skip_render=True)
+                    out = machine.step_frame(srv.input_target.take_frame(), render_video=False)
+                    handle_stop(machine, out.stop_reason, None, srv)
                 except BaseException:  # noqa: BLE001 — keep the test loop alive
                     pass
             else:
@@ -161,6 +163,63 @@ def test_list_and_remove_breakpoint(rig) -> None:
     assert all(b["id"] != bp["id"] for b in listed2)
 
 
+def test_a_fifth_breakpoint_is_an_error(rig) -> None:
+    # remote-socket-rpc "A fifth breakpoint is an error".
+    machine, _srv, client = rig
+    addrs = ["0xC000", "0xC100", "0xC200", "0xC300"]
+    for addr in addrs:
+        client.result("debug.set_breakpoint", {"address": addr})
+    resp = client.call("debug.set_breakpoint", {"address": "0xC400"})
+    assert resp["error"]["code"] == -32602
+    listed = client.result("debug.list_breakpoints")["breakpoints"]
+    assert [b["address"] for b in listed] == addrs
+    assert machine.breakpoints() == (0xC000, 0xC100, 0xC200, 0xC300)
+
+
+def test_a_fifth_watchpoint_is_an_error(rig) -> None:
+    # remote-socket-rpc "A fifth watchpoint is an error".
+    machine, _srv, client = rig
+    for addr in ("0xC000", "0xC100", "0xC200", "0xC300"):
+        client.result("debug.set_watchpoint", {"address": addr, "mode": "w"})
+    resp = client.call("debug.set_watchpoint", {"address": "0xC400", "mode": "w"})
+    assert resp["error"]["code"] == -32602
+    assert [addr for addr, _kind in machine.watchpoints()] == [0xC000, 0xC100, 0xC200, 0xC300]
+
+
+def test_command_line_breakpoints_and_watchpoints_stay(rig) -> None:
+    # remote-socket-rpc "Command-line breakpoints and watchpoints stay".
+    machine, _srv, client = rig
+    machine.set_breakpoints([0x4000])
+    machine.set_watchpoints([(0xE000, WATCH_READ | WATCH_WRITE)])
+    bp = client.result("debug.set_breakpoint", {"address": "0xC000"})
+    wp = client.result("debug.set_watchpoint", {"address": "0xD000", "mode": "w"})
+    assert machine.breakpoints() == (0x4000, 0xC000)
+    assert machine.watchpoints() == ((0xD000, WATCH_WRITE), (0xE000, WATCH_READ | WATCH_WRITE))
+    client.result("debug.remove_breakpoint", {"id": bp["id"]})
+    client.result("debug.remove_watchpoint", {"id": wp["id"]})
+    assert machine.breakpoints() == (0x4000,)
+    assert machine.watchpoints() == ((0xE000, WATCH_READ | WATCH_WRITE),)
+
+
+def test_a_breakpoint_removed_in_the_repl_is_inactive(rig) -> None:
+    # remote-socket-rpc "A breakpoint removed in the REPL is inactive".
+    machine, _srv, client = rig
+    bp = client.result("debug.set_breakpoint", {"address": "0xC000"})
+    machine.set_breakpoints([])  # what the REPL's `br C000` does
+    listed = client.result("debug.list_breakpoints")["breakpoints"]
+    assert listed == [{"id": bp["id"], "address": "0xC000", "active": False}]
+
+
+def test_a_shared_watchpoint_keeps_the_other_ids_bits(rig) -> None:
+    # Two ids at one address: removing one keeps the other's kind.
+    machine, _srv, client = rig
+    r = client.result("debug.set_watchpoint", {"address": "0xD000", "mode": "r"})
+    client.result("debug.set_watchpoint", {"address": "0xD000", "mode": "w"})
+    assert machine.watchpoints() == ((0xD000, WATCH_READ | WATCH_WRITE),)
+    client.result("debug.remove_watchpoint", {"id": r["id"]})
+    assert machine.watchpoints() == ((0xD000, WATCH_WRITE),)
+
+
 # ── Memory ───────────────────────────────────────────────────────────────────
 
 def test_memory_write_requires_paused(rig) -> None:
@@ -192,6 +251,37 @@ def test_read_vram(rig) -> None:
     _machine, _srv, client = rig
     r = client.result("memory.read_vram", {"address": "0x0000", "length": 4})
     assert len(r["data"].split()) == 4
+
+
+@pytest.mark.parametrize(("method", "length"), [
+    ("memory.read", -1), ("memory.read", 0x10001),
+    ("memory.read_vram", -1), ("memory.read_vram", 0x4001),
+])
+def test_a_length_outside_the_range_is_an_error(rig, method: str, length: int) -> None:
+    # remote-socket-rpc "A length outside the range is an error" (16 KB VRAM).
+    _machine, _srv, client = rig
+    resp = client.call(method, {"address": "0x0000", "length": length})
+    assert resp["error"]["code"] == -32602
+    assert "result" not in resp
+
+
+def test_vram_above_64_kb_is_readable(sock_dir) -> None:
+    # remote-socket-rpc "VRAM above 64 KB is readable".
+    from host.rpc_server import _h_memory_read_vram
+
+    machine = make_machine_msx2(rom=bytes(32768), extrom=bytes(16384))
+    machine.vdp.vram[0x1C000] = 0x5A
+    srv = DebugServer(machine, sock_path=str(sock_dir / "v.sock"))
+    r = _h_memory_read_vram(srv, {"address": "0x1C000", "length": 1})
+    assert r == {"address": "0x1C000", "data": "5A"}
+
+
+def test_a_vram_address_wraps_at_the_vram_size(rig) -> None:
+    # remote-socket-rpc "A VRAM address wraps at the VRAM size" (MSX1, 16 KB).
+    machine, _srv, client = rig
+    machine.vdp.vram[0x0000] = 0xA5
+    r = client.result("memory.read_vram", {"address": "0x4000", "length": 1})
+    assert r == {"address": "0x0000", "data": "A5"}
 
 
 def test_invalid_address(rig) -> None:
@@ -286,3 +376,61 @@ def test_screen_capture_scaled(rig) -> None:
     scaled = client.result("screen.capture", {"scale": 2})
     assert scaled["width"] == native["width"] * 2
     assert scaled["height"] == native["height"] * 2
+
+
+class _ThreadRecorder:
+    """A core wrapper that records the thread of every core API call."""
+
+    def __init__(self, core) -> None:
+        self._core = core
+        self.threads: set[threading.Thread] = set()
+
+    def __getattr__(self, name: str):
+        value = getattr(self._core, name)
+        if not callable(value):
+            return value
+
+        def call(*args, **kwargs):
+            self.threads.add(threading.current_thread())
+            return value(*args, **kwargs)
+
+        return call
+
+
+def test_continue_sync_reads_no_register_on_the_socket_thread(sock_dir) -> None:
+    # remote-socket-rpc "Continue-sync reads no register on the socket thread".
+    machine = make_machine(rom=bytes(32768))  # all NOP
+    core = _ThreadRecorder(machine)
+    srv = DebugServer(core, sock_path=str(sock_dir / "t.sock"))
+    srv.start()
+    stop = threading.Event()
+
+    def loop() -> None:
+        while not stop.is_set():
+            srv.drain()
+            if not srv.pause_state.paused:
+                out = core.step_frame(srv.input_target.take_frame(), render_video=False)
+                handle_stop(core, out.stop_reason, None, srv)
+            else:
+                time.sleep(0.001)
+
+    thread = threading.Thread(target=loop, daemon=True)
+    thread.start()
+    client = _Client(str(srv._sock_path))
+    client._readframe()
+    try:
+        _pause(client)
+        client.result("debug.set_breakpoint", {"address": "0x0100"})
+        r = client.result("cpu.continue_sync", {"timeout_ms": 3000})
+        assert r["paused"] is True and r["reason"] == "breakpoint"
+        while not client.notifications:
+            client.notifications.append(client._readframe())
+        push = client.notifications[-1]
+        assert push["notification"] == "paused"
+        assert (r["pc"], r["registers"]) == (push["pc"], push["registers"])
+        assert core.threads == {thread}
+    finally:
+        client.close()
+        stop.set()
+        thread.join(timeout=1.0)
+        srv.stop()

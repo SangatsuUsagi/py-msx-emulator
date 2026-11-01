@@ -18,13 +18,18 @@ deterministic. Calendar arithmetic is integer-only (days-from-civil).
 """
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import InitVar, dataclass, field
 from typing import TypedDict
 
-from msx.boundary import RTC_DEFAULT_START, RtcTime
-from msx.clock import CPU_CLOCK_HZ
-from msx.snapshot_schema import SAFE_INT_MAX, check_int, check_int_list, check_object
+from msx.boundary import RTC_CMOS_SIZE, RTC_DEFAULT_START, RtcTime
+from msx.clock import CPU_CLOCK_HZ, CoreClock
+from msx.snapshot_schema import (
+    SAFE_INT_MAX,
+    SchemaError,
+    check_int,
+    check_int_list,
+    check_object,
+)
 from msx.sram import SramImage
 
 MODE_REG = 13
@@ -37,10 +42,8 @@ REGS_PER_BLOCK = 13
 
 # Block 1, register 10: 12/24-hour select (bit 0 -- see _encode_hour).
 HOUR_MODE_REG = 10
+LEAP_YEAR_REG = 11  # block 1
 HOUR_MODE_24H = 0x1
-
-# Blocks 2/3 (26 nibbles of battery-backed CMOS RAM), persisted to disk.
-SRAM_SIZE = 26
 
 # Per-block write/read masks; 0-bits are ignored on write and read back as 0.
 _MASK: tuple[tuple[int, ...], ...] = (
@@ -80,20 +83,25 @@ class RTC:
     # Blocks 0/1 (time and alarm/settings), 2 x 13 nibbles.
     _regs: list[int] = field(default_factory=lambda: [0] * (2 * REGS_PER_BLOCK), repr=False)
     # Blocks 2/3's persisted image, the initial bytes of `cmos` (blank when
-    # not SRAM_SIZE bytes).
+    # not RTC_CMOS_SIZE bytes).
     sram: InitVar[bytes | bytearray | None] = None
     # Blocks 2/3 (the BIOS CMOS config), one nibble per byte: the medium the
     # host persists. A write or restore that changes a nibble marks it dirty.
     cmos: SramImage = field(init=False, repr=False)
-    # Time at emulated cycle _start_cycle, supplied once by the host.
+    # Time at elapsed cycle 0, supplied once by the host.
     start: RtcTime = RTC_DEFAULT_START
-    # Emulated cycle source (machine.cycle_count), wired by build_machine. A
-    # bare RTC without one stays at its start time.
-    _get_cycle: Callable[[], int] | None = field(default=None, repr=False)
-    _start_cycle: int = field(default=0, repr=False)
+    # The emulated time (msx/clock.py); build_machine gives the machine's
+    # record. A bare RTC reads its own record, which stays at cycle 0, so
+    # it stays at its start time.
+    _clock: CoreClock = field(default_factory=CoreClock, repr=False)
+    # Elapsed cycles are _base_elapsed + (clock.cycle - _base_cycle). Two
+    # fields, so a state with more elapsed cycles than the clock's count
+    # needs no base below zero (an unsigned clock in a native core).
+    _base_cycle: int = field(default=0, repr=False)
+    _base_elapsed: int = field(default=0, repr=False)
 
     def __post_init__(self, sram: bytes | bytearray | None) -> None:
-        self.cmos = SramImage.of(SRAM_SIZE, sram)
+        self.cmos = SramImage.of(RTC_CMOS_SIZE, sram)
         # Default to 24-hour (register 10 defaults to all-zero storage
         # otherwise, which would read as 12-hour) -- matches this
         # implementation's behaviour before 12-hour support existed.
@@ -119,7 +127,7 @@ class RTC:
         """Validate a snapshot() object without touching the chip."""
         state = check_object(obj, label, _RTC_STATE_KEYS)
         start = check_int_list(state["start"], f"{label}.start", 6, 0, 9999)
-        _check_start(start, f"{label}.start")
+        check_start(start, f"{label}.start")
         return {
             "start": start,
             "elapsed_cycles": check_int(
@@ -138,8 +146,8 @@ class RTC:
         """Assign an already-parsed RtcState (see parse_state)."""
         y, mo, d, h, mi, sec = state["start"]
         self.start = RtcTime(y, mo, d, h, mi, sec)
-        now = self._get_cycle() if self._get_cycle is not None else 0
-        self._start_cycle = now - state["elapsed_cycles"]
+        self._base_cycle = self._clock.cycle
+        self._base_elapsed = state["elapsed_cycles"]
         self._addr = state["addr"]
         self._mode = state["mode"]
         self._test = state["test"]
@@ -148,9 +156,7 @@ class RTC:
         self.cmos.restore(bytes(state["regs"][2 * REGS_PER_BLOCK:]))
 
     def _elapsed_cycles(self) -> int:
-        if self._get_cycle is None:
-            return 0
-        return self._get_cycle() - self._start_cycle
+        return self._base_elapsed + (self._clock.cycle - self._base_cycle)
 
     # Loading a saved image is done by passing it as the `sram=` constructor
     # argument; __post_init__ blanks a wrong-size image.
@@ -233,7 +239,7 @@ class RTC:
             month % 10, month // 10,
             rp_year % 10, rp_year // 10,
         ]
-        self._regs[1 * REGS_PER_BLOCK + 11] = (year - 1980) % 4
+        self._regs[1 * REGS_PER_BLOCK + LEAP_YEAR_REG] = (year - 1980) % 4
 
     def _encode_hour(self, hour: int) -> tuple[int, int]:
         """BCD-encode `hour` (0-23) into (units, tens) registers per block 1
@@ -247,14 +253,15 @@ class RTC:
         return hour12 % 10, hour12 // 10 + (2 if hour >= 12 else 0)
 
 
-def _check_start(start: list[int], label: str) -> None:
-    """Reject a start time that is not a real calendar date and time."""
+def check_start(start: list[int], label: str) -> None:
+    """Reject a start time that is not a real calendar date and time with a
+    year of 0-9999 (a state load and the build both check it)."""
     year, month, day, hour, minute, second = start
-    if not (1 <= month <= 12 and 1 <= day <= 31 and hour <= 23 and minute <= 59
-            and second <= 59):
-        raise ValueError(f"{label}: invalid date/time {start}")
+    if not (0 <= year <= 9999 and 1 <= month <= 12 and 1 <= day <= 31
+            and 0 <= hour <= 23 and 0 <= minute <= 59 and 0 <= second <= 59):
+        raise SchemaError(f"{label}: invalid date/time {start}")
     if _civil_from_days(_days_from_civil(year, month, day)) != (year, month, day):
-        raise ValueError(f"{label}: invalid date {year}-{month}-{day}")
+        raise SchemaError(f"{label}: invalid date {year}-{month}-{day}")
 
 
 def _days_from_civil(year: int, month: int, day: int) -> int:

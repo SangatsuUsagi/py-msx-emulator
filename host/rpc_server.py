@@ -16,15 +16,14 @@ This module is a self-contained *adapter*, not part of the emulator core: the
 dependency direction is one-way. No module under ``msx/`` imports this file, and
 ``socket``/``queue``/``threading`` appear nowhere else in the core — this file is
 the only place they live. The core (``machine``, ``cpu``, ``vdp``, ``memory``)
-knows nothing about RPC; it only exposes a generic pause seam
-(``Machine.set_pause_hook(Callable[[str, int], None])``). This adapter depends on
-the core, never the reverse.
+knows nothing about RPC; a break returns from ``step_frame`` with a stop reason
+(an integer), and the host loop hands it to :meth:`DebugServer.on_core_stop`.
+This adapter depends on the core, never the reverse.
 
 A Rust/C++ port keeps the same layering as separate crates/targets:
 
     msx-core     cpu / vdp / memory / machine — no socket/json/thread deps;
-                 the pause seam becomes a `trait PauseSink` (and the reason
-                 strings become an `enum PauseReason`).
+                 a break is a stop reason in the step_frame result.
     msx-rpc      this DebugServer — depends on msx-core + serde_json, behind a
                  `#[cfg(feature = "rpc")]` gate (or a standalone crate) so JSON
                  never reaches the core.
@@ -39,7 +38,7 @@ Element mapping: Unix socket -> std `UnixListener` (no crate); JSON -> serde_jso
 request/response struct per RPC method, dispatched via a tagged enum on the
 ``method`` field -- the Python side stays duck-typed at this boundary because
 the wire payload's shape genuinely isn't known until parsed, matching every
-other JSON-boundary module in this codebase (see ``machine_loader.py``'s
+other JSON-boundary module in this codebase (see ``host/machine_config.py``'s
 equivalent note for its YAML config boundary). The ``tools/`` MCP server and
 CLI client are separate processes that speak only the newline-JSON wire protocol,
 so they are language-agnostic and stay as-is under any core port.
@@ -47,6 +46,7 @@ so they are language-agnostic and stay as-is under any core port.
 from __future__ import annotations
 
 import base64
+import enum
 import json
 import queue
 import socket
@@ -56,26 +56,54 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from host.debugger.disasm import disassemble
+from host.debugger.disasm import byte_reader, disassemble, instruction_bytes
 from host.input_state import InputState
+from host.key_names import JOY_FUNCTION_BITS, KEY_NAME_TO_CELL
+from host.media import DiskFiles
 from host.screenshot import encode_rgb24_png, scale_rgb24
-from msx.input import KEY_NAME_TO_CELL
-from msx.machine import PauseReason
-from msx.screenshot import render_current_rgb24
+from host.watch import watch_kind_exact
+from msx.boundary import (
+    STATUS_OK,
+    STOP_BREAKPOINT,
+    STOP_REQUESTED,
+    STOP_WATCHPOINT,
+    VDP_KIND_V9938,
+)
 
 if TYPE_CHECKING:
-    from msx.machine import Machine
+    from msx.core_api import CoreApi
 
-# Pause reasons come from msx.machine.PauseReason, the single source of truth;
-# aliased here for the handler call sites. The machine emits BREAKPOINT /
-# WATCHPOINT directly through the pause hook.
-REASON_USER = PauseReason.USER_REQUEST
-REASON_STEP = PauseReason.STEP_COMPLETE
+
+class PauseReason(str, enum.Enum):
+    """Why the emulator paused, as the RPC wire reports it (remote-socket-rpc
+    "Debugger control methods"). Subclasses `str` so each member serializes to
+    its wire value and compares equal to it.
+
+    PORT-NOTE: a closed string-tagged enum at the JSON boundary.
+    Rust equivalent: `enum PauseReason` with `#[serde(rename_all =
+      "snake_case")]`.
+    C++ equivalent: `enum class PauseReason` plus a to/from-string table.
+    Kept as-is here because: it maps 1:1 to a closed enum.
+    """
+
+    USER_REQUEST = "user_request"
+    BREAKPOINT = "breakpoint"
+    WATCHPOINT = "watchpoint"
+    STEP_COMPLETE = "step_complete"
+
+
+# The wire reason for each core stop reason (msx/boundary.py STOP_*).
+_STOP_TO_REASON: dict[int, PauseReason] = {
+    STOP_BREAKPOINT: PauseReason.BREAKPOINT,
+    STOP_WATCHPOINT: PauseReason.WATCHPOINT,
+    STOP_REQUESTED: PauseReason.USER_REQUEST,
+}
+
 
 DEFAULT_SOCKET_PATH = "/tmp/py_msx_emu.sock"
 PROTOCOL_VERSION = "1.0"
 
-# JSON-RPC / emulator error codes (see specs/socket-rpc).
+# JSON-RPC / emulator error codes (see openspec/specs/remote-socket-rpc).
 ERR_PARSE = -32700
 ERR_METHOD_NOT_FOUND = -32601
 ERR_INVALID_PARAMS = -32602
@@ -110,18 +138,18 @@ class PauseState:
     """Shared run/pause state for the RPC server and the host (frontend) loop.
 
     The frontend loop reads :attr:`paused` to decide whether to step the machine;
-    RPC handlers and the machine pause hook write it. Kept as a tiny mutable
+    RPC handlers and on_core_stop write it. Kept as a tiny mutable
     object (not a dataclass with slots) so both sides hold the same reference.
 
-    This is the adapter-side pause flag; its core-side counterpart is
-    ``Machine._pause_requested`` / ``_resume_skip_pc`` (which drive the debug
-    frame loop). :meth:`DebugServer.on_pause` is where the two meet: the machine
-    sets ``_pause_requested`` and calls the hook, which sets ``paused`` here.
+    This is the adapter-side pause flag. The core keeps no pause state of its
+    own: a break returns from ``step_frame``, and the host loop calls
+    :meth:`DebugServer.on_core_stop`, which sets ``paused`` here.
 
     PORT-NOTE: these plain fields are written by the emulator thread
       (``on_pause``, handlers via ``drain``) and by the socket thread
-      (``cpu.continue_sync``), and read by the frontend loop -- safe here
-      only because of the GIL.
+      (``cpu.continue_sync`` sets it running), and read by the frontend
+      loop -- safe here only because of the GIL. The socket thread makes no
+      core API call.
     Rust equivalent: guard with a Mutex, or use AtomicBool/an atomic enum for
       `paused`/`reason` -- Rust has no GIL to fall back on for cross-thread
       plain-field access.
@@ -135,13 +163,15 @@ class PauseState:
 
     def __init__(self) -> None:
         self.paused: bool = False
-        self.reason: str = REASON_USER
+        self.reason: str = PauseReason.USER_REQUEST
 
     def set_paused(self, reason: str) -> None:
+        """Record a pause and why."""
         self.paused = True
         self.reason = reason
 
     def set_running(self) -> None:
+        """Record that emulation runs."""
         self.paused = False
 
 
@@ -150,11 +180,15 @@ class DebugServer:
 
     def __init__(
         self,
-        machine: "Machine",
+        machine: CoreApi,
         sock_path: str = DEFAULT_SOCKET_PATH,
         pause_state: PauseState | None = None,
+        disk_files: DiskFiles | None = None,
     ) -> None:
         self._machine = machine
+        # The file of each drive's disk, shared with the frontend and the
+        # debugger of the same run (host/media.py DiskFiles).
+        self._disk_files = disk_files if disk_files is not None else DiskFiles()
         self._sock_path = Path(sock_path)
         self._pause_state = pause_state if pause_state is not None else PauseState()
         self._queue: queue.Queue[tuple[dict[str, Any], list[dict[str, Any]], threading.Event]] = (
@@ -167,24 +201,22 @@ class DebugServer:
         self._handlers: dict[str, Handler] = {}
         # Set when the machine pauses; cpu.continue_sync waits on it.
         self._pause_event = threading.Event()
-        # Breakpoint / watchpoint registries (id -> spec), owned here so the RPC
-        # surface is decoupled from the interactive debugger's REPL state.
+        # The last core stop, as cpu.continue_sync answers it: written on the
+        # emulator thread before _pause_event is set, read on the socket
+        # thread after the wait, so the socket thread never calls the core.
+        self._last_pause: dict[str, Any] = {}
+        # The RPC breakpoint / watchpoint ids (id -> spec). The core's set,
+        # shared with the command line and the REPL, is the source of truth:
+        # the methods add or remove only their own entry there.
         self._breakpoints: dict[int, int] = {}
-        self._watchpoints: dict[int, tuple[int, str]] = {}
+        self._watchpoints: dict[int, tuple[int, int]] = {}
         self._next_bp_id = 0
         self._next_wp_id = 0
-        # Desired joystick state per port (1, 2): direction/trigger booleans.
-        self._joy: dict[int, dict[str, bool]] = {
-            1: _blank_joy_state(),
-            2: _blank_joy_state(),
-        }
         # Pending named-key auto-releases: (monotonic_deadline, row, bit).
         self._key_releases: list[tuple[float, int, int]] = []
-        # The frontend's per-frame input accumulator, when one runs (set by
-        # frontend.sdl2_frontend.run). Injected input goes to it too, so the
-        # next step_frame keeps it.
         # Where injected input is built: the frontend's own builder when one
-        # runs (it replaces this), so injection carries into its next frame.
+        # runs (frontend.sdl2_frontend.run replaces this), so injection carries
+        # into its next frame.
         self.input_target: InputState = InputState()
         self._register_handlers()
 
@@ -192,11 +224,18 @@ class DebugServer:
 
     @property
     def pause_state(self) -> PauseState:
+        """The pause flag and reason."""
         return self._pause_state
 
     @property
-    def machine(self) -> "Machine":
+    def machine(self) -> CoreApi:
+        """The core the server drives."""
         return self._machine
+
+    @property
+    def disk_files(self) -> DiskFiles:
+        """The file of each drive's disk."""
+        return self._disk_files
 
     def apply_injected_input(self) -> None:
         """Hand the builder's current input to the machine at once, so the
@@ -231,26 +270,29 @@ class DebugServer:
                 pass
         self._sock_path.unlink(missing_ok=True)
 
-    # -- pause hook ---------------------------------------------------------
+    # -- core stops ---------------------------------------------------------
+
+    def on_core_stop(self, stop_reason: int) -> None:
+        """Pause for a core stop (a nonzero ``FrameOutput.stop_reason``).
+        Runs on the emulator thread, after ``step_frame`` returned."""
+        reason = _STOP_TO_REASON.get(stop_reason, PauseReason.USER_REQUEST)
+        self.on_pause(reason, self._machine.cpu_registers().PC)
 
     def on_pause(self, reason: str, pc: int) -> None:
-        """Machine pause-hook target: record the pause and push a notification.
-
-        Installed via ``machine.set_pause_hook(server.on_pause)``. Runs on the
-        emulator thread when a break event fires.
-        """
+        """Record the pause, wake cpu.continue_sync and push a notification.
+        Runs on the emulator thread (on_core_stop). The record is complete
+        before the event is set (Event orders the write before the waiter's
+        read)."""
+        registers = self.registers_dict()
+        self._last_pause = {
+            "paused": True, "reason": reason, "pc": hex16(pc), "registers": registers,
+        }
         self._pause_state.set_paused(reason)
         self._pause_event.set()
-        self._push_paused(reason, pc)
-
-    def _push_paused(self, reason: str, pc: int) -> None:
-        frame = {
-            "notification": "paused",
-            "reason": reason,
-            "pc": hex16(pc),
-            "registers": self.registers_dict(),
-        }
-        self._send_to_client(frame)
+        self._send_to_client({
+            "notification": "paused", "reason": reason, "pc": hex16(pc),
+            "registers": registers,
+        })
 
     # -- socket threads -----------------------------------------------------
 
@@ -298,10 +340,10 @@ class DebugServer:
         try:
             req = json.loads(line)
         except (json.JSONDecodeError, UnicodeDecodeError):
-            self._send(conn, {"id": None, "error": {"code": ERR_PARSE, "message": "parse error"}})
+            self._send(conn, self._err(None, ERR_PARSE, "parse error"))
             return
         if not isinstance(req, dict):
-            self._send(conn, {"id": None, "error": {"code": ERR_PARSE, "message": "parse error"}})
+            self._send(conn, self._err(None, ERR_PARSE, "parse error"))
             return
         # cpu.continue_sync blocks until the next pause; handle it on this socket
         # thread (never the emulator thread) so the machine keeps running.
@@ -314,13 +356,7 @@ class DebugServer:
         if done.wait(timeout=_DISPATCH_TIMEOUT_S) and result_box:
             self._send(conn, result_box[0])
         else:
-            self._send(
-                conn,
-                {
-                    "id": req.get("id"),
-                    "error": {"code": ERR_INTERNAL, "message": "dispatch timeout"},
-                },
-            )
+            self._send(conn, self._err(req.get("id"), ERR_INTERNAL, "dispatch timeout"))
 
     # -- main-thread dispatch ----------------------------------------------
 
@@ -343,23 +379,16 @@ class DebugServer:
         method = req.get("method", "")
         params = req.get("params") or {}
         if not isinstance(params, dict):
-            return {
-                "id": req_id,
-                "error": {"code": ERR_INVALID_PARAMS, "message": "params must be an object"},
-            }
+            return self._err(req_id, ERR_INVALID_PARAMS, "params must be an object")
         handler = self._handlers.get(method)
         if handler is None:
-            return {
-                "id": req_id,
-                "error": {"code": ERR_METHOD_NOT_FOUND, "message": f"method not found: {method}"},
-            }
+            return self._err(req_id, ERR_METHOD_NOT_FOUND, f"method not found: {method}")
         try:
-            result = handler(self, params)
-            return {"id": req_id, "result": result}
+            return self._ok(req_id, handler(self, params))
         except RpcError as exc:
-            return {"id": req_id, "error": {"code": exc.code, "message": exc.message}}
+            return self._err(req_id, exc.code, exc.message)
         except Exception as exc:  # noqa: BLE001 — surface any handler bug as internal error
-            return {"id": req_id, "error": {"code": ERR_INTERNAL, "message": str(exc)}}
+            return self._err(req_id, ERR_INTERNAL, str(exc))
 
     # -- send helpers -------------------------------------------------------
 
@@ -381,18 +410,19 @@ class DebugServer:
 
     def registers_dict(self) -> dict[str, Any]:
         """Serialise the Z80 register file to the spec's hex-string shape."""
-        r = self._machine.cpu.registers
+        r = self._machine.cpu_registers()
         return {
             "AF": hex16(r.AF), "BC": hex16(r.BC), "DE": hex16(r.DE), "HL": hex16(r.HL),
             "IX": hex16(r.IX), "IY": hex16(r.IY),
             "SP": hex16(r.SP), "PC": hex16(r.PC),
             "AF'": hex16(r.AF_), "BC'": hex16(r.BC_), "DE'": hex16(r.DE_), "HL'": hex16(r.HL_),
             "I": hex8(r.I), "R": hex8(r.R),
-            "IFF1": self._machine.cpu.iff1, "IFF2": self._machine.cpu.iff2,
-            "IM": self._machine.cpu.im,
+            "IFF1": bool(r.IFF1), "IFF2": bool(r.IFF2),
+            "IM": r.IM,
         }
 
     def require_paused(self) -> None:
+        """Raise an RpcError unless the emulator is paused."""
         if not self._pause_state.paused:
             raise RpcError(ERR_NEED_PAUSED, "emulator must be paused for this operation")
 
@@ -407,23 +437,16 @@ class DebugServer:
     def _continue_sync(self, req: dict[str, Any]) -> dict[str, Any]:
         """Resume and block (on the socket thread) until the next pause event.
 
-        PORT-NOTE: this runs on the socket thread yet calls into the core
-          (``Machine.prepare_resume`` and reading ``cpu.registers.PC``). It is
-          safe here only because of the GIL and because the machine is
-          quiescent by the time the pause event fires (the debug loop has
-          returned).
-        Rust equivalent: can't take `&mut Machine` from two threads -- route
-          continue as a command handled on the emulator thread instead,
-          keeping the pause hook as the only callback out of the core (e.g.
-          via a channel/queue the emulator thread polls).
-        C++ equivalent: same -- route continue through a thread-safe
-          command queue handled on the emulator thread, rather than calling
-          into Machine directly from the socket thread.
-        Kept as-is here because: this file is an adapter-only layer; the
-          GIL-reliant cross-thread call is safe under CPython's actual
-          threading model as written, and Rust/C++ have no GIL to rely on so
-          this needs a real command-queue redesign at port time, not a
-          direct translation.
+        It makes no core API call: it answers from the pause record
+        on_pause writes on the emulator thread before it sets the event
+        (remote-socket-rpc "Threaded queue execution model").
+
+        PORT-NOTE: the pause flag and the record cross threads through
+          PauseState and threading.Event.
+        Rust equivalent: send the record over an mpsc/oneshot channel, or
+          keep it in a Mutex next to a Condvar.
+        C++ equivalent: the same, with std::mutex and
+          std::condition_variable.
         """
         req_id = req.get("id")
         params = req.get("params") or {}
@@ -437,15 +460,9 @@ class DebugServer:
         except (TypeError, ValueError):
             return self._err(req_id, ERR_INVALID_PARAMS, "timeout_ms must be a number")
         self._pause_event.clear()
-        self._machine.prepare_resume()
         self._pause_state.set_running()
         if self._pause_event.wait(timeout=timeout_s):
-            return self._ok(req_id, {
-                "paused": True,
-                "reason": self._pause_state.reason,
-                "pc": hex16(self._machine.cpu.registers.PC),
-                "registers": self.registers_dict(),
-            })
+            return self._ok(req_id, self._last_pause)
         return self._ok(req_id, {"paused": False, "reason": "timeout"})
 
     def _process_key_releases(self) -> None:
@@ -462,51 +479,81 @@ class DebugServer:
         self._key_releases = still_pending
 
     def schedule_key_release(self, row: int, bit: int, duration_ms: int) -> None:
+        """Release a key matrix cell after `duration_ms`, from drain()."""
         self._key_releases.append((time.monotonic() + duration_ms / 1000.0, row, bit))
 
-    def capture_rgb(self) -> tuple[bytes, int, int]:
-        """Render the current VDP frame to RGB24 without advancing the frame counter.
-
-        Returns:
-            (rgb_bytes, width, height) for the current frame.
-        """
-        return render_current_rgb24(self._machine.vdp)
-
     def alloc_breakpoint(self, address: int) -> int:
+        """Add a breakpoint to the core's set and return its id. The core's
+        set is shared with the command line and the REPL, so only this
+        address is added. Raises an invalid-params RpcError, keeping the
+        set, when the core rejects it (a fifth one)."""
+        addrs = list(self._machine.breakpoints())
+        if address not in addrs:
+            addrs.append(address)
+        if self._machine.set_breakpoints(addrs) != STATUS_OK:
+            raise RpcError(ERR_INVALID_PARAMS, self._machine.last_error_text().decode("utf-8"))
         bp_id = self._next_bp_id
         self._next_bp_id += 1
         self._breakpoints[bp_id] = address
-        self._machine.set_breakpoints(list(self._breakpoints.values()))
         return bp_id
 
     def remove_breakpoint(self, bp_id: int) -> bool:
+        """Drop the id. Its address leaves the core's set unless another id
+        holds it."""
         if bp_id not in self._breakpoints:
             return False
-        del self._breakpoints[bp_id]
-        self._machine.set_breakpoints(list(self._breakpoints.values()))
+        address = self._breakpoints.pop(bp_id)
+        if address not in self._breakpoints.values():
+            addrs = [a for a in self._machine.breakpoints() if a != address]
+            self._machine.set_breakpoints(addrs)
         return True
 
-    def alloc_watchpoint(self, address: int, mode: str) -> int:
+    def alloc_watchpoint(self, address: int, kind: int) -> int:
+        """Add a watchpoint to the core's set and return its id. The core
+        keeps one kind per address, so a set at a watched address ORs `kind`
+        into it. Raises an invalid-params RpcError, keeping the set, when
+        the core rejects it (a fifth one)."""
+        entries: list[tuple[int, int]] = []
+        found = False
+        for addr, old_kind in self._machine.watchpoints():
+            if addr == address:
+                entries.append((addr, old_kind | kind))
+                found = True
+            else:
+                entries.append((addr, old_kind))
+        if not found:
+            entries.append((address, kind))
+        if self._machine.set_watchpoints(entries) != STATUS_OK:
+            raise RpcError(ERR_INVALID_PARAMS, self._machine.last_error_text().decode("utf-8"))
         wp_id = self._next_wp_id
         self._next_wp_id += 1
-        self._watchpoints[wp_id] = (address, mode)
-        self._machine.set_watchpoints(list(self._watchpoints.values()))
+        self._watchpoints[wp_id] = (address, kind)
         return wp_id
 
     def remove_watchpoint(self, wp_id: int) -> bool:
+        """Drop the id. The core's kind at its address loses the bits no
+        other id at that address holds; an address with no bit left goes."""
         if wp_id not in self._watchpoints:
             return False
-        del self._watchpoints[wp_id]
-        self._machine.set_watchpoints(list(self._watchpoints.values()))
+        address, kind = self._watchpoints.pop(wp_id)
+        keep = 0
+        for addr, other_kind in self._watchpoints.values():
+            if addr == address:
+                keep |= other_kind
+        drop = kind & ~keep
+        entries: list[tuple[int, int]] = []
+        for addr, old_kind in self._machine.watchpoints():
+            if addr == address:
+                old_kind &= ~drop
+            if old_kind != 0:
+                entries.append((addr, old_kind))
+        self._machine.set_watchpoints(entries)
         return True
 
     @property
     def breakpoints(self) -> dict[int, int]:
+        """The RPC breakpoints: id -> address."""
         return self._breakpoints
-
-    @property
-    def joystick_state(self) -> dict[int, dict[str, bool]]:
-        return self._joy
 
     # -- handler registration ----------------------------------------------
 
@@ -548,17 +595,17 @@ def _h_debugger_status(server: DebugServer, params: dict[str, Any]) -> dict[str,
     ps = server.pause_state
     return {
         "paused": ps.paused,
-        "pc": hex16(server.machine.cpu.registers.PC),
+        "pc": hex16(server.machine.cpu_registers().PC),
         "reason": ps.reason,
     }
 
 
 def _h_debugger_pause(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
-    server.pause_state.set_paused(REASON_USER)
+    server.pause_state.set_paused(PauseReason.USER_REQUEST)
     return {
         "paused": True,
-        "pc": hex16(server.machine.cpu.registers.PC),
-        "reason": REASON_USER,
+        "pc": hex16(server.machine.cpu_registers().PC),
+        "reason": PauseReason.USER_REQUEST,
     }
 
 
@@ -567,12 +614,12 @@ def _h_debugger_pause(server: DebugServer, params: dict[str, Any]) -> dict[str, 
 def _h_cpu_step(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
     server.require_paused()
     m = server.machine
-    pc_before = m.cpu.registers.PC
-    mnemonic, _size = disassemble(m.memory.read, pc_before)
+    pc_before = m.cpu_registers().PC
+    mnemonic, _size = disassemble(byte_reader(m), pc_before)
     t_states = m.step()
-    server.pause_state.set_paused(REASON_STEP)
+    server.pause_state.set_paused(PauseReason.STEP_COMPLETE)
     return {
-        "pc": hex16(m.cpu.registers.PC),
+        "pc": hex16(m.cpu_registers().PC),
         "t_states": t_states,
         "mnemonic": mnemonic,
         "registers": server.registers_dict(),
@@ -581,7 +628,6 @@ def _h_cpu_step(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
 
 def _h_cpu_continue(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
     server.require_paused()
-    server.machine.prepare_resume()
     server.pause_state.set_running()
     return {"running": True}
 
@@ -603,9 +649,11 @@ def _h_remove_breakpoint(server: DebugServer, params: dict[str, Any]) -> dict[st
 
 
 def _h_list_breakpoints(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
+    # active: the core still holds the address (the REPL may have removed it).
+    in_core = server.machine.breakpoints()
     return {
         "breakpoints": [
-            {"id": i, "address": hex16(a), "active": True}
+            {"id": i, "address": hex16(a), "active": a in in_core}
             for i, a in sorted(server.breakpoints.items())
         ]
     }
@@ -614,9 +662,10 @@ def _h_list_breakpoints(server: DebugServer, params: dict[str, Any]) -> dict[str
 def _h_set_watchpoint(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
     addr = _parse_addr(params.get("address"))
     mode = params.get("mode", "rw")
-    if mode not in ("r", "w", "rw"):
+    kind = watch_kind_exact(mode)
+    if kind is None:
         raise RpcError(ERR_INVALID_PARAMS, f"invalid watchpoint mode: {mode}")
-    wp_id = server.alloc_watchpoint(addr, mode)
+    wp_id = server.alloc_watchpoint(addr, kind)
     return {"id": wp_id, "address": hex16(addr), "mode": mode, "active": True}
 
 
@@ -629,8 +678,9 @@ def _h_remove_watchpoint(server: DebugServer, params: dict[str, Any]) -> dict[st
 def _h_memory_read(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
     addr = _parse_addr(params.get("address"))
     length = _require_int(params, "length", default=16)
-    read = server.machine.memory.read
-    data = _fmt_bytes(read((addr + i) & 0xFFFF) for i in range(length))
+    if not 0 <= length <= 0x10000:
+        raise RpcError(ERR_INVALID_PARAMS, f"length {length} is outside 0-0x10000")
+    data = _fmt_bytes(server.machine.read_memory(addr, length))
     return {"address": hex16(addr), "data": data}
 
 
@@ -638,30 +688,32 @@ def _h_memory_write(server: DebugServer, params: dict[str, Any]) -> dict[str, An
     server.require_paused()
     addr = _parse_addr(params.get("address"))
     values = _parse_hex_bytes(params.get("data"))
-    write = server.machine.memory.write
-    for i, value in enumerate(values):
-        write((addr + i) & 0xFFFF, value)
+    server.machine.write_memory(addr, bytes(values))
     return {"written": len(values)}
 
 
 def _h_memory_read_vram(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
-    addr = _parse_addr(params.get("address"))
+    size = server.machine.vram_size()
+    # The VRAM size is a power of two (0x4000 or 0x20000): the mask wraps the
+    # address at it, as the core does.
+    addr = _parse_addr(params.get("address"), size - 1)
     length = _require_int(params, "length", default=32)
-    vram = server.machine.vdp.vram
-    size = len(vram)
-    data = _fmt_bytes(vram[(addr + i) % size] for i in range(length))
-    return {"address": hex16(addr), "data": data}
+    if not 0 <= length <= size:
+        raise RpcError(ERR_INVALID_PARAMS, f"length {length} is outside 0-{size:#x}")
+    data = _fmt_bytes(server.machine.read_vram(addr, length))
+    # Four hex digits below 0x10000, five above (hex16 would cut it).
+    return {"address": f"0x{addr:04X}", "data": data}
 
 
 def _h_memory_disassemble(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
     addr = _parse_addr(params.get("address"))
     count = _require_int(params, "count", default=10)
-    read = server.machine.memory.read
+    read = byte_reader(server.machine)
     instructions: list[dict[str, Any]] = []
     cur = addr
     for _ in range(count):
         mnemonic, size = disassemble(read, cur)
-        raw = _fmt_bytes(read((cur + i) & 0xFFFF) for i in range(size))
+        raw = instruction_bytes(read, cur, size)
         instructions.append({"address": hex16(cur), "bytes": raw, "mnemonic": mnemonic})
         cur = (cur + size) & 0xFFFF
     return {"instructions": instructions}
@@ -670,16 +722,14 @@ def _h_memory_disassemble(server: DebugServer, params: dict[str, Any]) -> dict[s
 # ── VDP ─────────────────────────────────────────────────────────────────────
 
 def _h_vdp_get_registers(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
-    from msx.vdp.v9938 import V9938
-
-    vdp = server.machine.vdp
-    vtype = "V9938" if isinstance(vdp, V9938) else "TMS9918A"
-    registers = {f"R{i}": hex8(v) for i, v in enumerate(vdp.regs)}
+    info = server.machine.vdp_info()
+    vtype = "V9938" if info.kind == VDP_KIND_V9938 else "TMS9918A"
+    registers = {f"R{i}": hex8(v) for i, v in enumerate(info.regs)}
     return {"type": vtype, "registers": registers}
 
 
 def _h_vdp_get_status(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
-    return {"status": hex8(server.machine.vdp.status)}
+    return {"status": hex8(server.machine.vdp_info().status[0])}  # S#0
 
 
 # ── Input injection ──────────────────────────────────────────────────────────
@@ -717,9 +767,9 @@ def _h_input_joystick(server: DebugServer, params: dict[str, Any]) -> dict[str, 
     port = _require_int(params, "port", default=1)
     if port not in (1, 2):
         raise RpcError(ERR_INVALID_PARAMS, "port must be 1 or 2")
-    state = server.joystick_state[port]
+    state: dict[str, bool] = {}
     port_idx = port - 1
-    for name, bit in _JOY_BITS.items():
+    for name, bit in JOY_FUNCTION_BITS.items():
         pressed = bool(params.get(name, False))
         state[name] = pressed
         if pressed:
@@ -727,17 +777,15 @@ def _h_input_joystick(server: DebugServer, params: dict[str, Any]) -> dict[str, 
         else:
             server.input_target.joystick_button_up(port_idx, bit)
     server.apply_injected_input()
-    return {"port": port, "state": dict(state)}
+    return {"port": port, "state": state}
 
 
 def _h_input_joystick_release(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
     port = _require_int(params, "port", default=1)
     if port not in (1, 2):
         raise RpcError(ERR_INVALID_PARAMS, "port must be 1 or 2")
-    state = server.joystick_state[port]
     port_idx = port - 1
-    for name, bit in _JOY_BITS.items():
-        state[name] = False
+    for bit in JOY_FUNCTION_BITS.values():
         server.input_target.joystick_button_up(port_idx, bit)
     server.apply_injected_input()
     return {"port": port, "released": True}
@@ -747,7 +795,8 @@ def _h_input_joystick_release(server: DebugServer, params: dict[str, Any]) -> di
 
 def _h_screen_capture(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
     scale = _require_int(params, "scale", default=1)
-    rgb, width, height = server.capture_rgb()
+    frame = server.machine.render_preview()
+    rgb, width, height = frame.pixels, frame.width, frame.height
     if scale > 1:
         out_w, out_h = width * scale, height * scale
         rgb = scale_rgb24(rgb, width, height, out_w, out_h)
@@ -766,12 +815,10 @@ def _h_screen_capture(server: DebugServer, params: dict[str, Any]) -> dict[str, 
 
 def _h_state_save(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
     from host.state_files import save_state
-    from msx.boundary import RgbFrame
 
     path = params.get("path")
     title = Path(path).stem if isinstance(path, str) and path else "rpc_checkpoint"
-    rgb, width, height = server.capture_rgb()
-    saved = save_state(server.machine, RgbFrame(width, height, rgb), title)
+    saved = save_state(server.machine, server.machine.render_preview(), title, server.disk_files)
     return {"path": str(saved)}
 
 
@@ -793,15 +840,14 @@ def _h_fdd_swap(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
     drive = _require_int(params, "drive")
     if drive not in (1, 2):
         raise RpcError(ERR_INVALID_PARAMS, "drive must be 1 or 2")
-    fdc = server.machine.fdc
-    if fdc is None:
+    if server.machine.drive_count() == 0:
         raise RpcError(ERR_INTERNAL, "machine has no floppy interface")
     path = params.get("path")
     drive_idx = drive - 1
     if path:
-        swap_disk(server.machine, drive_idx, Path(str(path)))
+        swap_disk(server.machine, server.disk_files, drive_idx, Path(str(path)))
         return {"drive": drive, "path": str(path), "mounted": True}
-    swap_disk(server.machine, drive_idx, None)
+    swap_disk(server.machine, server.disk_files, drive_idx, None)
     return {"drive": drive, "path": None, "mounted": False}
 
 
@@ -809,21 +855,11 @@ def _h_fdd_swap(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
 # Handler helpers
 # ---------------------------------------------------------------------------
 
-# Per-joystick direction/trigger bit within the 6-bit active-low port state.
-_JOY_BITS: dict[str, int] = {
-    "up": 0, "down": 1, "left": 2, "right": 3, "trigger_a": 4, "trigger_b": 5,
-}
-
-
 class _Missing:
     pass
 
 
 _MISSING = _Missing()
-
-
-def _blank_joy_state() -> dict[str, bool]:
-    return {name: False for name in _JOY_BITS}
 
 
 def _set_key(server: DebugServer, row: int, bit: int, pressed: bool) -> None:
@@ -834,15 +870,16 @@ def _set_key(server: DebugServer, row: int, bit: int, pressed: bool) -> None:
     server.apply_injected_input()
 
 
-def _parse_addr(value: Any) -> int:
+def _parse_addr(value: Any, mask: int = 0xFFFF) -> int:
+    """An address param (an integer or a hex string), wrapped by `mask`."""
     if isinstance(value, bool):
         raise RpcError(ERR_INVALID_PARAMS, "address must be an integer or hex string")
     if isinstance(value, int):
-        return value & 0xFFFF
+        return value & mask
     if not isinstance(value, str) or not value:
         raise RpcError(ERR_INVALID_PARAMS, "address is required")
     try:
-        return int(value, 16) & 0xFFFF
+        return int(value, 16) & mask
     except ValueError:
         raise RpcError(ERR_INVALID_PARAMS, f"invalid address: {value}") from None
 

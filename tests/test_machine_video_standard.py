@@ -17,13 +17,15 @@ from host.machine_config import (
     load_device_registry,
     load_machine_spec,
 )
+from msx.boundary import VideoStandard
 from msx.machine import Machine
 from msx.machine_spec import MachineLoadError, MachineSpec
 from msx.vdp._geometry import (
     CYCLES_PER_LINE,
     NTSC_LINES_PER_FRAME,
     PAL_LINES_PER_FRAME,
-    VideoStandard,
+    cycles_per_frame,
+    lines_per_frame,
 )
 from tests.factories import make_machine, make_machine_msx2
 
@@ -34,13 +36,17 @@ def test_timing_constants_keep_the_hardware_values() -> None:
     assert CYCLES_PER_LINE == 228
     assert CYCLES_PER_LINE * NTSC_LINES_PER_FRAME == 59_736
     assert CYCLES_PER_LINE * PAL_LINES_PER_FRAME == 71_364
-    assert VideoStandard.NTSC.cycles_per_frame == 59_736
-    assert VideoStandard.NTSC.lines_per_frame == 262
+    assert cycles_per_frame(VideoStandard.NTSC) == 59_736
+    assert lines_per_frame(VideoStandard.NTSC) == 262
 
 
-def test_video_standard_values_are_the_yaml_spellings() -> None:
-    assert VideoStandard("ntsc") is VideoStandard.NTSC
-    assert VideoStandard("pal") is VideoStandard.PAL
+def test_video_standard_spellings_are_the_yaml_spellings() -> None:
+    assert VideoStandard.from_spelling("ntsc") is VideoStandard.NTSC
+    assert VideoStandard.from_spelling("pal") is VideoStandard.PAL
+    assert VideoStandard.NTSC.spelling == "ntsc"
+    assert VideoStandard.PAL.spelling == "pal"
+    with pytest.raises(ValueError):
+        VideoStandard.from_spelling("secam")
 
 
 def test_directly_constructed_machine_defaults_to_ntsc() -> None:
@@ -63,7 +69,7 @@ def test_machine_spec_defaults_to_ntsc() -> None:
     [(VideoStandard.NTSC, 59_736, 262), (VideoStandard.PAL, 71_364, 313)],
 )
 def test_timing_derives_from_the_video_standard(standard, cycles, lines) -> None:
-    assert (standard.cycles_per_frame, standard.lines_per_frame) == (cycles, lines)
+    assert (cycles_per_frame(standard), lines_per_frame(standard)) == (cycles, lines)
     parts = make_machine(b"\x00" * 0x8000)
     machine = Machine(
         cpu=parts.cpu, vdp=parts.vdp, memory=parts.memory, io=parts.io, psg=parts.psg,
@@ -96,8 +102,8 @@ def test_loader_derives_timing_from_video_standard(
     registry = load_device_registry(_ROOT / "config")
     spec = load_machine_spec(machine_id, _ROOT / "config", registry, _ROOT)
     assert spec.video_standard is standard
-    assert spec.lines_per_frame == lines
-    assert spec.cycles_per_frame == CYCLES_PER_LINE * lines
+    assert lines_per_frame(spec.video_standard) == lines
+    assert cycles_per_frame(spec.video_standard) == CYCLES_PER_LINE * lines
 
 
 def test_loader_rejects_an_unknown_video_standard(tmp_path: Path) -> None:
@@ -155,3 +161,21 @@ def test_directly_constructed_pal_machine_runs_the_pal_budget() -> None:
     assert (machine.cycles_per_frame, machine.lines_per_frame) == (71_364, 313)
     machine.run_frame(skip_render=True)
     assert 71_364 <= machine.cycle_count <= 71_364 + 22
+
+
+# -- machine-core "The core computes with integers only" ---------------------
+
+def test_the_pacing_target_is_an_integer() -> None:
+    assert VideoStandard.NTSC.target_fps == 60
+    assert VideoStandard.PAL.target_fps == 50
+    assert type(VideoStandard.NTSC.target_fps) is int
+    assert type(VideoStandard.PAL.target_fps) is int
+
+
+def test_the_samples_per_frame_are_an_integer() -> None:
+    ntsc = make_machine(bytes(32 * 1024))
+    pal = make_machine(bytes(32 * 1024))
+    pal.video_standard = VideoStandard.PAL
+    assert (ntsc.samples_per_frame(), pal.samples_per_frame()) == (735, 882)
+    assert type(ntsc.samples_per_frame()) is int
+    assert type(pal.samples_per_frame()) is int

@@ -8,7 +8,7 @@ state, so the preview assertions are not vacuous.
 """
 from __future__ import annotations
 
-from msx.vdp._geometry import OUTPUT_H
+from msx.boundary import OUTPUT_HEIGHT
 from msx.vdp.renderer import render_frame
 from msx.vdp.v9938 import V9938
 from msx.vdp.v9938_renderer import render_frame as render_frame_v9938
@@ -57,7 +57,7 @@ def test_tms_render_preview_leaves_state_and_returns_a_frame() -> None:
 
     buf = vdp.render_preview()
 
-    assert len(buf) == 256 * OUTPUT_H
+    assert len(buf) == 256 * OUTPUT_HEIGHT
     assert vdp.status == 0x00
     assert vdp.irq is False
     assert vdp.frame_count == 0
@@ -92,7 +92,7 @@ def test_v9938_render_preview_leaves_state_and_returns_a_frame() -> None:
 
     buf = vdp.render_preview()
 
-    assert len(buf) == vdp.display_width * OUTPUT_H
+    assert len(buf) == vdp.display_width * OUTPUT_HEIGHT
     assert any(buf)
     assert vdp.status == 0x00
     assert (vdp.collision_x, vdp.collision_y) == (0x12, 0x34)

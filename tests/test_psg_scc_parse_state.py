@@ -7,6 +7,7 @@ import pytest
 
 from msx.psg import PSG
 from msx.scc import SCC
+from tests.factories import restore_psg_synth, restore_state
 
 
 def _active_psg() -> PSG:
@@ -108,7 +109,7 @@ def test_psg_malformed_field_rejected_and_restore_leaves_psg_unchanged(
     with pytest.raises(ValueError, match=f"psg_synth.{field}"):
         psg.parse_synth_state(bad, "psg_synth")
     with pytest.raises(ValueError):
-        psg.restore_synth(bad)
+        restore_psg_synth(psg, bad)
     assert psg.snapshot_synth() == pre
 
 
@@ -126,15 +127,15 @@ def test_psg_missing_and_unknown_keys_rejected() -> None:
     missing: dict[str, object] = dict(copy.deepcopy(pre))
     del missing["clk_frac"]
     with pytest.raises(ValueError, match="missing"):
-        psg.restore_synth(missing)
+        restore_psg_synth(psg, missing)
 
     unknown: dict[str, object] = dict(copy.deepcopy(pre))
     unknown["_extra"] = 0
     with pytest.raises(ValueError, match="unknown"):
-        psg.restore_synth(unknown)
+        restore_psg_synth(psg, unknown)
 
     with pytest.raises(ValueError):
-        psg.restore_synth([])  # type: ignore[arg-type]
+        restore_psg_synth(psg, [])  # type: ignore[arg-type]
 
     assert psg.snapshot_synth() == pre
 
@@ -151,7 +152,7 @@ def test_psg_restore_after_parse_round_trips_and_generates() -> None:
     snap = copy.deepcopy(src.snapshot_synth())
     dst = PSG()
     dst.regs = list(src.regs)
-    dst.restore_synth(dict(snap))
+    restore_psg_synth(dst, dict(snap))
     assert dst.snapshot_synth() == snap
     assert dst.generate_samples(100) == src.generate_samples(100)
 
@@ -217,7 +218,7 @@ def test_scc_malformed_field_rejected_and_restore_leaves_scc_unchanged(
     with pytest.raises(ValueError, match=f"scc_state.{field}"):
         scc.parse_state(bad, "scc_state")
     with pytest.raises(ValueError):
-        scc.restore(bad)
+        restore_state(scc, bad)
     assert scc.snapshot() == pre
 
 
@@ -228,12 +229,12 @@ def test_scc_missing_and_unknown_keys_rejected() -> None:
     missing: dict[str, object] = dict(copy.deepcopy(pre))
     del missing["waves"]
     with pytest.raises(ValueError, match="missing"):
-        scc.restore(missing)
+        restore_state(scc, missing)
 
     unknown: dict[str, object] = dict(copy.deepcopy(pre))
     unknown["_plus_mode"] = False
     with pytest.raises(ValueError, match="unknown"):
-        scc.restore(unknown)
+        restore_state(scc, unknown)
 
     assert scc.snapshot() == pre
 
@@ -242,7 +243,7 @@ def test_scc_restore_does_not_alias_the_input_lists() -> None:
     src = _active_scc()
     snap: dict[str, object] = dict(copy.deepcopy(src.snapshot()))
     dst = SCC()
-    dst.restore(snap)
+    restore_state(dst, snap)
     waves = snap["waves"]
     assert isinstance(waves, list)
     waves[0][0] = 0x99 if waves[0][0] != 0x99 else 0x98

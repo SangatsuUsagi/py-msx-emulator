@@ -16,7 +16,6 @@ from msx.fdc import disk_drive, interface, tc8566af, wd2793
 from msx.input import InputFrame
 from msx.machine import Machine
 from msx.machine_spec import ExtensionOverlay
-from msx.mouse import MouseDevice
 from msx.psg import JoystickPort
 from msx.vdp import v9938
 from tests.factories import make_machine, make_machine_msx2
@@ -56,17 +55,17 @@ def _ran(machine: Machine) -> Machine:
 
 
 def _with_mouse(machine: Machine) -> Machine:
-    machine.attach_mouse(MouseDevice(), JoystickPort.JOY2)
+    machine.attach_mouse(JoystickPort.JOY2)
     return machine
 
 
 def _fmpac_overlay(rom_dir: Path) -> ExtensionOverlay:
     (rom_dir / "fmpac.rom").write_bytes(bytes(65536))
-    from msx.machine_spec import _RomEntry
+    from msx.machine_spec import RomEntry
 
     return ExtensionOverlay(
         device="fmpac", rom_base_dir=rom_dir,
-        rom_entry=_RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
+        rom_entry=RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
         sram_save_path=rom_dir / "fmpac.sram",
     )
 

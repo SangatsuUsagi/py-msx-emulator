@@ -1,59 +1,48 @@
+"""diag-debug-logger "Log every I/O port read and write": the I/O bus
+records each access while TRACE_DEBUG is on."""
 from __future__ import annotations
 
-import pytest
-
-from msx.diagnostics.logger import DebugLogger
+from msx.boundary import TRACE_DEBUG, TRACE_EVENT_IO_READ, TRACE_EVENT_IO_WRITE
+from msx.clock import CoreClock
 from msx.io import IOBus
+from msx.trace import TraceLog
 
 
-def make_io(logger: DebugLogger | None = None, pc: int = 0x0041) -> IOBus:
-    io = IOBus(_logger=logger, _get_pc=lambda: pc)
-    return io
+def make_io(kinds: int = TRACE_DEBUG, pc: int = 0x0041) -> tuple[IOBus, TraceLog]:
+    trace = TraceLog(kinds=kinds, _clock=CoreClock(instruction_pc=pc))
+    return IOBus(_trace=trace), trace
 
 
-# ---------------------------------------------------------------------------
-# OUT (write_port) logging
-# ---------------------------------------------------------------------------
+def _events(trace: TraceLog) -> list[tuple[int, int, int, int]]:
+    return [(e.kind, e.a, e.b, e.pc) for e in trace.drain()]
 
-def test_out_logs_port_value_pc(capsys: pytest.CaptureFixture[str]) -> None:
-    logger = DebugLogger()
-    io = make_io(logger=logger, pc=0x0041)
+
+def test_out_records_port_value_pc() -> None:
+    io, trace = make_io(pc=0x0041)
     io.write_port(0xA8, 0xE0)
-    captured = capsys.readouterr()
-    assert "[IO]  OUT  port=A8  val=E0  PC=0041" in captured.err
+    assert _events(trace) == [(TRACE_EVENT_IO_WRITE, 0xA8, 0xE0, 0x0041)]
 
 
-def test_out_no_log_without_logger(capsys: pytest.CaptureFixture[str]) -> None:
-    io = make_io()
+def test_out_no_record_with_the_kind_off() -> None:
+    io, trace = make_io(kinds=0)
     io.write_port(0xA8, 0xE0)
-    captured = capsys.readouterr()
-    assert captured.err == ""
+    assert _events(trace) == []
 
 
-# ---------------------------------------------------------------------------
-# IN (read_port) logging
-# ---------------------------------------------------------------------------
+def test_in_records_the_returned_value() -> None:
+    io, trace = make_io(pc=0x003F)
+    io.register_read(0xA8, 0xA8, lambda port: 0xE0)
+    assert io.read_port(0xA8) == 0xE0
+    assert _events(trace) == [(TRACE_EVENT_IO_READ, 0xA8, 0xE0, 0x003F)]
 
-def test_in_logs_returned_value(capsys: pytest.CaptureFixture[str]) -> None:
-    logger = DebugLogger()
-    io = make_io(logger=logger, pc=0x003F)
-    io.register_read(0xA8, 0xAB, lambda p: 0xE0)
+
+def test_in_unregistered_port_records_ff() -> None:
+    io, trace = make_io(pc=0x0010)
+    assert io.read_port(0x55) == 0xFF
+    assert _events(trace) == [(TRACE_EVENT_IO_READ, 0x55, 0xFF, 0x0010)]
+
+
+def test_in_no_record_with_the_kind_off() -> None:
+    io, trace = make_io(kinds=0)
     io.read_port(0xA8)
-    captured = capsys.readouterr()
-    assert "[IO]  IN   port=A8  val=E0  PC=003F" in captured.err
-
-
-def test_in_unregistered_port_logs_ff(capsys: pytest.CaptureFixture[str]) -> None:
-    logger = DebugLogger()
-    io = make_io(logger=logger, pc=0x0010)
-    result = io.read_port(0x00)
-    assert result == 0xFF
-    captured = capsys.readouterr()
-    assert "val=FF" in captured.err
-
-
-def test_in_no_log_without_logger(capsys: pytest.CaptureFixture[str]) -> None:
-    io = make_io()
-    io.read_port(0xA8)
-    captured = capsys.readouterr()
-    assert captured.err == ""
+    assert _events(trace) == []

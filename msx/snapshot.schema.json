@@ -5,7 +5,7 @@
   "type": "object",
   "properties": {
     "format_version": {
-      "const": 20
+      "const": 21
     },
     "machine_type": {
       "enum": [
@@ -309,6 +309,9 @@
         "nmi_pending": {
           "type": "boolean"
         },
+        "ei_pending": {
+          "type": "boolean"
+        },
         "im": {
           "type": "integer",
           "minimum": 0,
@@ -326,6 +329,7 @@
         }
       },
       "required": [
+        "ei_pending",
         "halted",
         "iff1",
         "iff2",
@@ -354,16 +358,6 @@
         "disk_changed": {
           "type": "boolean"
         },
-        "disk_path": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "disk_size": {
           "anyOf": [
             {
@@ -390,7 +384,6 @@
       },
       "required": [
         "disk_changed",
-        "disk_path",
         "disk_sha1",
         "disk_size",
         "side",

@@ -7,7 +7,8 @@ from pathlib import Path
 import pytest
 
 from host.machine_config import sram_paths
-from host.media import persist_dirty_media, read_disk_medium, swap_disk
+from host.media import DiskFiles, persist_dirty_media, read_disk_medium, swap_disk
+from msx.boundary import MediaId
 from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.disk_image import SECTOR_SIZE
 from msx.fdc.interface import SonyPhilipsInterface
@@ -15,7 +16,11 @@ from msx.fdc.wd2793 import WD2793
 from msx.machine import Machine
 from msx.machine_loader import build_machine
 from msx.mapper import Ascii8Sram2Mapper
-from tests.factories import make_config, make_config_msx2, make_machine
+from tests.factories import (
+    make_loaded_config,
+    make_loaded_config_msx2,
+    make_machine,
+)
 
 _ROM = bytes(32 * 1024)
 _CART = bytes(range(256)) * 32
@@ -39,14 +44,14 @@ def test_dirty_cartridge_sram_is_written_to_its_sha1_path(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    config = make_config(rom=_ROM, cartridge=_CART, mapper="ASCII8SRAM2")
-    m = build_machine(config)
-    mapper = m.memory._mapper
+    config = make_loaded_config(rom=_ROM, cartridge=_CART, mapper="ASCII8SRAM2")
+    m = build_machine(config.config)
+    mapper = m.memory.mapper1
     assert isinstance(mapper, Ascii8Sram2Mapper)
     mapper.write(0x7000, mapper._sram_enable_bit())
     mapper.write(0x8000, 0x5A)
     persist_dirty_media(m, sram_paths(config))
-    assert sram_paths(config)["slot1.sram"].read_bytes()[0] == 0x5A
+    assert sram_paths(config)[MediaId.SLOT1_SRAM].read_bytes()[0] == 0x5A
     assert m.dirty_media() == []
 
 
@@ -54,8 +59,8 @@ def test_unchanged_sram_is_not_rewritten(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    config = make_config(rom=_ROM, cartridge=_CART, mapper="ASCII8SRAM2")
-    persist_dirty_media(build_machine(config), sram_paths(config))
+    config = make_loaded_config(rom=_ROM, cartridge=_CART, mapper="ASCII8SRAM2")
+    persist_dirty_media(build_machine(config.config), sram_paths(config))
     assert not (tmp_path / "saves").exists()
 
 
@@ -63,9 +68,9 @@ def test_non_sram_mapper_writes_nothing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    config = make_config(rom=_ROM, cartridge=_CART, mapper="ASCII8")
-    m = build_machine(config)
-    m.memory._mapper.write(0x6000, 1)
+    config = make_loaded_config(rom=_ROM, cartridge=_CART, mapper="ASCII8")
+    m = build_machine(config.config)
+    m.memory.mapper1.write(0x6000, 1)
     persist_dirty_media(m, sram_paths(config))
     assert not (tmp_path / "saves").exists()
 
@@ -76,15 +81,15 @@ def test_rtc_file_is_created_on_first_shutdown(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    config = make_config_msx2(bytes(32 * 1024), bytes(16 * 1024))
-    m = build_machine(config)
+    config = make_loaded_config_msx2(bytes(32 * 1024), bytes(16 * 1024))
+    m = build_machine(config.config)
     assert m.rtc is not None
     m.rtc.write_port(0xB4, 0x0D)  # mode register
     m.rtc.write_port(0xB5, 0x02)  # select block 2
     m.rtc.write_port(0xB4, 0x00)
     m.rtc.write_port(0xB5, 0x0A)  # CMOS write
     persist_dirty_media(m, sram_paths(config))
-    data = (tmp_path / sram_paths(config)["rtc.cmos"]).read_bytes()
+    data = (tmp_path / sram_paths(config)[MediaId.RTC_CMOS]).read_bytes()
     assert len(data) == 26 and data[0] == 0x0A
 
 
@@ -92,19 +97,21 @@ def test_rtc_file_is_created_on_first_shutdown(
 
 def test_outgoing_image_is_flushed_before_unmount(tmp_path: Path) -> None:
     m = _fdc_machine()
+    files = DiskFiles()
     a = _dsk(tmp_path / "a.dsk")
-    swap_disk(m, 0, a)
+    swap_disk(m, files, 0, a)
     m.fdc.drives[0].image.write_sector(5, b"\xAB" * SECTOR_SIZE)
-    swap_disk(m, 0, _dsk(tmp_path / "b.dsk"))
+    swap_disk(m, files, 0, _dsk(tmp_path / "b.dsk"))
     assert a.read_bytes()[5 * SECTOR_SIZE:6 * SECTOR_SIZE] == b"\xAB" * SECTOR_SIZE
 
 
 def test_eject_flushes_the_outgoing_image(tmp_path: Path) -> None:
     m = _fdc_machine()
+    files = DiskFiles()
     a = _dsk(tmp_path / "a.dsk")
-    swap_disk(m, 0, a)
+    swap_disk(m, files, 0, a)
     m.fdc.drives[0].image.write_sector(0, b"\x11" * SECTOR_SIZE)
-    swap_disk(m, 0, None)
+    swap_disk(m, files, 0, None)
     assert m.fdc.drives[0].image is None
     assert a.read_bytes()[:SECTOR_SIZE] == b"\x11" * SECTOR_SIZE
 
@@ -112,43 +119,48 @@ def test_eject_flushes_the_outgoing_image(tmp_path: Path) -> None:
 def test_a_failed_write_back_keeps_the_current_disk(tmp_path: Path) -> None:
     # fdc-interface "A failed write-back keeps the current disk".
     m = _fdc_machine()
+    files = DiskFiles()
     a = _dsk(tmp_path / "a.dsk")
-    swap_disk(m, 0, a)
+    swap_disk(m, files, 0, a)
     before = m.fdc.drives[0].image
     before.write_sector(5, b"\xAB" * SECTOR_SIZE)
     a.unlink()
     a.mkdir()                                   # the file can no longer be written
     with pytest.raises(OSError):
-        swap_disk(m, 0, _dsk(tmp_path / "b.dsk"))
+        swap_disk(m, files, 0, _dsk(tmp_path / "b.dsk"))
     assert m.fdc.drives[0].image is before
-    assert m.disk_path(0) == a
-    assert "drive_a" in m.dirty_media()
+    assert files.path(0) == a
+    assert MediaId.DRIVE_A in m.dirty_media()
 
 
 def test_nonexistent_file_keeps_the_current_disk(tmp_path: Path) -> None:
     m = _fdc_machine()
-    swap_disk(m, 0, _dsk(tmp_path / "a.dsk"))
+    files = DiskFiles()
+    swap_disk(m, files, 0, _dsk(tmp_path / "a.dsk"))
     before = m.fdc.drives[0].image
     with pytest.raises(OSError):
-        swap_disk(m, 0, tmp_path / "missing.dsk")
+        swap_disk(m, files, 0, tmp_path / "missing.dsk")
     assert m.fdc.drives[0].image is before
 
 
 def test_invalid_image_size_keeps_the_current_disk(tmp_path: Path) -> None:
     m = _fdc_machine()
-    swap_disk(m, 0, _dsk(tmp_path / "a.dsk"))
+    files = DiskFiles()
+    swap_disk(m, files, 0, _dsk(tmp_path / "a.dsk"))
     before = m.fdc.drives[0].image
     bad = tmp_path / "bad.dsk"
     bad.write_bytes(bytes(100))
-    with pytest.raises(ValueError):
-        swap_disk(m, 0, bad)
+    with pytest.raises(ValueError) as exc_info:
+        swap_disk(m, files, 0, bad)
+    assert str(exc_info.value) == f"{bad}: size 100 is not a positive multiple of 512"
     assert m.fdc.drives[0].image is before
 
 
 def test_swap_of_a_missing_drive_keeps_everything(tmp_path: Path) -> None:
     m = _fdc_machine()
-    with pytest.raises(ValueError):
-        swap_disk(m, 1, _dsk(tmp_path / "a.dsk"))
+    files = DiskFiles()
+    with pytest.raises(ValueError, match="no floppy drive 1 on this machine$"):
+        swap_disk(m, files, 1, _dsk(tmp_path / "a.dsk"))
     assert m.fdc.drives[0].image is None
 
 
@@ -161,7 +173,82 @@ def test_readonly_file_is_read_write_protected(tmp_path: Path) -> None:
         os.chmod(p, 0o644)
 
 
-def test_writable_file_is_read_writable_and_named(tmp_path: Path) -> None:
+def test_writable_file_is_read_writable(tmp_path: Path) -> None:
     p = _dsk(tmp_path / "rw.dsk")
     medium = read_disk_medium(p)
-    assert (medium.write_protected, medium.path, medium.data) == (False, p, p.read_bytes())
+    assert (medium.write_protected, medium.data) == (False, p.read_bytes())
+
+
+# --- machine-core "The host keeps the file of each disk" ----------------------
+
+def test_a_swap_records_the_new_file(tmp_path: Path) -> None:
+    m = _fdc_machine()
+    a, b = _dsk(tmp_path / "a.dsk"), _dsk(tmp_path / "b.dsk", fill=1)
+    files = DiskFiles()
+    swap_disk(m, files, 0, a)
+    swap_disk(m, files, 0, b)
+    assert files.path(0) == b
+    swap_disk(m, files, 0, None)
+    assert files.path(0) is None
+
+
+def test_a_failed_swap_keeps_the_old_file(tmp_path: Path) -> None:
+    m = _fdc_machine()
+    a = _dsk(tmp_path / "a.dsk")
+    bad = tmp_path / "bad.dsk"
+    bad.write_bytes(bytes(1000))
+    files = DiskFiles()
+    swap_disk(m, files, 0, a)
+    with pytest.raises(ValueError):
+        swap_disk(m, files, 0, bad)
+    assert files.path(0) == a
+    with pytest.raises(ValueError):
+        swap_disk(m, files, 1, bad)              # no drive B
+    assert files.path(1) is None
+
+
+def test_a_dirty_disk_is_written_to_its_own_file(tmp_path: Path) -> None:
+    m = _fdc_machine()
+    a = _dsk(tmp_path / "a.dsk")
+    copy = _dsk(tmp_path / "copy.dsk")          # same content, another file
+    files = DiskFiles({0: a})
+    assert m.mount_disk(0, a.read_bytes(), False) == 0
+    m.fdc.drives[0].image.write_sector(3, b"\x5A" * SECTOR_SIZE)
+    persist_dirty_media(m, None, files)
+    assert a.read_bytes()[3 * SECTOR_SIZE:4 * SECTOR_SIZE] == b"\x5A" * SECTOR_SIZE
+    assert copy.read_bytes() == bytes(len(_2DD))
+    assert MediaId.DRIVE_A not in m.dirty_media()
+
+
+def test_the_host_releases_the_machine_after_the_media(monkeypatch) -> None:
+    # machine-core "The host releases the machine after the media".
+    import importlib.util
+
+    import host.media
+    import msx.machine_loader
+
+    main_path = Path(__file__).parent.parent / "__main__.py"
+    spec = importlib.util.spec_from_file_location("_emulator_main_cleanup", main_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    calls: list[str] = []
+    monkeypatch.setattr(host.media, "persist_dirty_media", lambda *_a: calls.append("media"))
+    monkeypatch.setattr(msx.machine_loader, "release_machine", lambda _m: calls.append("release"))
+    module._cleanup(object(), None, None, None, None, {}, DiskFiles())
+    assert calls == ["media", "release"]
+
+
+def test_a_swap_makes_the_directory_of_the_outgoing_file(tmp_path: Path) -> None:
+    # host.media._write_back: a dirty disk goes back even when its directory
+    # is gone.
+    m = _fdc_machine()
+    files = DiskFiles()
+    (tmp_path / "gone").mkdir()
+    a = _dsk(tmp_path / "gone" / "a.dsk")
+    swap_disk(m, files, 0, a)
+    m.fdc.drives[0].image.write_sector(5, b"\xAB" * SECTOR_SIZE)
+    a.unlink()
+    a.parent.rmdir()
+    swap_disk(m, files, 0, None)
+    assert a.read_bytes()[5 * SECTOR_SIZE:6 * SECTOR_SIZE] == b"\xAB" * SECTOR_SIZE

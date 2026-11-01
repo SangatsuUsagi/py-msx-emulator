@@ -5,7 +5,7 @@ tests/test_machine_audio.py); queueing, mute and fast-forward are driven
 through _run_frame in tests/test_sdl2_frontend_hotkeys.py.
 """
 from frontend.sdl2_frontend import _init_sdl
-from msx.psg import SAMPLE_RATE
+from msx.boundary import AUDIO_SAMPLE_RATE
 
 # --- allium/frontend.allium: OpenAudioDevice --------------------------------
 # `_init_sdl` implements both CreateHostDisplay (texture/window creation) and
@@ -89,4 +89,4 @@ def test_audio_device_opens_at_the_core_mix_rate() -> None:
     sdl = _FakeInitSDL(audio_opens=True)
     _init_sdl(sdl, "title", 768, 636, 256, 212)
     assert sdl.audio_spec_args is not None
-    assert sdl.audio_spec_args[0] == SAMPLE_RATE
+    assert sdl.audio_spec_args[0] == AUDIO_SAMPLE_RATE

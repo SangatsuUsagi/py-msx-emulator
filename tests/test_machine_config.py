@@ -18,15 +18,15 @@ from host.machine_config import (
     load_machine_config,
     load_machine_spec,
 )
-from msx.boundary import RtcTime
+from msx.boundary import MediaId, MediaImage, RomImage, RtcTime
 from msx.input import InputFrame
 from msx.machine_config import encode_machine_config, parse_machine_config
 from msx.machine_loader import build_machine
 from msx.machine_spec import (
+    ExpandedSubslotDevice,
     ExtensionOverlay,
     MachineLoadError,
-    _ExpandedSubslotDevice,
-    _RomEntry,
+    RomEntry,
 )
 from msx.state import _snapshot_from_machine
 from tests.factories import _msx2_spec, make_config, make_config_msx2, reformat_document
@@ -61,14 +61,14 @@ def test_auto_mapper_is_resolved_before_building(
 
     monkeypatch.setattr(romdb, "lookup", no_lookup)
     machine = build_machine(config)
-    assert type(machine.memory._mapper).__name__ == "KonamiMapper"
+    assert type(machine.memory.mapper1).__name__ == "KonamiMapper"
 
 
 def test_build_reads_no_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.chdir(tmp_path)
     config = load_machine_config(
         _msx2_spec(), bios_override=_ROM, extrom_override=bytes(16 * 1024)
-    )
+    ).config
 
     def no_read(self: Path) -> bytes:
         raise AssertionError(f"build_machine read {self}")
@@ -78,27 +78,59 @@ def test_build_reads_no_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     assert build_machine(config).rtc is not None
 
 
-def test_sram_size_of_a_non_sram_id_names_it_by_value() -> None:
+def test_sram_size_of_a_non_sram_id_names_it_by_name() -> None:
     from host.machine_config import _sram_size_and_label
     from msx.boundary import MediaId
 
     config = make_config(_ROM)
-    with pytest.raises(ValueError, match="unknown SRAM media id 'drive_a'"):
+    with pytest.raises(ValueError, match="unknown SRAM media id DRIVE_A$"):
         _sram_size_and_label(config, MediaId.DRIVE_A)
+
+
+def test_machine_properties_are_integers() -> None:
+    # machine-core "Machine properties are integers".
+    from msx.boundary import KeyboardLayout, VideoStandard
+
+    spec = _spec("cbios_msx1_jp")
+    machine = build_machine(load_machine_config(spec, **_overrides(spec)).config)
+    assert isinstance(machine.video_standard, int)
+    assert isinstance(machine.keyboard_layout, int)
+    assert machine.video_standard == VideoStandard.NTSC
+    assert machine.keyboard_layout == KeyboardLayout.JAPANESE
+
+
+# The canonical documents' SHA-256, recorded before the video standard and
+# the keyboard layout became integer enums: their text spellings did not change.
+_DOCUMENT_SHA256 = {
+    "cbios_msx1_eu": "5a331a17c716dc351ff29a63bb4bd9cca6d0f377a02fcf79fa1b3b944a4eb6ce",
+    "cbios_msx1_jp": "cf2862c23ba6c8e1f021ce233a60d36940dbafbcd2c9f50a7201fdd128649091",
+    "hb_f1xd": "ce921d1109ca7a20f43015f19e7cb63427e4e8842840a1449309c1bd7bd45cde",
+}
+
+
+@pytest.mark.parametrize("machine_id", sorted(_DOCUMENT_SHA256))
+def test_the_canonical_document_spells_the_enums_as_text(machine_id: str) -> None:
+    document = _document(machine_id)
+    machine = json.loads(document)["machine"]
+    assert machine["video_standard"] in ("ntsc", "pal")
+    assert machine["keyboard_layout"] in ("int", "jp")
+    assert hashlib.sha256(document).hexdigest() == _DOCUMENT_SHA256[machine_id]
+    parsed = parse_machine_config(document).spec
+    assert parsed.video_standard.spelling == machine["video_standard"]
+    assert parsed.keyboard_type.spelling == machine["keyboard_layout"]
 
 
 def test_machine_keyboard_layout_defaults_to_international() -> None:
     # input-keyboard "Default layout is International".
-    from msx.machine_spec import KeyboardLayout
+    from msx.boundary import KeyboardLayout
 
     machine = build_machine(make_config(_ROM))
     assert machine.keyboard_layout is KeyboardLayout.INTERNATIONAL
-    assert machine.keyboard_layout == "int"
 
 
 def test_a_jis_machine_definition_gives_the_japanese_layout() -> None:
     from host.machine_config import load_device_registry, load_machine_spec
-    from msx.machine_spec import KeyboardLayout
+    from msx.boundary import KeyboardLayout
 
     root = Path(__file__).resolve().parent.parent
     config_dir = root / "config"
@@ -137,7 +169,7 @@ def _overrides(spec) -> dict[str, bytes]:
 def _document(machine_id: str = "hb_f1xd", **kwargs: object) -> bytes:
     spec = _spec(machine_id)
     args = {**_overrides(spec), **kwargs}
-    return load_machine_config(spec, **args).document
+    return load_machine_config(spec, **args).config.document
 
 
 def _walk(node: object) -> list[object]:
@@ -200,11 +232,11 @@ def test_an_override_rom_is_referenced_by_its_own_sha1(
     bios = bytes(range(256)) * 128
     config = load_machine_config(
         _spec("cbios_msx1"), bios_override=bios, logo_override=bytes(16384)
-    )
+    ).config
     main = json.loads(config.document)["machine"]["main_rom"]
     assert main["sha1"] == hashlib.sha1(bios).hexdigest()
     assert main["size"] == len(bios)
-    assert config.roms[main["sha1"]] == bios
+    assert RomImage(main["sha1"], bios) in config.roms
 
 
 def test_a_cbios_rom_with_no_sha1_in_its_yaml_gets_one(
@@ -235,10 +267,11 @@ def test_every_machine_round_trips_through_its_document(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, machine_id: str
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    config = load_machine_config(_spec(machine_id), **_overrides(_spec(machine_id)))
+    config = load_machine_config(_spec(machine_id), **_overrides(_spec(machine_id))).config
     document = config.document
     parsed = parse_machine_config(document)
-    roms_by_role = {role: config.roms[ref.sha1] for role, ref in parsed.roms.items()}
+    images_by_sha1 = {rom.sha1: rom.data for rom in config.roms}
+    roms_by_role = {role: images_by_sha1[ref.sha1] for role, ref in parsed.roms.items()}
     again, images = encode_machine_config(
         parsed.spec, roms_by_role,
         mapper1=parsed.mapper1, mapper2=parsed.mapper2,
@@ -246,7 +279,7 @@ def test_every_machine_round_trips_through_its_document(
         extension_overlay2=parsed.extension_overlay2,
     )
     assert again == document
-    assert images == config.roms
+    assert images == images_by_sha1
 
 
 # ---------------------------------------------------------------------------
@@ -255,14 +288,122 @@ def test_every_machine_round_trips_through_its_document(
 
 def _hb_f1xd_config(tmp_path: Path):
     spec = _spec("hb_f1xd")
-    return load_machine_config(spec, **_overrides(spec))
+    return load_machine_config(spec, **_overrides(spec)).config
+
+
+# ---------------------------------------------------------------------------
+# machine-core "The core builds a machine and reports a failure as a status"
+# ---------------------------------------------------------------------------
+
+def test_a_valid_configuration_builds_a_machine() -> None:
+    from msx.boundary import STATUS_OK
+    from msx.machine_loader import create_machine
+
+    result = create_machine(make_config(_ROM))
+    assert result.status == STATUS_OK
+    assert result.machine is not None
+    assert result.error_text == b""
+
+
+def _without_main_rom(config):
+    main = json.loads(config.document)["machine"]["main_rom"]["sha1"]
+    config.roms = tuple(rom for rom in config.roms if rom.sha1 != main)
+    return config, main
+
+
+def test_a_rejected_configuration_returns_a_status_and_a_message() -> None:
+    from msx.boundary import STATUS_BAD_CONFIG
+    from msx.machine_loader import create_machine
+
+    config, main = _without_main_rom(make_config(_ROM))
+    result = create_machine(config)
+    assert result.status == STATUS_BAD_CONFIG
+    assert result.machine is None
+    assert main.encode() in result.error_text
+
+
+def test_the_wrapper_raises_the_same_message() -> None:
+    from msx.machine_loader import create_machine
+
+    config, _main = _without_main_rom(make_config(_ROM))
+    message = create_machine(config).error_text.decode()
+    with pytest.raises(MachineLoadError) as exc_info:
+        build_machine(config)
+    assert str(exc_info.value) == message
+
+
+def test_two_records_for_one_medium_are_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # machine-loader "Two records for one medium are rejected".
+    monkeypatch.chdir(tmp_path)
+    config = make_config(_ROM)
+    config.media = (
+        MediaImage(MediaId.SLOT1_SRAM, bytes(8192)), MediaImage(MediaId.SLOT1_SRAM, bytes(8192)),
+    )
+    with pytest.raises(MachineLoadError, match="two medium images for SLOT1_SRAM"):
+        build_machine(config)
+
+
+def test_a_drive_id_is_not_a_medium_image(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config = make_config(_ROM)
+    config.media = (MediaImage(MediaId.DRIVE_A, bytes(737280)),)
+    with pytest.raises(MachineLoadError, match="DRIVE_A, a drive id"):
+        build_machine(config)
+
+
+def test_two_plain_int_records_for_one_medium_are_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # machine-loader "Two plain-int records for one medium are rejected".
+    from msx.boundary import STATUS_BAD_CONFIG
+    from msx.machine_loader import create_machine
+
+    monkeypatch.chdir(tmp_path)
+    config = make_config(_ROM)
+    config.media = (MediaImage(0, bytes(8192)), MediaImage(0, bytes(8192)))
+    result = create_machine(config)
+    assert result.status == STATUS_BAD_CONFIG
+    assert b"two medium images for SLOT1_SRAM" in result.error_text
+
+
+def test_a_plain_int_drive_id_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from msx.boundary import STATUS_BAD_CONFIG
+    from msx.machine_loader import create_machine
+
+    monkeypatch.chdir(tmp_path)
+    config = make_config(_ROM)
+    config.media = (MediaImage(12, bytes(737280)),)
+    result = create_machine(config)
+    assert result.status == STATUS_BAD_CONFIG
+    assert b"DRIVE_A, a drive id" in result.error_text
+
+
+def test_an_unknown_medium_id_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # machine-loader "An unknown medium id is rejected".
+    from msx.boundary import STATUS_BAD_CONFIG
+    from msx.machine_loader import create_machine
+
+    monkeypatch.chdir(tmp_path)
+    config = make_config(_ROM)
+    config.media = (MediaImage(99, bytes(8192)),)
+    result = create_machine(config)
+    assert result.status == STATUS_BAD_CONFIG
+    assert b"unknown id 99" in result.error_text
 
 
 def test_a_missing_rom_image_is_rejected(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.chdir(tmp_path)
     config = _hb_f1xd_config(tmp_path)
     sub = json.loads(config.document)["machine"]["sub_rom"]["sha1"]
-    del config.roms[sub]
+    config.roms = tuple(rom for rom in config.roms if rom.sha1 != sub)
     with pytest.raises(MachineLoadError, match=sub):
         build_machine(config)
 
@@ -273,7 +414,10 @@ def test_a_rom_image_of_the_wrong_content_is_rejected(
     monkeypatch.chdir(tmp_path)
     config = _hb_f1xd_config(tmp_path)
     main = json.loads(config.document)["machine"]["main_rom"]["sha1"]
-    config.roms[main] = bytes([0xFF]) * len(config.roms[main])
+    config.roms = tuple(
+        RomImage(rom.sha1, bytes([0xFF]) * len(rom.data)) if rom.sha1 == main else rom
+        for rom in config.roms
+    )
     with pytest.raises(MachineLoadError, match="does not match its reference"):
         build_machine(config)
 
@@ -408,10 +552,10 @@ def test_an_scc_i_fragment_rom_block_is_ignored(
     monkeypatch.chdir(tmp_path)
     overlay = ExtensionOverlay(
         device="scc_i_cart", rom_base_dir=tmp_path,
-        rom_entry=_RomEntry(file="missing_scc.rom", size_kb=64, pages=[]),
+        rom_entry=RomEntry(file="missing_scc.rom", size_kb=64, pages=[]),
     )
     spec = _spec("hb_f1xd")
-    config = load_machine_config(spec, **_overrides(spec), extension_overlay2=overlay)
+    config = load_machine_config(spec, **_overrides(spec), extension_overlay2=overlay).config
     assert json.loads(config.document)["extensions"]["slot2"] == {
         "shape": "flat", "device": "scc_i_cart", "rom": None,
     }
@@ -424,7 +568,123 @@ def test_a_device_without_a_rom_file_to_read_is_a_load_error(
     # A kanji io_device parsed back from a document has no rom_base_dir.
     monkeypatch.chdir(tmp_path)
     spec = dataclasses.replace(
-        _spec("hb_f1xd"), io_device=_ExpandedSubslotDevice(device="kanji_rom")
+        _spec("hb_f1xd"), io_device=ExpandedSubslotDevice(device="kanji_rom")
     )
     with pytest.raises(MachineLoadError, match="machine io_device: no ROM file to read"):
-        load_machine_config(spec, **_overrides(spec))
+        load_machine_config(spec, **_overrides(spec)).config
+
+
+def test_a_ram_mapper_size_the_mapper_does_not_accept_is_rejected() -> None:
+    # machine-core "A RAM mapper size the mapper does not accept is rejected".
+    from msx.boundary import STATUS_BAD_CONFIG
+    from msx.machine_loader import create_machine
+
+    config = make_config_msx2(_ROM, bytes(16 * 1024))
+    document = json.loads(config.document)
+    document["machine"]["ram_mapper_size_kb"] = 8
+    config.document = json.dumps(document).encode("utf-8")
+    result = create_machine(config)
+    assert result.status == STATUS_BAD_CONFIG
+    assert result.machine is None
+
+
+@pytest.mark.parametrize(
+    "start",
+    [
+        RtcTime(2000, 13, 1, 0, 0, 0),
+        RtcTime(2000, 1, 40, 0, 0, 0),
+        RtcTime(2000, 1, 1, 24, 0, 0),
+        RtcTime(-1, 1, 1, 0, 0, 0),
+        RtcTime(10000, 1, 1, 0, 0, 0),
+    ],
+)
+def test_an_invalid_rtc_start_time_is_rejected(start: RtcTime) -> None:
+    # machine-core "An invalid RTC start time is rejected".
+    from msx.boundary import STATUS_BAD_CONFIG
+    from msx.machine_loader import create_machine
+
+    config = make_config_msx2(_ROM, bytes(16 * 1024))
+    config.rtc_initial_time = start
+    result = create_machine(config)
+    assert result.status == STATUS_BAD_CONFIG
+    assert result.machine is None
+
+
+def test_a_valid_rtc_start_time_survives_a_state_round_trip() -> None:
+    # machine-core "A valid RTC start time survives a state round trip".
+    from msx.boundary import STATUS_OK
+    from msx.machine_loader import create_machine
+
+    config = make_config_msx2(_ROM, bytes(16 * 1024))
+    config.rtc_initial_time = RtcTime(2024, 2, 29, 23, 59, 59)
+    result = create_machine(config)
+    assert result.status == STATUS_OK
+    assert result.machine is not None
+    assert result.machine.load_state(result.machine.save_state()) == STATUS_OK
+
+
+def test_a_configuration_without_a_start_time_starts_at_2000() -> None:
+    # machine-core "A configuration without a start time starts at 2000".
+    from msx.boundary import RTC_DEFAULT_START, MachineConfig, RtcTime
+    from msx.machine_loader import create_machine
+
+    assert MachineConfig(document=b"{}").rtc_initial_time == RTC_DEFAULT_START
+    assert RTC_DEFAULT_START == RtcTime(2000, 1, 1, 0, 0, 0)
+    machine = create_machine(make_config_msx2(_ROM, bytes(16 * 1024))).machine
+    assert machine is not None
+    machine.rtc._refresh_time_regs()
+    # Block 0 BCD digits: seconds, minutes, hours (0-5), day (7, 8),
+    # month (9, 10), years since 1980 (11, 12).
+    regs = machine.rtc._regs
+    assert regs[0:6] == [0, 0, 0, 0, 0, 0]
+    assert (regs[7], regs[8], regs[9], regs[10]) == (1, 0, 1, 0)
+    assert (regs[11], regs[12]) == (0, 2)
+
+
+def test_the_start_time_admits_no_none() -> None:
+    # machine-core "The start time admits no None".
+    import typing
+
+    from msx.boundary import MachineConfig
+
+    hint = typing.get_type_hints(MachineConfig)["rtc_initial_time"]
+    assert hint is not type(None)
+    assert type(None) not in typing.get_args(hint)
+
+
+def _edited_document(edit) -> bytes:
+    decoded = json.loads(_document())
+    edit(decoded["machine"])
+    return json.dumps(decoded).encode("utf-8")
+
+
+@pytest.mark.parametrize(("field", "value"), [
+    # machine-loader "A RAM size above the address space is rejected".
+    ("ram_size_kb", 128),
+    ("flat_ram_size_kb", 128),
+    # machine-loader "A RAM mapper above 256 segments is rejected".
+    ("ram_mapper_size_kb", 8192),
+    ("ram_mapper_size_kb", 8),
+])
+def test_a_ram_size_outside_its_limit_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, field: str, value: int
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    document = _edited_document(lambda machine: machine.__setitem__(field, value))
+    with pytest.raises(MachineLoadError, match=field):
+        parse_machine_config(document)
+
+
+@pytest.mark.parametrize(("key", "ports"), [
+    # machine-loader "An unknown I/O device is rejected".
+    ("no_such_device", [0xA0, 0xA2]),
+    # machine-loader "A reversed I/O range is rejected".
+    ("psg_ay8910", [0xA2, 0xA0]),
+])
+def test_a_bad_io_range_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, key: str, ports: list[int]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    document = _edited_document(lambda machine: machine["device_io_ports"].__setitem__(key, ports))
+    with pytest.raises(MachineLoadError, match=key):
+        parse_machine_config(document)

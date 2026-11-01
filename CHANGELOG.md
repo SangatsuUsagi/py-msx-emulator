@@ -2,6 +2,40 @@
 
 [日本語版はこちら](CHANGELOG_ja.md)
 
+- **v2.9.0** (2026-11-01): A C-ABI-ready core boundary, and save-state format 21.
+  - The host code (debugger, RPC, MCP server, SDL frontend) uses the core only through `CoreApi` in
+    `msx/core_api.py`. The boundary uses integers, flat buffers and integer status codes, and the core makes no
+    callbacks to the host. `tests/test_core_frontend_boundary.py` enforces this. A core in another language can
+    later replace `msx/` behind the same interface.
+  - `include/msx_core.h` declares the core API in C11. `tests/test_core_c_header.py` keeps it in step with `CoreApi`
+    and the constants. The ABI version is 1, and a change to the declarations needs a new version.
+  - The core uses no floating point (the OPLL tables are integer tables). All traces go through one integer trace
+    buffer in the core, and the host formats the lines. The VDP trace, the mapper trace and the `--debug` log now
+    print at the end of each frame or debugger step. The line format does not change. `--vdp-trace` also traces the
+    TMS9918A.
+  - Ctrl+C in the terminal opens the debugger REPL also with `--rpc`. A break stops inside the frame, and `c`
+    continues the same frame, so its VBlank and its remaining scanlines still run. `s` and RPC `cpu.step` run inside
+    the current frame. A watchpoint stops after the instruction that made the access.
+  - RPC: a fifth breakpoint or watchpoint gives error -32602 (before: an id for a breakpoint that never fired).
+    `memory.read` and `memory.read_vram` reject an out-of-range length with -32602. `memory.read_vram` reads V9938
+    VRAM above 64 KB. The RPC breakpoint and watchpoint methods share one set with `--break-point`, `--watch-point`,
+    `ba` and `wa`.
+  - Fix: the SDL window ran at about 52 fps instead of 60 fps. Each frame deadline now follows the previous one,
+    and the timer restarts only after an overrun.
+  - Fixes: a RAM mapper whose size is not a power of two no longer crashes. A state load in a stopped frame no
+    longer rewinds the PSG. Headless runs attach the mouse. A bad disk size, RAM-mapper size or RTC start time, and
+    an FM-PAC ROM that is not 64 KB, give a load error instead of a crash. The `sl` bank column covers R-Type and
+    FM-PAC, and shows SRAM and open pages.
+  - In the `--debug` log, an `[IO]` line gives the address of the `IN`/`OUT` instruction. For `IN A,(n)` and
+    `OUT (n),A` that is 2 lower than before.
+  - **Breaking:** the save-state format version is 21. A snapshot names a disk by its size and SHA-1, not by its
+    path. Save states from v2.8.4 and earlier cannot be loaded.
+  - Performance: the MSX2 benchmark titles run about 4 to 7% faster on both runtimes. On PyPy, the MSX1 benchmark
+    title runs about 18 to 22% slower (M5 Pro: 1236.10 to 1010.60 fps; Raspberry Pi 5: 255.94 to 200.75 fps),
+    mostly because of the shared core clock. On CPython, MSX1 is within 2% of v2.8.4. The README benchmark charts
+    cover v0.1.0 through v2.9.0.
+  - Docs: the debugger reference describes the `--debug` log and the `ld` refusals, and the technical document
+    describes the frame pacing and the C ABI. The Japanese README and technical document are rewritten.
 - **v2.8.4** (2026-10-28): A SingleStepTests runner for the Z80 core.
   - The new `tools/run_singlestep_tests.py` runs the [SingleStepTests/z80](https://github.com/SingleStepTests/z80)
     cases (1000 single-instruction cases for each of 1604 opcodes) on the bare CPU core. It compares the registers,

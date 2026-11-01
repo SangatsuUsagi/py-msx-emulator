@@ -6,10 +6,10 @@ from typing import Any
 
 import pytest
 
+from msx.boundary import VideoStandard
 from msx.fmpac import FmPac
 from msx.machine import Machine
 from msx.opll import Opll
-from msx.vdp._geometry import VideoStandard
 from tests.factories import make_machine
 
 _NOP_ROM = bytes(32768)

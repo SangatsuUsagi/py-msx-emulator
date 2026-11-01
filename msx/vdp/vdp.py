@@ -2,14 +2,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Callable, ClassVar, Protocol
+from typing import TYPE_CHECKING, ClassVar, Protocol
 
+from msx.boundary import (
+    OUTPUT_HEIGHT,
+    TRACE_DEBUG,
+    TRACE_EVENT_VDP_MODE_REG,
+    TRACE_EVENT_VDP_PORT99,
+    TRACE_VDP,
+)
+from msx.clock import CoreClock
 from msx.vdp import renderer
-from msx.vdp._geometry import OUTPUT_H, ZERO_BYTE
+from msx.vdp._geometry import ZERO_BYTE
 
 if TYPE_CHECKING:
-    from msx.diagnostics.logger import DebugLogger
-    from msx.vdp.tracer import Tracer
+    from msx.trace import TraceLog
 
 
 class FramebufferFormat(Enum):
@@ -38,15 +45,15 @@ class VdpDevice(Protocol):
     `latch` is read-only here: the V9938's latch is one byte plus two
     pending flags, so it is restored through `V9938.restore_state()`.
 
-    Includes the debug/diagnostic hooks (`tracer`/`_get_pc`/`_get_cycle`/
-    `debug_disable_sprites`) too -- both classes declare these identically
-    (wired at machine-construction time by msx/machine_loader.py, consumed
-    by host/debugger/prompt.py and msx/mapper_tracer.py), so `Machine.vdp`
+    Includes the debug/diagnostic fields (`_trace`/`debug_disable_sprites`)
+    and the clock record (`_clock`, which holds the frame count) too -- both
+    classes declare these identically (the trace buffer and the clock are
+    wired at machine-construction time by msx/machine_loader.py, and
+    Machine.set_sprites_hidden sets debug_disable_sprites), so `Machine.vdp`
     itself is typed as this Protocol rather than the raw `VDP | V9938`
     union.
 
-    Several callers (msx/machine.py, msx/state.py,
-    host/rpc_server.py, host/debugger/prompt.py, msx/machine_loader.py)
+    Core callers (msx/machine.py, msx/state.py, msx/machine_loader.py)
     narrow a `VdpDevice` back to `V9938` via `isinstance(vdp, V9938)` when
     they need MSX2-only state (command engine, 128 KB VRAM, palette,
     `_reg_write_log`). For the Rust/C++ target of that narrowing pattern
@@ -68,9 +75,8 @@ class VdpDevice(Protocol):
     addr: int
     read_buf: int
     irq: bool
-    tracer: Tracer | None
-    _get_pc: Callable[[], int] | None
-    _get_cycle: Callable[[], int] | None
+    _trace: TraceLog | None
+    _clock: CoreClock
     debug_disable_sprites: bool
 
     @property
@@ -105,13 +111,18 @@ def _channel_tables_indexed(lut16: list[bytes]) -> tuple[bytes, bytes, bytes]:
     """Three 256-byte (R, G, B) translate tables for a 16-entry RGB24 LUT.
 
     Table index i maps through (i & 0x0F), folding the 4-bit palette-index mask
-    into the table so bytes.translate needs no separate masking step.
+    into the table so bytes.translate needs no separate masking step: each
+    table is its 16 entries repeated 16 times.
     """
-    return (
-        bytes(lut16[i & 0x0F][0] for i in range(256)),
-        bytes(lut16[i & 0x0F][1] for i in range(256)),
-        bytes(lut16[i & 0x0F][2] for i in range(256)),
-    )
+    r = bytearray(16)
+    g = bytearray(16)
+    b = bytearray(16)
+    for i in range(16):
+        rgb = lut16[i]
+        r[i] = rgb[0]
+        g[i] = rgb[1]
+        b[i] = rgb[2]
+    return (bytes(r) * 16, bytes(g) * 16, bytes(b) * 16)
 
 
 def _translate_rgb24(src: bytearray, channels: tuple[bytes, bytes, bytes]) -> bytes:
@@ -216,10 +227,10 @@ class Rgb24RowCache:
         return rgb
 
     def frame(self, src: bytearray, channels: Channels) -> bytes:
-        """RGB24 bytes of all OUTPUT_H rows of `src` through `channels`. A
-        buffer that is not OUTPUT_H whole rows is converted without the memo."""
-        width = len(src) // OUTPUT_H
-        if width == 0 or width * OUTPUT_H != len(src):
+        """RGB24 bytes of all OUTPUT_HEIGHT rows of `src` through `channels`. A
+        buffer that is not OUTPUT_HEIGHT whole rows is converted without the memo."""
+        width = len(src) // OUTPUT_HEIGHT
+        if width == 0 or width * OUTPUT_HEIGHT != len(src):
             return _translate_rgb24(src, channels)
         rows = self._rows_for(channels)
         parts: list[bytes] = []
@@ -281,26 +292,21 @@ class VDP:
     vram: bytearray = field(default_factory=lambda: bytearray(0x4000))
     regs: list[int] = field(default_factory=lambda: [0] * 8)
     addr: int = 0
-    latch: int | None = None
+    # The control port's first byte, valid while _ctrl_pending is set (as in
+    # the V9938).
+    _first_byte: int = field(default=0, repr=False)
+    _ctrl_pending: bool = field(default=False, repr=False)
     status: int = 0
     read_buf: int = 0
     # Level of the /INT line (F && IE0), cached so Machine can sample it every
     # instruction; kept current by update_irq() -- mirrors V9938.irq.
     irq: bool = False
-    _logger: DebugLogger | None = field(default=None, repr=False)
-    _frame_count: int = field(default=0, init=False, repr=False)
-    # PORT-NOTE: these diagnostic hooks (the tracer object and the
-    #   _get_pc / _get_cycle closures below) are assigned at wiring time.
-    # Rust equivalent: trait objects (Box<dyn Fn>) or feature-flagged fields
-    #   resolved once at construction, not per-call function pointers.
-    # C++ equivalent: std::function members or a virtual interface pointer,
-    #   assigned once at construction.
-    # Kept as-is here because: resolved once at wiring time and called only
-    #   while tracing is enabled (once per control-port write), never on the
-    #   data-port path; the indirection costs nothing when tracing is off.
-    tracer: Tracer | None = field(default=None, repr=False)
-    _get_pc: Callable[[], int] | None = field(default=None, repr=False)
-    _get_cycle: Callable[[], int] | None = field(default=None, repr=False)
+    # The emulated time (msx/clock.py): increment_frame() advances its
+    # frame count. build_machine gives the machine's record.
+    _clock: CoreClock = field(default_factory=CoreClock, repr=False)
+    # The machine's trace buffer (msx/trace.py), wired at build time; port
+    # 0x99 bytes are recorded while TRACE_VDP is on.
+    _trace: TraceLog | None = field(default=None, repr=False)
     debug_disable_sprites: bool = field(default=False, repr=False)
     # Memoised RGB24 rows (see Rgb24RowCache): derived data, not emulated state.
     _rgb_rows: Rgb24RowCache = field(
@@ -326,23 +332,34 @@ class VDP:
 
     def increment_frame(self) -> None:
         """Advance the completed-frame counter. Called once per frame."""
-        self._frame_count += 1
+        self._clock.frame += 1
 
     @property
     def frame_count(self) -> int:
-        """Public accessor for _frame_count -- see VdpDevice's own docstring."""
-        return self._frame_count
+        """The clock record's frame count -- see VdpDevice's own docstring."""
+        return self._clock.frame
 
     @frame_count.setter
     def frame_count(self, value: int) -> None:
-        self._frame_count = value
+        self._clock.frame = value
+
+    @property
+    def latch(self) -> int | None:
+        """Pending control-port first byte, or None: the snapshot's view."""
+        return self._first_byte if self._ctrl_pending else None
+
+    def restore_latch(self, value: int | None) -> None:
+        """Set the control-port latch from the snapshot's view."""
+        self._first_byte = value if value is not None else 0
+        self._ctrl_pending = value is not None
 
     def reset(self) -> None:
         """Restore power-on register/status state (VRAM is retained)."""
         self.regs = [0] * 8
         self.status = 0
         self.addr = 0
-        self.latch = None
+        self._first_byte = 0
+        self._ctrl_pending = False
         self.read_buf = 0
         self.irq = False
 
@@ -394,18 +411,18 @@ class VDP:
             self.addr = (self.addr + 1) & 0x3FFF
             # Any data-port access discards a half-written control pair
             # (openMSX VDP.cc clears registerDataStored here too).
-            self.latch = None
+            self._ctrl_pending = False
         elif port == 0x99:
-            if self.tracer is not None:
-                pc = self._get_pc() if self._get_pc is not None else 0
-                cy = self._get_cycle() if self._get_cycle is not None else 0
-                self.tracer.port99_write(pc, cy, value, frame=self._frame_count)
-            if self.latch is None:
-                self.latch = value
+            trace = self._trace
+            if trace is not None and trace.kinds & TRACE_VDP:
+                trace.record(TRACE_EVENT_VDP_PORT99, value & 0xFF)
+            if not self._ctrl_pending:
+                self._first_byte = value
+                self._ctrl_pending = True
                 self.addr = (self.addr & 0x3F00) | value
             else:
-                low = self.latch
-                self.latch = None
+                low = self._first_byte
+                self._ctrl_pending = False
                 if value & 0x80:
                     # Register write: second byte = 0x80 | reg_num
                     reg = value & 0x07
@@ -413,8 +430,8 @@ class VDP:
                     self.regs[reg] = stored
                     if reg == 1:
                         self.update_irq()
-                    if self._logger is not None:
-                        self._logger.on_vdp_reg_write(reg, stored, self._frame_count)
+                    if reg <= 1 and trace is not None and trace.kinds & TRACE_DEBUG:
+                        trace.record(TRACE_EVENT_VDP_MODE_REG, reg, stored)
                     self.addr = ((value << 8) | (self.addr & 0xFF)) & 0x3FFF
                 else:
                     # VRAM address setup
@@ -436,7 +453,7 @@ class VDP:
             result = self.read_buf
             self.read_buf = self.vram[self.addr]
             self.addr = (self.addr + 1) & 0x3FFF
-            self.latch = None
+            self._ctrl_pending = False
             return result
         if port == 0x99:
             # Bits 4:0 (5th-sprite index) read as 0x1F (31) when 5S (bit 6)
@@ -466,7 +483,7 @@ class VDP:
             # cleared when the status register is read).
             self.status &= 0x1F
             self.update_irq()     # F is now clear, so the /INT line drops
-            self.latch = None     # reading status resets the address latch
+            self._ctrl_pending = False     # reading status resets the address latch
             return result & 0xFF
         return 0xFF
 
