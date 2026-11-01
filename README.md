@@ -928,6 +928,7 @@ button and key-name labels.
 | Key | Action |
 | --- | --- |
 | Ctrl + Q | Quit |
+| Ctrl + C | Open the debugger REPL (see [`docs/debugger.md`](docs/debugger.md)). The REPL runs in the terminal that started the emulator |
 | F6 | Mount the next disk image of the `--fdd1` list in drive A (wraps to the first). No effect on machines without an FDC |
 | Shift + F6 | Eject the drive A disk, or insert the current list image again |
 | F7 (hold) | Fast-forward: run without the speed limit while you hold the key |
