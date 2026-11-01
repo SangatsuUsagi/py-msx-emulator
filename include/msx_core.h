@@ -48,12 +48,16 @@ extern "C" {
 #define MSX_STATUS_BAD_CONFIG 4
 #define MSX_STATUS_NO_MEDIUM 5
 #define MSX_STATUS_BAD_ARGUMENT 6
+#define MSX_STATUS_NO_PRINTER_PORT 7
 
 /* -- Stop reasons (msx_stop_info.reason, msx_frame_output.stop_reason) ---- */
 #define MSX_STOP_NONE 0
 #define MSX_STOP_BREAKPOINT 1
 #define MSX_STOP_WATCHPOINT 2
 #define MSX_STOP_REQUESTED 3
+
+/* -- Printer ---------------------------------------------------------------- */
+#define MSX_PRINTER_BUFFER_SIZE 4096
 
 /* -- Break settings ------------------------------------------------------- */
 #define MSX_MAX_BREAKPOINTS 4
@@ -347,6 +351,11 @@ msx_bytes msx_core_last_error_text(msx_core *core);
 /* Once, before the first step_frame and the first load_state; port 0 = Joy1,
  * 1 = Joy2. There is no detach. */
 int32_t msx_core_attach_mouse(msx_core *core, int32_t port);
+/* At any time and any number of times; MSX_STATUS_NO_PRINTER_PORT on a machine
+ * with no port. There is no detach, and the saved state does not carry it. */
+int32_t msx_core_attach_printer(msx_core *core);
+/* The strobed bytes in order; empty when none. Empties the core's buffer. */
+msx_bytes msx_core_drain_printer(msx_core *core);
 
 /* -- Break settings ----------------------------------------------------------- */
 

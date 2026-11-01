@@ -16,6 +16,7 @@ from msx.boundary import (
     STATUS_BAD_IMAGE,
     STATUS_NO_DRIVE,
     STATUS_NO_MEDIUM,
+    STATUS_NO_PRINTER_PORT,
     STATUS_OK,
     STATUS_STATE_REJECTED,
     STOP_BREAKPOINT,
@@ -393,6 +394,23 @@ class Machine:
         self.psg.attach_mouse(MouseDevice(), JoystickPort(port))
         self._error_text = b""
         return STATUS_OK
+
+    def attach_printer(self) -> int:
+        """Connect a printer to the printer port and return STATUS_OK, or
+        STATUS_NO_PRINTER_PORT on a machine with no port. Repeating it changes
+        nothing."""
+        if self.printer is None:
+            return self._fail(STATUS_NO_PRINTER_PORT, "this machine has no printer port")
+        self.printer.attach()
+        self._error_text = b""
+        return STATUS_OK
+
+    def drain_printer(self) -> bytes:
+        """The strobed bytes in order; empties the buffer. b"" when there is
+        no port or no byte waits."""
+        if self.printer is None:
+            return b""
+        return self.printer.drain()
 
     def _enter_break(self, reason: int) -> None:
         """Record a stop (`reason` is a STOP_* value) at the current PC and

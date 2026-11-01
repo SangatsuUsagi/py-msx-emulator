@@ -13,9 +13,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TypedDict
 
+from msx.boundary import PRINTER_BUFFER_SIZE
 from msx.machine_spec import PrinterPortForm
 
-PRINTER_BUFFER_SIZE = 4096
 _BUSY_BIT = 0x02
 
 

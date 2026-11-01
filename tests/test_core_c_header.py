@@ -22,10 +22,10 @@ _EXTRA_FUNCTIONS = {"create", "destroy", "abi_version"}
 
 # The ABI version of the header, and the fingerprint of the declarations it
 # belongs to (machine-c-abi "The ABI version changes with the declarations").
-# A change to the declarations or macro values increases the version by 1 and
-# records the new fingerprint, both in the same change.
+# A change to the declarations or macro values records the new fingerprint.
+# Once a native core implements the header, it also increases the version by 1.
 _ABI_VERSION = 1
-_ABI_FINGERPRINT = "834df8172580cbf2372c1d12b3e04a2b81b09ae3eb230bcfbf467252c783301d"
+_ABI_FINGERPRINT = "6edbeb1131cadc47639e302de10123513e988bab31a3e170fd107954b94f47fe"
 
 
 def _text() -> str:
@@ -87,11 +87,16 @@ def test_every_constant_matches() -> None:
     assert macros == _python_constants()
 
 
+def test_the_version_stays_1_before_a_native_core() -> None:
+    # machine-c-abi "The version stays 1 before a native core".
+    assert _ABI_VERSION == 1
+
+
 def test_a_declaration_change_needs_a_new_version() -> None:
     # machine-c-abi "A declaration change needs a new version".
     assert _fingerprint(_text()) == _ABI_FINGERPRINT, (
-        "the header's declarations changed: increase MSX_CORE_ABI_VERSION by 1 "
-        "and record the new _ABI_VERSION and _ABI_FINGERPRINT"
+        "the header's declarations changed: record the new _ABI_FINGERPRINT, and "
+        "increase MSX_CORE_ABI_VERSION by 1 if a native core implements the header"
     )
     changed = _text().replace("int32_t mouse_dx;", "int16_t mouse_dx;")
     assert changed != _text()

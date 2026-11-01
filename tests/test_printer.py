@@ -9,9 +9,10 @@ import pytest
 
 from host.machine_config import build_machine_from_spec
 from msx import state
+from msx.boundary import PRINTER_BUFFER_SIZE, STATUS_NO_PRINTER_PORT, STATUS_OK
 from msx.machine import Machine
 from msx.machine_spec import PrinterPortForm
-from msx.printer import PRINTER_BUFFER_SIZE, PrinterPort
+from msx.printer import PrinterPort
 from msx.state import StateLoadError
 from tests.factories import _msx1_spec, make_machine
 
@@ -265,3 +266,52 @@ def test_a_value_out_of_range_is_rejected(field: str, value: int) -> None:
 def test_a_machine_with_no_port_saves_null() -> None:
     decoded = json.loads(make_machine(_ROM).save_state())
     assert decoded["printer"] is None
+
+
+# -- core API (machine-core) ----------------------------------------------
+
+
+def _strobe(machine: Machine, value: int) -> None:
+    machine.io.write_port(0x91, value)
+    machine.io.write_port(0x90, 0x00)
+    machine.io.write_port(0x90, 0x01)
+
+
+def test_attach_on_a_machine_with_a_port() -> None:
+    machine = _machine()
+    assert machine.attach_printer() == STATUS_OK
+    assert machine.io.read_port(0x90) == 0xFD
+
+
+def test_a_second_attach_keeps_the_queued_bytes() -> None:
+    machine = _machine()
+    assert machine.attach_printer() == STATUS_OK
+    _strobe(machine, 0x41)
+    assert machine.attach_printer() == STATUS_OK
+    assert machine.drain_printer() == b"\x41"
+
+
+def test_attach_on_a_machine_with_no_port() -> None:
+    machine = _machine(PrinterPortForm.NONE)
+    assert machine.attach_printer() == STATUS_NO_PRINTER_PORT
+    assert machine.last_error_text() != b""
+    assert machine.drain_printer() == b""
+
+
+def test_a_drain_empties_the_buffer() -> None:
+    machine = _machine()
+    machine.attach_printer()
+    _strobe(machine, 0x41)
+    _strobe(machine, 0x42)
+    assert machine.drain_printer() == b"\x41\x42"
+    assert machine.drain_printer() == b""
+
+
+def test_the_full_buffer_through_the_core_api() -> None:
+    machine = _machine()
+    machine.attach_printer()
+    for _ in range(PRINTER_BUFFER_SIZE + 1):
+        _strobe(machine, 0x41)
+    assert machine.io.read_port(0x90) == 0xFF
+    assert machine.drain_printer() == b"\x41" * PRINTER_BUFFER_SIZE
+    assert machine.io.read_port(0x90) == 0xFD
