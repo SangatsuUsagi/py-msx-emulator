@@ -304,7 +304,7 @@ The MSX parallel printer port. The guest writes a byte to the data port, and the
 | `hb_f1xd`, `hb_f1xd_256k`, `fs_a1f` | 0x90-0x97, with mirrors | 0x00 / 0x02 |
 | `cbios_*` | No port | 0xFF |
 
-The status values and the mirrors come from the openMSX machine files. They are not yet verified on real hardware. `extras/HB-10/PRNPORT.BAS` and `extras/HB-F1XD/PRNPORT.BAS` print the values for that check. With no printer attached, the port reads busy.
+The status values and the mirrors come from the openMSX machine files. They are not yet verified on real hardware. With no printer attached, the port reads busy.
 
 - Implementation: `msx/printer.py`, `host/printer_output.py`
 

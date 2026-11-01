@@ -306,7 +306,7 @@ MSX のパラレルプリンタポートです。ゲストがデータポート�
 | `hb_f1xd`、`hb_f1xd_256k`、`fs_a1f` | 0x90〜0x97（ミラーあり） | 0x00 / 0x02 |
 | `cbios_*` | ポートなし | 0xFF |
 
-ステータスの値とミラーは openMSX のマシン定義によるもので、実機ではまだ確認していません。確認用に、値を表示する `extras/HB-10/PRNPORT.BAS` と `extras/HB-F1XD/PRNPORT.BAS` があります。プリンタをつながないと、ポートは BUSY を返します。
+ステータスの値とミラーは openMSX のマシン定義によるもので、実機ではまだ確認していません。プリンタをつながないと、ポートは BUSY を返します。
 
 - 実装：`msx/printer.py`、`host/printer_output.py`
 
