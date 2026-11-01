@@ -424,9 +424,15 @@ open.
 
 **`ld FILE`**: restore the machine state from a `.state` file that you saved
 before. The REPL stays open and does not resume automatically. You can thus
-examine the loaded state, or advance it precisely with `s` or `gf`. If the file
-is missing, or the snapshot has an incompatible `format_version` or machine
-type, `ld` prints an error and does not raise an exception.
+examine the loaded state, or advance it precisely with `s` or `gf`. In these
+cases, `ld` prints an error, does not raise an exception, and changes nothing:
+
+- The file is missing.
+- The snapshot has an incompatible `format_version`.
+- The snapshot comes from a different machine configuration (machine,
+  extensions, cartridge ROMs).
+- A drive does not hold the disk that it held at the save. `ld` does not swap
+  disks, so swap them with `fdd1`/`fdd2` first.
 
 ```
 (msx-dbg cyc=720000 frm=1999) sv before-glitch
@@ -528,10 +534,12 @@ AF=0100  BC=0010  DE=0000  HL=C100  IX=F380  IY=FC40  SP=F3E0  PC=C080
 
 **Deferred renderer.** The CPU runs a full frame, and VDP commands write into
 VRAM instantly. The renderer then runs once per frame, at the start of vertical
-blanking. The emulator does not faithfully reproduce VRAM updates that follow
-the raster within a frame (beam-raced blits, double-buffered title screens).
-This limit comes from the basic architecture, and a renderer fix cannot remove
-it.
+blanking. On the V9938, it draws mid-frame register and palette changes in
+bands, at the line where each change took effect (the TMS9918A applies the
+last register values to the whole frame). VRAM writes have no such record.
+Thus the emulator does not faithfully reproduce VRAM updates that follow the
+raster within a frame (beam-raced blits, double-buffered title screens). This
+limit comes from the basic architecture, and a renderer fix cannot remove it.
 
 **Command timing.** An approximate cycle budget controls the completion of VDP
 commands (S#2 CE bit). There is no cycle-accurate model. Software that
