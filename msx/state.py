@@ -128,7 +128,7 @@ if TYPE_CHECKING:
 #   without a version bump. See
 #   openspec/changes/archive/2026-10-31-fix-review-bugs.
 # Version 22: printer added -- the printer port's data latch and STROBE, None
-#   when the machine has no port. See openspec/changes/add-parallel-port.
+#   when the machine has no port.
 CURRENT_FORMAT_VERSION: int = 22
 
 _SHA256_HEX_LEN = 64

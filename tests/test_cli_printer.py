@@ -4,6 +4,7 @@ The headless runs use the real debugger, which drains after each frame.
 """
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import patch
@@ -13,6 +14,7 @@ import pytest
 from host.debugger.prompt import Debugger
 from msx.boundary import FrameOutput
 from msx.machine import Machine
+from tests.factories import make_machine
 from tests.test_cli_trace_flags import _FRAME_DONE, _run_main
 
 
@@ -44,6 +46,11 @@ def _run(
             machine=machine, real_debugger=True,
         )
     return code, out, err
+
+
+def _not_created(path: Path) -> bool:
+    # _run_main patches Path.exists to True, so ask the operating system.
+    return not os.path.lexists(path)
 
 
 def _contents(path: Path) -> bytes:
@@ -83,13 +90,9 @@ def test_an_error_exit_keeps_the_bytes(tmp_path: Path) -> None:
         _strobe(machine, 0x41)
         raise RuntimeError("forced")
 
-    out = tmp_path / "out.prn"
-    with patch.object(Machine, "step_frame", _frames(fail)), pytest.raises(RuntimeError):
-        _run_main(
-            ["--count-frame", "1", "--printer-log", str(out)],
-            machine="hb_10", real_debugger=True,
-        )
-    assert out.read_bytes() == b"\x41"
+    with pytest.raises(RuntimeError):
+        _run(tmp_path, _frames(fail), 1)
+    assert (tmp_path / "out.prn").read_bytes() == b"\x41"
 
 
 def test_a_machine_with_no_port(tmp_path: Path) -> None:
@@ -99,11 +102,14 @@ def test_a_machine_with_no_port(tmp_path: Path) -> None:
     assert _not_created(out)
 
 
-def _not_created(path: Path) -> bool:
-    # _run_main patches Path.exists to True, so ask the operating system.
-    import os
-
-    return not os.path.lexists(path)
+@pytest.mark.parametrize("is_empty", [True, False], ids=["empty", "directory"])
+def test_a_path_that_cannot_be_opened(tmp_path: Path, is_empty: bool) -> None:
+    path = "" if is_empty else str(tmp_path)
+    code, _stdout, err = _run_main(
+        ["--count-frame", "0", "--printer-log", path], machine="hb_10", real_debugger=True
+    )
+    assert code == 1
+    assert "--printer-log" in err
 
 
 def test_the_benchmark_conflict(tmp_path: Path) -> None:
@@ -132,13 +138,6 @@ def test_the_debugger_step_drains() -> None:
         def drain(self) -> None:
             written.append(1)
 
-    machine = _machine_stub()
-    debugger = Debugger(machine, printer=Output())  # type: ignore[arg-type]
+    debugger = Debugger(make_machine(bytes(0x8000)), printer=Output())  # type: ignore[arg-type]
     debugger._cmd_step([])
     assert written == [1]
-
-
-def _machine_stub() -> Machine:
-    from tests.factories import make_machine
-
-    return make_machine(bytes(0x8000))

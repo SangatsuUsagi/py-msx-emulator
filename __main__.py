@@ -339,7 +339,7 @@ def _print_startup_summary(
     if mouse_port is not None:
         print(f"mouse   : Joy{mouse_port + 1}")
     print(f"mapper  : {display_mapper}")
-    if args.printer_log:
+    if args.printer_log is not None:
         print(f"printer : {args.printer_log}")
     if args.vdp_trace:
         print(f"vdp-trace: {'stdout' if args.vdp_trace_out is None else args.vdp_trace_out}")
@@ -422,7 +422,7 @@ def _cleanup(
     machine: "CoreApi | None", rpc_server: "DebugServer | None", log_file: TextIO | None,
     trace_file: TextIO | None, mapper_trace_file: TextIO | None,
     sram_files: "dict[int, Path]", disk_files: "DiskFiles",
-    printer_output: "PrinterOutput | None" = None,
+    printer_output: "PrinterOutput | None",
 ) -> None:
     """Tear down open resources and flush SRAM / disk writes on exit."""
     if rpc_server is not None:
@@ -514,8 +514,8 @@ def _resolve_effective_options(
 
 def _check(machine: "CoreApi", status: int) -> None:
     """Stop with the core's message when a setup call did not return
-    STATUS_OK (the CLI checks its values first, so this guards a core that
-    disagrees)."""
+    STATUS_OK. The CLI checks most values first, so this mainly guards a core
+    that disagrees. --printer-log on a machine with no port stops here."""
     from msx.boundary import STATUS_OK
 
     if status != STATUS_OK:
@@ -773,8 +773,8 @@ def main() -> None:
         if result.machine is None:
             _fail(result.error_text.decode("utf-8"))
         machine = result.machine
-        if args.printer_log:
-            printer_output = _open_printer_output(machine, args.printer_log)
+        if args.printer_log is not None:
+            printer_output =_open_printer_output(machine, args.printer_log)
 
         # The interactive debugger for all machines, so Ctrl-C drops into the
         # REPL on MSX1 too (the slot/mapper tools are most useful there). The

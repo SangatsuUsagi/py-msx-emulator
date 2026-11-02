@@ -486,7 +486,7 @@ def test_keyboard_type_override_jp_from_real_config() -> None:
 
 
 # ---------------------------------------------------------------------------
-# ppi_control_read resolution (ppi8255 device default + per-machine override)
+# printer port form resolution
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize(
@@ -529,6 +529,10 @@ def test_an_unknown_printer_port_form_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(MachineLoadError, match="bidi"):
         load_machine_spec("hb_10", config_dir, reg, tmp_path)
 
+
+# ---------------------------------------------------------------------------
+# ppi_control_read resolution (ppi8255 device default + per-machine override)
+# ---------------------------------------------------------------------------
 
 def test_ppi_control_read_defaults_to_control_from_real_config() -> None:
     reg = load_device_registry(Path("config"))

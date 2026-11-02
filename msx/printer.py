@@ -2,8 +2,10 @@
 
 A write to a data port latches a byte. Bit 0 of a write to a status port drives
 STROBE, and its falling edge delivers the latched byte. A read of a status port
-gives the form's unused bits with bit 1 as BUSY. The decode and the unused bits
-are facts from openMSX's MSXPrinterPort and its machine files.
+gives the form's unused bits with bit 1 as BUSY. A read of any other port gives
+0xFF. On an S-1985, port & 3 selects: 0 is status, 1 is data, and 2 and 3 ignore
+writes. The decode and the unused bits are facts from openMSX's MSXPrinterPort
+and its machine files.
 
 Delivered bytes wait in a fixed buffer until the host drains them: the core
 writes no file and calls no host code.
@@ -60,7 +62,7 @@ class PrinterPort:
         if port & self._mask() != 0:
             return 0xFF
         unused = 0x00 if self.form is PrinterPortForm.S1985 else 0xFF
-        if not self._attached or len(self._buffer) >= PRINTER_BUFFER_SIZE:
+        if self._busy():
             return unused | _BUSY_BIT
         return unused & ~_BUSY_BIT & 0xFF
 
@@ -74,8 +76,11 @@ class PrinterPort:
     def _write_strobe(self, strobe: int) -> None:
         falling = self._strobe == 1 and strobe == 0
         self._strobe = strobe
-        if falling and self._attached and len(self._buffer) < PRINTER_BUFFER_SIZE:
+        if falling and not self._busy():
             self._buffer.append(self._data)
+
+    def _busy(self) -> bool:
+        return not self._attached or len(self._buffer) >= PRINTER_BUFFER_SIZE
 
     def snapshot_state(self) -> PrinterState:
         return {"data": self._data, "strobe": self._strobe}

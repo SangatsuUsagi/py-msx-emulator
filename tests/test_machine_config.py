@@ -99,8 +99,8 @@ def test_machine_properties_are_integers() -> None:
     assert machine.keyboard_layout == KeyboardLayout.JAPANESE
 
 
-# The canonical documents' SHA-256, recorded before the video standard and
-# the keyboard layout became integer enums: their text spellings did not change.
+# The canonical documents' SHA-256, recorded at format version 2. The video
+# standard and the keyboard layout stay text in the document.
 _DOCUMENT_SHA256 = {
     "cbios_msx1_eu": "97a27f506f9c319c51fbc8d290c7dd50d844e271b73650a1b35b453831f75e8e",
     "cbios_msx1_jp": "e021757fb173df591afdb11295511ce884ee0859f219789ad24329595cf39910",

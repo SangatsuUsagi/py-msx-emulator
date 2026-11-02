@@ -352,9 +352,12 @@ msx_bytes msx_core_last_error_text(msx_core *core);
  * 1 = Joy2. There is no detach. */
 int32_t msx_core_attach_mouse(msx_core *core, int32_t port);
 /* At any time and any number of times; MSX_STATUS_NO_PRINTER_PORT on a machine
- * with no port. There is no detach, and the saved state does not carry it. */
+ * with no port. There is no detach. The attachment and the bytes waiting (at
+ * most MSX_PRINTER_BUFFER_SIZE) are outside the saved state, and a reset or
+ * msx_core_load_state keeps both. */
 int32_t msx_core_attach_printer(msx_core *core);
-/* The strobed bytes in order; empty when none. Empties the core's buffer. */
+/* The strobed bytes in order; empty when none or on a machine with no port.
+ * Empties the core's buffer. */
 msx_bytes msx_core_drain_printer(msx_core *core);
 
 /* -- Break settings ----------------------------------------------------------- */

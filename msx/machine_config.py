@@ -49,7 +49,7 @@ _T = TypeVar("_T")
 
 # Version 1: the first MachineConfig document (openspec/changes/archive/
 #   2026-10-25-portable-machine-config).
-# Version 2: machine.printer_port added (openspec/changes/add-parallel-port).
+# Version 2: machine.printer_port added.
 MACHINE_CONFIG_FORMAT_VERSION: int = 2
 
 _SHA1_HEX_LEN = 40
@@ -299,10 +299,9 @@ _TOP_KEYS = frozenset({"format_version", "machine", "cartridges", "extensions"})
 _MACHINE_KEYS = frozenset({
     "id", "name", "generation", "video_standard", "m1_wait_states", "keyboard_layout",
     "ppi_control_read", "printer_port", "has_v9938", "has_rtc", "main_rom", "logo_rom",
-    "slot0_ram",
-    "ram_size_kb", "sub_rom", "sub_rom_subslot", "has_ram_mapper", "ram_mapper_size_kb",
-    "flat_ram_subslot", "flat_ram_size_kb", "fdc", "fdc_subslot", "io_device",
-    "device_io_ports",
+    "slot0_ram", "ram_size_kb", "sub_rom", "sub_rom_subslot", "has_ram_mapper",
+    "ram_mapper_size_kb", "flat_ram_subslot", "flat_ram_size_kb", "fdc", "fdc_subslot",
+    "io_device", "device_io_ports",
 })
 _ROM_KEYS = frozenset({"name", "size", "sha1", "pages"})
 _SLOT0_RAM_KEYS = frozenset({"size_kb", "page"})

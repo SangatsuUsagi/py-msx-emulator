@@ -235,7 +235,7 @@ def test_the_host_releases_the_machine_after_the_media(monkeypatch) -> None:
     calls: list[str] = []
     monkeypatch.setattr(host.media, "persist_dirty_media", lambda *_a: calls.append("media"))
     monkeypatch.setattr(msx.machine_loader, "release_machine", lambda _m: calls.append("release"))
-    module._cleanup(object(), None, None, None, None, {}, DiskFiles())
+    module._cleanup(object(), None, None, None, None, {}, DiskFiles(), None)
     assert calls == ["media", "release"]
 
 

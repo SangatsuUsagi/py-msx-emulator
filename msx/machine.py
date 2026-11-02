@@ -216,9 +216,10 @@ class Machine:
         """Full power-on reset: CPU, PSG, SCC (if present), FM-PAC (if
         present), VDP, FDC (if present), Kanji ROM (if present), PPI (if
         present), the printer port (if present), the primary/secondary slot
-        registers, the RAM mapper (if present, in either its slot-3 or its expanded-slot-2-sub-slot
-        placement), and every `Mapper` -- `memory.mapper1`, `memory.mapper2`,
-        and every non-`None` entry of an expanded slot's per-sub-slot array
+        registers, the RAM mapper (if present, in either its slot-3 or its
+        expanded-slot-2-sub-slot placement), and every `Mapper` --
+        `memory.mapper1`, `memory.mapper2`, and every non-`None` entry of an
+        expanded slot's per-sub-slot array
         (this also covers a present Halnote cartridge, which only ever lives
         in one of those sub-slot entries). Memory/VRAM contents are retained.
 
