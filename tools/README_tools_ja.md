@@ -10,6 +10,7 @@
 | [`dskdd.py`](#dskddpy) | `.dsk` イメージと物理USBフロッピードライブ間で生セクタをコピー(Linux専用) |
 | [`run_z80_exercisers.py`](#run_z80_exerciserspy) | Z80 の命令テスト(zexdoc、zexall、z80test)を CPU コア単体で実行 |
 | [`run_singlestep_tests.py`](#run_singlestep_testspy) | SingleStepTests/z80 の 1 命令ごとのテストを CPU コア単体で実行 |
+| [`golden_state.py`](#golden_statepy) | コア全体の決まった実行(ゴールデンケース)を動かし、そのハッシュを記録または照合 |
 | [リモート制御（Socket RPC & MCP）](#リモート制御socket-rpc--mcp) | `rpc_client.py` と `mcp_server.py` が使うソケットRPC + MCP制御層の概要 |
 | [`rpc_client.py`](#rpc_clientpy) | 手動テスト用、エミュレータのソケットRPCサーバーへの薄いCLIクライアント |
 | [`mcp_server.py`](#mcp_serverpy) | ソケットRPC APIをラップするMCPサーバー。Claude Codeから起動中のエミュレータを操作できる |
@@ -150,6 +151,35 @@ venvs/pypy-msx-emulator/bin/python tools/run_singlestep_tests.py \
 
 テストは実機ではなく、エミュレータのコアから作られています。コアを他の言語に
 移植したときも、同じファイルと同じ食い違いの一覧で確かめられます。
+
+## `golden_state.py`
+
+コア全体の決まった実行(ケース)を動かし、結果のハッシュを
+`tests/vectors/golden_state.json` と比べます。ケースは、機種、スロット 1 の
+カートリッジ(なくてもよい)、入力の手順、確認点のフレームを持ちます。確認点ごとに、
+保存状態の部分(`cpu`、`memory`、`vdp`、`psg` など)ごとの SHA-256、そのフレームまでの
+音声の SHA-256、そのフレームの映像の SHA-256 を記録しています。一致しないときは、
+ケース、フレーム、部分を示します。
+
+```bash
+venvs/py-msx-emulator/bin/python tools/golden_state.py           # 照合
+venvs/py-msx-emulator/bin/python tools/golden_state.py --write   # 記録
+```
+
+意図して動作を変えたときは、`--write` で記録し直し、新しいファイルをコミットします。
+テストスイートでは `tests/test_golden_state.py` が同じ照合をします。
+
+ROM はこのリポジトリに含めていません。ROM がないケースや、SHA-256 が違うケースは、
+パスを示してスキップします。次のファイルを置いてください。
+
+| パス | 入手元 | SHA-256 |
+| --- | --- | --- |
+| `roms/cbios/` | [C-BIOS](https://cbios.sourceforge.net/)。C-BIOS の機種を使うときと同じ | (照合しない) |
+| `roms/homebrew/noborunoca.rom` | [NOBORUNOCA v1.0.2](https://github.com/h1romas4/noborunoca/releases/tag/v1.0.2) の `noborunoca.rom`(MIT) | `57a3be2fe5c3190daa3e69cf23cd262cdc8af98c60993ea941d43c815cbb25f6` |
+| `roms/homebrew/uno-msx2.rom` | [commodore-uno v1.0.10](https://github.com/jhonnaker1/commodore-uno/releases/tag/v1.0.10) の `uno-msx2.rom`(MIT) | `74d74d8720e623a7b8aadce8e0b0c9094f8a2162339a8e7c677c7732f673ddb8` |
+
+ハッシュが記録しているのは、このコアの動作で、実機の動作ではありません。動作の
+変化を検出でき、コアを移植したときも、同じケースを動かして Python のコアと比べられます。
 
 ## リモート制御（Socket RPC & MCP）
 
