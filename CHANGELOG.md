@@ -2,6 +2,25 @@
 
 [日本語版はこちら](CHANGELOG_ja.md)
 
+- **v2.9.1** (2026-11-02): The MSX printer port, ABI version 1.1, and save-state format 22.
+  - The printer port is emulated on the HB-10 (ports 0x90-0x91) and on the S-1985 machines, HB-F1XD and FS-A1F
+    (ports 0x90-0x97). The C-BIOS machines have no port. The status values and the mirrors come from the openMSX
+    machine files and are not yet verified on real hardware. There is no printer emulation.
+  - `--printer-log FILE` attaches a printer and writes the bytes the guest prints to FILE, unchanged. A machine with
+    no port, or a path that cannot be opened, stops with an error. It cannot be used with `--benchmark`.
+  - Core API: `attach_printer()` and `drain_printer()` pass the printed bytes to the host through a 4096-byte buffer,
+    with no callback.
+  - The ABI version has a major and a minor part. An added function or constant raises the minor version, and a
+    changed or removed declaration raises the major version. The header is 1.1: the printer port is the first minor
+    increase. `tests/msx_core_abi_baseline.txt` records each declaration and macro value.
+  - The MachineConfig document is format 2, with `machine.printer_port`. The parser also reads format 1, which has
+    no printer port.
+  - A value from the core that the host does not know shows as its number. The `sl` content column shows
+    `content N`, the VDP commands print `unknown VDP kind N`, and RPC `vdp.get_registers` gives the type `unknown`.
+  - **Breaking:** the save-state format version is 22. It adds the printer port lines. Save states from v2.9.0 and
+    earlier cannot be loaded.
+  - Docs: the README and the technical document describe the printer port, `--printer-log`, the ABI version rule and
+    the MachineConfig formats.
 - **v2.9.0** (2026-11-01): A C-ABI-ready core boundary, and save-state format 21.
   - The host code (debugger, RPC, MCP server, SDL frontend) uses the core only through `CoreApi` in
     `msx/core_api.py`. The boundary uses integers, flat buffers and integer status codes, and the core makes no
