@@ -12,10 +12,12 @@ from msx import state
 from msx.boundary import PRINTER_BUFFER_SIZE, STATUS_NO_PRINTER_PORT, STATUS_OK
 from msx.io import IOBus
 from msx.machine import Machine
+from msx.machine_loader import build_machine
 from msx.machine_spec import PrinterPortForm
 from msx.printer import PrinterPort
 from msx.state import StateLoadError
 from tests.factories import _msx1_spec
+from tests.test_machine_config import format_1_config
 
 _ROM = bytes(0x8000)
 
@@ -305,3 +307,9 @@ def test_the_full_buffer_through_the_core_api() -> None:
     assert machine.io.read_port(0x90) == 0xFF
     assert machine.drain_printer() == b"\x41" * PRINTER_BUFFER_SIZE
     assert machine.io.read_port(0x90) == 0xFD
+
+
+def test_attach_on_a_format_1_document() -> None:
+    # machine-loader "A format 1 document has no printer port".
+    machine = build_machine(format_1_config())
+    assert machine.attach_printer() == STATUS_NO_PRINTER_PORT

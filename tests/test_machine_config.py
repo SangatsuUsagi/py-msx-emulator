@@ -287,6 +287,53 @@ def test_every_machine_round_trips_through_its_document(
 # machine-loader "build_machine checks the document and its ROM images"
 # ---------------------------------------------------------------------------
 
+def format_1_config(machine_id: str = "hb_10", keep_printer_port: bool = False):
+    """A machine's config with its document written as format version 1."""
+    spec = _spec(machine_id)
+    config = load_machine_config(spec, **_overrides(spec)).config
+    document = json.loads(config.document)
+    document["format_version"] = 1
+    if not keep_printer_port:
+        del document["machine"]["printer_port"]
+    config.document = json.dumps(document).encode("utf-8")
+    return config
+
+
+def test_a_format_1_document_has_no_printer_port() -> None:
+    # machine-loader "A format 1 document has no printer port".
+    machine = build_machine(format_1_config())
+    assert machine.printer is None
+
+
+def test_a_format_1_document_with_printer_port_is_rejected() -> None:
+    # machine-loader "A format 1 document with printer_port is rejected".
+    with pytest.raises(MachineLoadError, match="printer_port"):
+        build_machine(format_1_config(keep_printer_port=True))
+
+
+@pytest.mark.parametrize("version", [0, 3])
+def test_an_unsupported_format_version_is_rejected(version: int) -> None:
+    # machine-loader "An unsupported format version is rejected".
+    config = format_1_config()
+    document = json.loads(config.document)
+    document["format_version"] = version
+    config.document = json.dumps(document).encode("utf-8")
+    with pytest.raises(MachineLoadError, match=f"format_version {version} "):
+        build_machine(config)
+
+
+@pytest.mark.parametrize(("version", "message"), [(3, "version 3, expected 1 to 2"),
+                                                  (1, "not valid JSON")])
+def test_a_document_that_is_not_strict_json_names_an_unsupported_version(
+    version: int, message: str
+) -> None:
+    config = format_1_config()
+    config.document = config.document.replace(
+        b'"format_version": 1', f'"format_version": {version}, "x": 1.5'.encode()
+    )
+    with pytest.raises(MachineLoadError, match=message):
+        build_machine(config)
+
 def _hb_f1xd_config(tmp_path: Path):
     spec = _spec("hb_f1xd")
     return load_machine_config(spec, **_overrides(spec)).config

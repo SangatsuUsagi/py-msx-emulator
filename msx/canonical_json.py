@@ -84,11 +84,12 @@ def decode_strict(data: bytes) -> object:
     )
 
 
-def mismatched_version(data: bytes, expected: int) -> str | None:
+def mismatched_version(data: bytes, expected: int, oldest: int | None = None) -> str | None:
     """For data that strict decoding rejected: if it is ordinary JSON (an
     older format may hold floats) whose `format_version` is not `expected`,
-    return that version as text, so the caller reports the version mismatch
-    rather than the strict-decoding error; otherwise None."""
+    or not in [`oldest`, `expected`] when `oldest` is given, return that
+    version as text, so the caller reports the version mismatch rather than
+    the strict-decoding error; otherwise None."""
     try:
         lenient = json.loads(data.decode("utf-8"))
     except ValueError:
@@ -97,5 +98,8 @@ def mismatched_version(data: bytes, expected: int) -> str | None:
         return None
     version = lenient.get("format_version")
     if version == expected:
+        return None
+    if (oldest is not None and type(version) is int
+            and oldest <= version <= expected):
         return None
     return str(version)
