@@ -29,6 +29,7 @@ from msx.machine_spec import (
     MachineLoadError,
     MachineSpec,
     PpiControlRead,
+    PrinterPortForm,
     RomEntry,
     Slot0RamEntry,
 )
@@ -48,7 +49,13 @@ _T = TypeVar("_T")
 
 # Version 1: the first MachineConfig document (openspec/changes/archive/
 #   2026-10-25-portable-machine-config).
-MACHINE_CONFIG_FORMAT_VERSION: int = 1
+# Version 2: machine.printer_port added.
+MACHINE_CONFIG_FORMAT_VERSION: int = 2
+# The oldest version the parser accepts (machine-loader "build_machine checks
+# the document and its ROM images"). A key that a later version adds has a
+# default for an older document: version 1 has no printer_port, so its form
+# is none.
+MACHINE_CONFIG_MIN_FORMAT_VERSION: int = 1
 
 _SHA1_HEX_LEN = 40
 
@@ -228,6 +235,7 @@ def _machine_object(
         "m1_wait_states": spec.m1_wait_states,
         "keyboard_layout": spec.keyboard_type.spelling,
         "ppi_control_read": spec.ppi_control_read.value,
+        "printer_port": spec.printer_port.value,
         "has_v9938": spec.has_v9938,
         "has_rtc": spec.has_rtc,
         "main_rom": main_ref,
@@ -295,10 +303,10 @@ def encode_machine_config(
 _TOP_KEYS = frozenset({"format_version", "machine", "cartridges", "extensions"})
 _MACHINE_KEYS = frozenset({
     "id", "name", "generation", "video_standard", "m1_wait_states", "keyboard_layout",
-    "ppi_control_read", "has_v9938", "has_rtc", "main_rom", "logo_rom", "slot0_ram",
-    "ram_size_kb", "sub_rom", "sub_rom_subslot", "has_ram_mapper", "ram_mapper_size_kb",
-    "flat_ram_subslot", "flat_ram_size_kb", "fdc", "fdc_subslot", "io_device",
-    "device_io_ports",
+    "ppi_control_read", "printer_port", "has_v9938", "has_rtc", "main_rom", "logo_rom",
+    "slot0_ram", "ram_size_kb", "sub_rom", "sub_rom_subslot", "has_ram_mapper",
+    "ram_mapper_size_kb", "flat_ram_subslot", "flat_ram_size_kb", "fdc", "fdc_subslot",
+    "io_device", "device_io_ports",
 })
 _ROM_KEYS = frozenset({"name", "size", "sha1", "pages"})
 _SLOT0_RAM_KEYS = frozenset({"size_kb", "page"})
@@ -398,8 +406,18 @@ def _optional_io_device(
     return _device(value, label, role, roms, IO_DEVICES, IO_DEVICES_REQUIRING_ROM)
 
 
-def _parse_machine(value: object, roms: dict[str, RomRef]) -> MachineSpec:
-    obj = check_object(value, "machine", _MACHINE_KEYS)
+def _printer_port(obj: dict[str, object], label: str) -> PrinterPortForm:
+    if "printer_port" not in obj:  # format version 1
+        return PrinterPortForm.NONE
+    return _enum(
+        obj["printer_port"], f"{label}.printer_port", PrinterPortForm,
+        [form.value for form in PrinterPortForm],
+    )
+
+
+def _parse_machine(value: object, roms: dict[str, RomRef], version: int) -> MachineSpec:
+    keys = _MACHINE_KEYS if version >= 2 else _MACHINE_KEYS - {"printer_port"}
+    obj = check_object(value, "machine", keys)
     label = "machine"
     main = _add_rom(roms, "main", _rom(obj["main_rom"], f"{label}.main_rom"))
     assert main is not None
@@ -466,6 +484,7 @@ def _parse_machine(value: object, roms: dict[str, RomRef]) -> MachineSpec:
             obj["ppi_control_read"], f"{label}.ppi_control_read", PpiControlRead,
             [mode.value for mode in PpiControlRead],
         ),
+        printer_port=_printer_port(obj, label),
         ram_mapper_size_kb=mapper_kb,
         machine_id=check_str(obj["id"], f"{label}.id"),
         device_io_ports=io_ports,
@@ -542,12 +561,14 @@ def _parse_overlay(
 def _parse(decoded: object, config_sha256: str) -> ParsedMachineConfig:
     obj = check_object(decoded, "document", _TOP_KEYS)
     version = obj["format_version"]
-    if version != MACHINE_CONFIG_FORMAT_VERSION:
+    if (type(version) is not int
+            or not MACHINE_CONFIG_MIN_FORMAT_VERSION <= version <= MACHINE_CONFIG_FORMAT_VERSION):
         raise SchemaError(
-            f"format_version {version!r} is not {MACHINE_CONFIG_FORMAT_VERSION}"
+            f"format_version {version!r} is not in "
+            f"[{MACHINE_CONFIG_MIN_FORMAT_VERSION}, {MACHINE_CONFIG_FORMAT_VERSION}]"
         )
     roms: dict[str, RomRef] = {}
-    spec = _parse_machine(obj["machine"], roms)
+    spec = _parse_machine(obj["machine"], roms, version)
     cartridges = check_object(obj["cartridges"], "cartridges", _SLOT_PAIR_KEYS)
     extensions = check_object(obj["extensions"], "extensions", _SLOT_PAIR_KEYS)
     return ParsedMachineConfig(
@@ -567,18 +588,20 @@ def parse_machine_config(document: bytes) -> ParsedMachineConfig:
     key order is accepted; the identity is taken from the canonical form.
 
     Raises:
-        MachineLoadError: For anything malformed, naming the field; for
-            another format version, naming the version.
+        MachineLoadError: For anything malformed, naming the field; for a
+            format version outside 1-2, naming the version.
     """
     try:
         decoded = decode_strict(document)
         canonical = encode_canonical(decoded)
     except ValueError as exc:
-        version = mismatched_version(document, MACHINE_CONFIG_FORMAT_VERSION)
+        version = mismatched_version(
+            document, MACHINE_CONFIG_FORMAT_VERSION, MACHINE_CONFIG_MIN_FORMAT_VERSION
+        )
         if version is not None:
             raise MachineLoadError(
-                f"MachineConfig document: version {version}, "
-                f"expected {MACHINE_CONFIG_FORMAT_VERSION}"
+                f"MachineConfig document: version {version}, expected "
+                f"{MACHINE_CONFIG_MIN_FORMAT_VERSION} to {MACHINE_CONFIG_FORMAT_VERSION}"
             ) from exc
         raise MachineLoadError(f"MachineConfig document is not valid JSON: {exc}") from exc
     try:

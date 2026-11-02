@@ -2,7 +2,7 @@
 
 純粋な Python 3.10+ で書いた、機能的に正確な MSX1/MSX2 エミュレータです。機械可読なコンポーネント仕様に基づいて実装しています。
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-4444%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-4531%20passing-brightgreen)
 
 [English README is here](README.md)
 
@@ -10,7 +10,7 @@
 
 ハードウェアコンポーネントはすべて純粋な Python で書いています。各コンポーネントは実装の前に機械可読な仕様として定義し、その仕様がテストを決めます（[仕様駆動アーキテクチャ](#仕様駆動アーキテクチャ)を参照）。コンポーネントの配線は `build_machine()` に手で書いてあり、リフレクションや依存性注入は使いません。プラットフォーム固有の依存は、画面と音声のフロントエンドに使う pysdl2 だけです。内部構造は [`docs/technical-implementation_ja.md`](docs/technical-implementation_ja.md) で説明しています。
 
-コア（`msx/`）はファイルもホストの時計も読みません。コアの外のコードは、コア API（`msx/core_api.py`）だけを通してマシンを使います。`include/msx_core.h` は、この API を C で表したヘッダで、ABI バージョンは 1 です。このヘッダがあれば、Python のコアを、ほかの言語で書いたコアと置き換えられます。[コアの移植](docs/technical-implementation_ja.md#コアの移植)を参照してください。
+コア（`msx/`）はファイルもホストの時計も読みません。コアの外のコードは、コア API（`msx/core_api.py`）だけを通してマシンを使います。`include/msx_core.h` は、この API を C で表したヘッダで、ABI バージョンは 1.1 です。このヘッダがあれば、Python のコアを、ほかの言語で書いたコアと置き換えられます。[コアの移植](docs/technical-implementation_ja.md#コアの移植)を参照してください。
 
 動かすには BIOS ROM が必要で、リポジトリには含まれません。汎用マシンには無償の [C-BIOS](https://cbios.sourceforge.net/) が使えます。手順は [QUICK_START_ja.md](QUICK_START_ja.md) を参照してください。
 
@@ -296,6 +296,20 @@ ROM の SHA1 からゲームタイトルを引き、マッパーを自動で選�
 
 - 実装：`msx/io.py`
 
+### プリンタポート
+
+MSX のパラレルプリンタポートです。ゲストがデータポートにバイトを書き、ステータスポートの STROBE を立ち下げると、そのバイトを送ります。`--printer-log FILE` を指定すると、送られたバイトをそのまま FILE に書きます。プリンタ本体はエミュレートしないので、ファイルにはゲストがプリンタへ送った内容がそのまま残ります。
+
+| マシン | ポート | ステータスの読み値（準備完了 / BUSY） |
+| --- | --- | --- |
+| `hb_10`、`hb_10_64k` | 0x90〜0x91 | 0xFD / 0xFF |
+| `hb_f1xd`、`hb_f1xd_256k`、`fs_a1f` | 0x90〜0x97（ミラーあり） | 0x00 / 0x02 |
+| `cbios_*` | ポートなし | 0xFF |
+
+ステータスの値とミラーは openMSX のマシン定義によるもので、実機ではまだ確認していません。プリンタをつながないと、ポートは BUSY を返します。
+
+- 実装：`msx/printer.py`、`host/printer_output.py`
+
 ### キーボード / ジョイスティック入力
 
 | 項目 | 詳細 |
@@ -335,9 +349,9 @@ ROM の SHA1 からゲームタイトルを引き、マッパーを自動で選�
 
 ### ステートセーブ/ロード
 
-ハードウェアの状態をまるごと標準ライブラリの JSON に保存します。保存する状態は次のとおりです：CPU、RAM、VDP、PSG、PPI のラッチ、SCC、FM-PAC/OPLL、マッパーのバンク、FDC のレジスタと処理段階、RTC、マウス、マウント中のディスクの識別情報。
+ハードウェアの状態をまるごと標準ライブラリの JSON に保存します。保存する状態は次のとおりです：CPU、RAM、VDP、PSG、PPI のラッチ、SCC、FM-PAC/OPLL、マッパーのバンク、FDC のレジスタと処理段階、RTC、マウス、プリンタポートの信号線、マウント中のディスクの識別情報。
 
-ファイルは正規化した JSON（RFC 8785）で、同じマシンの状態からは、ほかの実装が書いても常に同じバイト列になります。数値は整数だけで、RAM や VRAM などのバイト列は base64 の文字列で持ちます。構成は [`msx/snapshot.schema.json`](msx/snapshot.schema.json)（JSON Schema）が定めます。形式のバージョンは 21 で、それより前のバージョンのステートは読み込めません。ステートには、保存したときのマシン構成も記録します（[マシン設定](#マシン設定)を参照）。ステートを読み込めるのは、マシン、拡張、カートリッジ ROM が同じときだけです。
+ファイルは正規化した JSON（RFC 8785）で、同じマシンの状態からは、ほかの実装が書いても常に同じバイト列になります。数値は整数だけで、RAM や VRAM などのバイト列は base64 の文字列で持ちます。構成は [`msx/snapshot.schema.json`](msx/snapshot.schema.json)（JSON Schema）が定めます。形式のバージョンは 22 で、それより前のバージョンのステートは読み込めません。ステートには、保存したときのマシン構成も記録します（[マシン設定](#マシン設定)を参照）。ステートを読み込めるのは、マシン、拡張、カートリッジ ROM が同じときだけです。
 
 セーブのたびに PNG のスクリーンショットも保存し、すぐ再開できるよう `saves/states/latest.*` のシンボリックリンクを更新します。マウント中の `.dsk` はパス、サイズ、SHA1 で記録します。ロード時にディスクが一致しなければ、そのまま続けずにエラーにします。
 
@@ -489,6 +503,9 @@ python . path/to/game.rom --extension1 fmpac --extension2 hbi_j1
 # ホストのマウスで駆動する MSX マウスを Joy2（デフォルトポート）に接続
 python . path/to/game.rom --mouse
 
+# プログラムが印字する内容をファイルに書き出す（プリンタポートのあるマシン）
+python . --machine hb_f1xd --printer-log out.prn
+
 # MSX マウスを Joy1 に接続
 python . path/to/game.rom --mouse=1
 
@@ -531,6 +548,7 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--fdd2 DSK` | _（なし）_ | ドライブが 2 台あるマシンで、ドライブ B にマウントするフロッピーの `*.dsk` イメージ。同梱のマシンはどれもドライブが 1 台なので、エミュレータは警告を出して `--fdd2` を無視します |
 | `--resume [FILE]` | _（なし）_ | `saves/states/latest.state`（引数なし）か、指定した `.state` ファイルから再開します。保存時と同じディスクをマウントしておきます（`--fdd1` の先頭は、保存時にドライブ A に入っていたイメージにする） |
 | `--mouse [1\|2]` | _（なし）_ | MSX マウスをジョイスティックポートにつなぎます（引数なしは Joy2）。`py_emulator.yaml` の `mouse` 設定より優先します。ヘッドレス実行（`--count-frame`、`--benchmark`）でもつなぐので、マウス付きで保存したステートをそこで再開できます |
+| `--printer-log FILE` | _（なし）_ | プリンタポートにプリンタをつなぎ、受け取った生のバイトを FILE に書きます（作成するか切り詰めます）。ポートのないマシンではエラーで止まります。`--benchmark` とは同時に使えません |
 | `--frame-skip MODE` | `auto` | フレームスキップ。`auto` は遅れたフレームの VDP 描画を省きます。`none` は無効にします |
 | `--debug` | オフ | 構造化診断ログを stderr に出力 |
 | `--log FILE` | _（なし）_ | 診断ログをファイルに書き出します（`--debug` が必要） |
@@ -784,7 +802,7 @@ builtin_devices:
 | `slots.primary.N` | プライマリスロット N：`{type: cartridge}`、`{type: ram, ...}`、またはインライン ROM `content` |
 | `slots.primary.N.expanded` | `true` で 4 つのセカンダリスロットに拡張 |
 | `builtin_devices` | スロット非経由で直接配線するデバイス：VDP、PSG、PPI、RTC、RAM マッパー |
-| `overrides` | マシンごとのデバイス設定。ローダーが読むのは `ppi8255` の `keyboard_type` と `control_read` だけ。ほかのキーは受け付けて無視します（例：V9938 の `vram_kb: 128`） |
+| `overrides` | マシンごとのデバイス設定。ローダーが読むのは `ppi8255` の `keyboard_type` と `control_read`、`printer_port` の `form` だけ。ほかのキーは受け付けて無視します（例：V9938 の `vram_kb: 128`） |
 | `sha1` | 説明用のみ。ダンプの想定 SHA1 を書きます。値が `null` でもハッシュでも、ローダーはファイルと照合しません。コアが照合するのは、エミュレータが読み込んだバイト列から計算した SHA1 |
 
 独自のマシン定義を使うには、`config/machines/` に新しい YAML ファイルを置き、その `id` を `--machine` に渡します。デバイス YAML で `implemented: false` になっている項目は、読み込み時に警告を出して飛ばします。
@@ -793,7 +811,7 @@ builtin_devices:
 
 ## テストの実行
 
-テストスイートは 4444 個のテストで、主なコンポーネントをすべて扱います。個々のオペコードやハードウェアレジスタのユニットテスト、複数のコンポーネントをつないだ統合テスト、仕様のシナリオをそのまま条件にしたテストがあります。
+テストスイートは 4531 個のテストで、主なコンポーネントをすべて扱います。個々のオペコードやハードウェアレジスタのユニットテスト、複数のコンポーネントをつないだ統合テスト、仕様のシナリオをそのまま条件にしたテストがあります。
 
 ```bash
 # 開発用依存関係（pytest、ruff、mypy）をインストール
@@ -828,6 +846,7 @@ py-msx-emulator/
 │   ├── app_config.py      # py_emulator.yaml の起動時デフォルト値
 │   ├── media.py           # SRAM とディスクイメージのファイル（変更の保存、ディスク交換）
 │   ├── input_state.py     # 入力の組み立て：キーボード/ゲームパッド/マウス/RPC → フレームごとの InputFrame
+│   ├── printer_output.py  # --printer-log：印字するバイトをファイルに書く
 │   ├── state_files.py     # ステートセーブのファイル（ファイル名、PNG、latest.* リンク）
 │   ├── screenshot.py      # RGB24→PNG 書き出し（スクリーンショット + ステート画像）
 │   ├── rpc_server.py      # Unix ソケット JSON-RPC 制御サーバ（--rpc）
@@ -864,6 +883,7 @@ py-msx-emulator/
 │   ├── fmpac.py           # FM-PAC カートリッジ（バンク ROM、SRAM、OPLL ルーティング）
 │   ├── opll.py            # YM2413（OPLL）FM 音源チップ
 │   ├── ppi.py             # i8255 PPI（スロットレジスタ、キーボード、キークリック）
+│   ├── printer.py         # パラレルプリンタポート
 │   ├── io.py              # I/O バス（ポートディスパッチ）
 │   ├── input.py           # フレームごとの入力値（InputFrame）+ PPI/PSG が読む入力線
 │   ├── mouse.py           # MSX マウスプロトコル状態機械（pin-8 クロックのニブル転送）
@@ -884,7 +904,7 @@ py-msx-emulator/
 ├── allium/                # Allium の振る舞い仕様。仕様と実装のずれを確かめる（未公開）
 ├── openspec/
 │   └── specs/             # コンポーネントの仕様（未公開）
-├── tests/                 # テストスイート（4444 テスト）
+├── tests/                 # テストスイート（4531 テスト）
 ├── py_emulator.example.yaml # 設定ファイルの記述例（注釈付き）
 ├── QUICK_START_ja.md      # 必要なもの、インストール、BIOS の準備
 ├── CHANGELOG_ja.md        # 更新履歴

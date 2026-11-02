@@ -97,6 +97,7 @@ from msx.machine_spec import (
     MachineLoadError,
     MachineSpec,
     PpiControlRead,
+    PrinterPortForm,
     RomEntry,
     Slot0RamEntry,
 )
@@ -686,6 +687,7 @@ class _BuiltinDevices(NamedTuple):
     has_rtc: bool
     keyboard_type: KeyboardLayout
     ppi_control_read: PpiControlRead
+    printer_port: PrinterPortForm
     io_ports: dict[str, tuple[int, int]]
 
 
@@ -722,6 +724,18 @@ def _parse_ppi8255(
     return KeyboardLayout.from_spelling(kt), PpiControlRead(str(cr))
 
 
+def _parse_printer_port(
+    dev: _DeviceDef, entry: BuiltinDeviceEntryYaml, machine_path: Path
+) -> PrinterPortForm:
+    """The port form of a printer_port entry."""
+    form = _device_option(dev, entry.get("overrides"), "form", PrinterPortForm.PLAIN.value)
+    if form != PrinterPortForm.PLAIN.value and form != PrinterPortForm.S1985.value:
+        raise MachineLoadError(
+            f"{machine_path}: printer_port form must be 'plain' or 's1985', got {form!r}"
+        )
+    return PrinterPortForm(str(form))
+
+
 def _parse_builtin_devices(
     raw: MachineEntryYaml,
     device_registry: dict[str, _DeviceDef],
@@ -732,6 +746,7 @@ def _parse_builtin_devices(
     has_rtc = False
     keyboard_type = KeyboardLayout.INTERNATIONAL
     ppi_control_read = PpiControlRead.CONTROL
+    printer_port = PrinterPortForm.NONE
     device_io_ports: dict[str, tuple[int, int]] = {}
 
     for entry in raw.get("builtin_devices", []):
@@ -758,12 +773,14 @@ def _parse_builtin_devices(
             has_rtc = True
         elif ref_str == "ppi8255":
             keyboard_type, ppi_control_read = _parse_ppi8255(dev, entry, machine_path)
+        elif ref_str == "printer_port":
+            printer_port = _parse_printer_port(dev, entry, machine_path)
         ports_raw: Any = dev.raw.get("io_ports")
         if isinstance(ports_raw, list) and len(ports_raw) >= 1:
             device_io_ports[ref_str] = (int(ports_raw[0]), int(ports_raw[-1]))
 
     return _BuiltinDevices(
-        has_v9938, has_rtc, keyboard_type, ppi_control_read, device_io_ports
+        has_v9938, has_rtc, keyboard_type, ppi_control_read, printer_port, device_io_ports
     )
 
 
@@ -867,7 +884,7 @@ def load_machine_spec(
         ram_size_kb = _parse_slot3_msx1(cast(Slot3Msx1Yaml, slot3))
 
     # --- Builtin device resolution ---
-    has_v9938, has_rtc, keyboard_type, ppi_control_read, device_io_ports = (
+    has_v9938, has_rtc, keyboard_type, ppi_control_read, printer_port, device_io_ports = (
         _parse_builtin_devices(raw, device_registry, machine_path)
     )
 
@@ -898,6 +915,7 @@ def load_machine_spec(
         has_rtc=has_rtc,
         keyboard_type=keyboard_type,
         ppi_control_read=ppi_control_read,
+        printer_port=printer_port,
         device_io_ports=device_io_ports,
         video_standard=video_standard,
         m1_wait_states=m1_wait_states,

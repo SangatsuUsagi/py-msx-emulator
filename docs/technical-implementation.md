@@ -231,6 +231,8 @@ When a `_logger` is attached, the bus logs a read after the handler returns, bec
 | 0x9A      | V9938 palette (MSX2 only)                   |
 | 0xA0-0xA2 | PSG (AY-3-8910)                             |
 | 0x7C-0x7D | FM-PAC OPLL (with `--extensionN fmpac`)     |
+| 0x90-0x91 | Printer port (`hb_10`, `hb_10_64k`)         |
+| 0x90-0x97 | Printer port (S-1985 machines)              |
 | 0xA8-0xAB | PPI (i8255)                                 |
 | 0xB4-0xB5 | RTC (RP5C01, MSX2 only)                     |
 | 0xD8-0xDB | Kanji ROM (`hbi_j1` and similar extensions) |
@@ -458,7 +460,7 @@ Each field in this section matches an explicit `.get()` call in the loader. A ke
 | `implemented` | bool | no (default `true`) | `false` skips the device during `builtin_devices` resolution, with a stderr warning and no hard failure. A device definition can thus land before its emulation |
 | `io_ports` | list of int | no | The first and last elements become the `(start, end)` I/O range of the device. If the key is absent, the loader uses `_DEFAULT_IO_PORTS` |
 
-`_DeviceDef.raw` stores every other key (`name`, `chip`, `controls`, `vram_kb`, `segment_size_kb`, `keyboard_type`, ...), but generic code does _not_ read them. In the whole codebase, only three keys go through `dev.raw.get(...)`: `io_ports` above, and `keyboard_type` and `control_read` below (`ppi8255` only).
+`_DeviceDef.raw` stores every other key (`name`, `chip`, `controls`, `vram_kb`, `segment_size_kb`, `keyboard_type`, ...), but generic code does _not_ read them. In the whole codebase, only four keys go through `dev.raw.get(...)`: `io_ports` above, `keyboard_type` and `control_read` below (`ppi8255` only), and `form` (`printer_port` only).
 
 Nothing reads `vram_kb: 128` in `vdp_v9938.yaml`. The VRAM size of the V9938 is the hardcoded `_VRAM_SIZE = 131072` constant in `msx/vdp/v9938.py`. That key and its per-machine copy `overrides: {vram_kb: 128}` (below) thus document intent but have no effect on the running emulator.
 
@@ -754,6 +756,8 @@ All of them are in `msx/boundary.py` and `msx/input.py`:
 |  | `last_error_text() -> bytes` | The UTF-8 message of the last failed call of a member that returns a status (or an empty value from `read_media`, or -1 values from `slot_info`), `b""` after a successful one. No core API member raises for an invalid argument. `host/state_files.load_state` and `host/media.swap_disk` raise it as `ValueError("<file>: <message>")` |
 |  | `disk_mounted(drive)` | Whether the drive exists and holds an image |
 | Devices | `attach_mouse(port) -> int` | Connects an MSX mouse to joystick port 1 (`0`) or 2 (`1`). The core makes the mouse device. Another port returns `STATUS_BAD_ARGUMENT` (6). The host calls it at most once, before the first `step_frame` and the first `load_state`: a state saved with a mouse loads only on a machine with one. There is no detach |
+|  | `attach_printer() -> int` | Connects a printer to the printer port, at any time. A machine with no port returns `STATUS_NO_PRINTER_PORT` (7). The saved state does not carry the attachment. There is no detach |
+|  | `drain_printer() -> bytes` | The bytes the guest strobed, in order, and empties the buffer of `PRINTER_BUFFER_SIZE` (4096) bytes. A full buffer reads BUSY, and a byte strobed then is dropped. A reset or a state load keeps the buffer |
 | Inspection | `cpu_registers() -> CpuRegisters` | The register file |
 |  | `read_memory(addr, length) -> bytes` | Reads as the CPU would in the current slot selection, wrapping at 0xFFFF. It triggers no watchpoint. A memory-mapped device register reads with its side effects. A length outside 0-0x10000 gives `b""` and sets `last_error_text()` |
 |  | `vram_size()`, `read_vram(addr, length) -> bytes` | 0x4000 or 0x20000. The read wraps at the VRAM size by the low address bits, so a negative address wraps to the end. A length outside 0 to the VRAM size gives `b""` and sets `last_error_text()` |
@@ -783,12 +787,12 @@ The other members do not cross the boundary, and a port does not need them to ru
 The machine definition reaches the core in two layers:
 
 1. **Authored YAML** (`config/machines`, `config/devices`, `config/extensions`). It keeps its comments about the hardware, and only the host reads it (see [Machine and extension YAML schema](#machine-and-extension-yaml-schema)).
-2. **The MachineConfig document**, which `load_machine_config()` makes from the YAML and the command-line choices. It is RFC 8785 (JCS) canonical JSON: UTF-8, sorted keys, no whitespace, integers only. `format_version` is `1`. It holds the resolved machine, the cartridges per slot with their mapper (never `auto`), and the extension overlays. `msx/machine_config.py` encodes and parses it. `msx/machine_config.schema.json` (JSON Schema draft 2020-12) describes it. The tests read the schema, and the core never does. `tests/vectors/canonical_json.json` lists inputs with their canonical form and its SHA-256, inputs the reader refuses, and base64 blobs, so another implementation of the core can check its own writer and reader.
+2. **The MachineConfig document**, which `load_machine_config()` makes from the YAML and the command-line choices. It is RFC 8785 (JCS) canonical JSON: UTF-8, sorted keys, no whitespace, integers only. `format_version` is `2`. The encoder writes only 2. The parser also reads format 1, which has no `printer_port`, and the form is then `none`. A key that a later format adds has a default for older documents, and it raises the ABI minor version: a core of the same major version keeps reading every older format. It holds the resolved machine, the cartridges per slot with their mapper (never `auto`), and the extension overlays. `msx/machine_config.py` encodes and parses it. `msx/machine_config.schema.json` (JSON Schema draft 2020-12) describes it. The tests read the schema, and the core never does. `tests/vectors/canonical_json.json` lists inputs with their canonical form and its SHA-256, inputs the reader refuses, and base64 blobs, so another implementation of the core can check its own writer and reader.
 
 Every ROM in the document is a reference `{name, size, sha1, pages}`. `name` is a bare file name, used only as a label. `sha1` is the SHA1 of the bytes that the host read. The images travel in `MachineConfig.roms` by that SHA1. The parser is strict. It rejects:
 
 - an unknown or missing key, a wrong type or range, a float, and a duplicate key
-- another `format_version`
+- a `format_version` other than 1 and 2
 - a name outside a closed set (mapper, FDC controller, connection style and their pair, flat-extension device, sub-slot device, I/O device)
 - a device that needs a ROM and has none, and a `ram_mapper` without `size_kb`
 - a ROM image that is absent or whose size or SHA1 differs from its reference
@@ -799,7 +803,7 @@ A port that has no YAML loader can write the document directly. It can also take
 
 ### Snapshots
 
-`save_state()` returns the whole machine state as canonical JSON (format version 21). The layout is `msx/snapshot.schema.json`: one object per component (`cpu`, `memory`, `slots`, `vdp`, `psg`, `ppi`, `scc`, `fdc`, `rtc`, `mouse`), every key always present, and `null` for a part that the machine does not have. Byte arrays are padded RFC 4648 base64 strings, and every integer is within ±(2^53 − 1).
+`save_state()` returns the whole machine state as canonical JSON (format version 22). The layout is `msx/snapshot.schema.json`: one object per component (`cpu`, `memory`, `slots`, `vdp`, `psg`, `ppi`, `scc`, `fdc`, `rtc`, `mouse`, `printer`), every key always present, and `null` for a part that the machine does not have. Byte arrays are padded RFC 4648 base64 strings, and every integer is within ±(2^53 − 1).
 
 - `load_state()` accepts any whitespace and key order. It rejects floats, NaN or Infinity, duplicate keys, and another format version.
 - It checks the identity of the machine first: the machine type, the mapper kinds, the slot wiring, the FDC, and the mounted disks (by size and SHA1, so the same content from another file is the same disk). Then it compares `machine_config_sha256` with the hash of the running machine, which also covers the cartridge ROM bytes. A snapshot thus loads only into a core built from the same MachineConfig document.
@@ -866,7 +870,7 @@ The SDL2 frontend (`frontend/sdl2_frontend.py`) follows the same pattern. Each f
 
 `include/msx_core.h` is the C form of the core API that a native core implements: one `msx_core_<member>` function for each `CoreApi` member, a struct for each boundary record, and every constant with its `msx/boundary.py` value. `tests/test_core_c_header.py` keeps the names and the constants equal to the Python code. The video and audio of a frame output stay valid until the next `step_frame`, `reset` or `load_state`. Other bytes that the core returns stay valid until the next call on the same core. Input is read only during the call, and one core is used from one thread at a time. Each C type is wide enough for every value the core masks, clamps or rejects: the mouse motion is `int32_t` and the frame breakpoint `int64_t`. `msx_core_create` writes its message into a buffer that the caller passes, so the core keeps no global state. The host takes the audio rate and the frame height from `msx/boundary.py` (`AUDIO_SAMPLE_RATE`, `OUTPUT_HEIGHT`). It keeps the MSX key names (`host/key_names.py`) and the cartridge SRAM sizes (`host/machine_config.py`) itself, because no core module uses them.
 
-The header is ABI version 1: `MSX_CORE_ABI_VERSION`, the value that `msx_core_abi_version()` returns. A host compares that value with the `MSX_CORE_ABI_VERSION` it was built with. Any change to the declarations or macro values increases the version by 1. A change to the comments only does not. `tests/test_core_c_header.py` records a fingerprint of the declarations with the version, so a changed declaration fails the test until both are updated.
+The header is ABI version 1.1. `MSX_CORE_ABI_VERSION_MAJOR` and `MSX_CORE_ABI_VERSION_MINOR` hold the two parts, and `msx_core_abi_version()` returns `(major << 16) | minor`. An added function or constant raises the minor version. A changed or removed declaration or macro value raises the major version and resets the minor version to 0. The major version stays 1 until a native core implements the header, so until then such a change only updates the baseline. A change to the comments only changes nothing. A host rejects a core with another major version or a lower minor version than the host was built with. No host loads a native core yet, so no code makes this check. A host keeps working when the core returns a constant value that the host does not know. `tests/msx_core_abi_baseline.txt` records each declaration and macro value with the version. `tests/test_core_c_header.py` fails until the baseline matches the header, and its message names the kind of change.
 
 These are the differences between the Python code and the language-neutral contract in `allium/core-frontend.allium` (its _Status_ comment lists them):
 

@@ -218,3 +218,18 @@ def test_s_advances_the_cycle_count_at_the_prompt() -> None:
         Debugger(m).enter()
     assert prompts[0].startswith(f"(msx-dbg cyc={before} ")
     assert prompts[1].startswith(f"(msx-dbg cyc={before + n} ")
+
+
+def test_an_unknown_stop_reason_is_handled_as_a_break() -> None:
+    # machine-c-abi "A tolerated value keeps the host running".
+    m = MagicMock()
+    m.last_stop.return_value = MagicMock(reason=99)
+    debugger = MagicMock()
+    handle_stop(m, 99, debugger, None)
+    debugger.enter.assert_called_once()
+
+
+def test_an_unknown_watch_access_shows_its_number() -> None:
+    # machine-c-abi "An unknown watch access".
+    stop = MagicMock(watch_access=99, watch_addr=0xC000, watch_value=0x5A, pc=0x4006)
+    assert "[WP] access 99 C000h = 5Ah  PC=4006h" in watch_hit_line(stop)

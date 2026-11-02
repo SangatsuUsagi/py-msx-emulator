@@ -9,12 +9,14 @@ from msx.boundary import (
     BANK_WINDOWS_8K,
     SLOT_CONTENT_CARTRIDGE,
     SLOT_CONTENT_CARTRIDGE_EMPTY,
+    SLOT_CONTENT_EMPTY,
     SLOT_CONTENT_FDC,
     SLOT_CONTENT_MAIN_ROM,
     SLOT_CONTENT_RAM,
     SLOT_CONTENT_RAM_MAPPER,
     SLOT_CONTENT_SUB_ROM,
     WINDOW_OPEN,
+    WINDOW_PAGE,
     WINDOW_SRAM,
     MapperId,
     SlotInfo,
@@ -43,6 +45,7 @@ MAPPER_DISPLAY_NAMES: dict[int, str] = {
 }
 
 _FIXED_CONTENT: dict[int, str] = {
+    SLOT_CONTENT_EMPTY: "empty",
     SLOT_CONTENT_CARTRIDGE_EMPTY: "Cartridge (empty)",
     SLOT_CONTENT_RAM: "RAM",
     SLOT_CONTENT_RAM_MAPPER: "RAM (mapper:standard)",
@@ -65,7 +68,7 @@ def slot_content_text(info: SlotInfo, rom_names: tuple[str, str]) -> str:
         return _rom_text(rom_names[1])
     if content == SLOT_CONTENT_CARTRIDGE:
         return f"Cartridge {MAPPER_DISPLAY_NAMES.get(info.mapper, f'mapper {info.mapper}')}"
-    return _FIXED_CONTENT.get(content, "empty")
+    return _FIXED_CONTENT.get(content, f"content {content}")
 
 
 def _window_16k(kind: int, value: int) -> str:
@@ -73,6 +76,8 @@ def _window_16k(kind: int, value: int) -> str:
         return f"bank SRAM@{value:04X}"
     if kind == WINDOW_OPEN:
         return "bank open"
+    if kind != WINDOW_PAGE:
+        return f"bank kind {kind}"
     start = value * 0x4000
     return f"bank {value} @{start:05X}-{start + 0x3FFF:05X}"
 
@@ -82,6 +87,8 @@ def _window_8k(number: int, kind: int, value: int) -> str:
         return f"w{number}=SRAM@{value:04X}"
     if kind == WINDOW_OPEN:
         return f"w{number}=open"
+    if kind != WINDOW_PAGE:
+        return f"w{number}=kind {kind}"
     return f"w{number}=b{value}@{value * 0x2000:05X}"
 
 

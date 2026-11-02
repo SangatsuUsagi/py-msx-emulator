@@ -15,7 +15,14 @@ from contextlib import contextmanager
 from types import FrameType
 from typing import TYPE_CHECKING, ContextManager
 
-from msx.boundary import STOP_NONE, STOP_REQUESTED, STOP_WATCHPOINT, WATCH_READ, StopInfo
+from msx.boundary import (
+    STOP_NONE,
+    STOP_REQUESTED,
+    STOP_WATCHPOINT,
+    WATCH_READ,
+    WATCH_WRITE,
+    StopInfo,
+)
 
 if TYPE_CHECKING:
     from host.debugger.prompt import Debugger
@@ -25,7 +32,12 @@ if TYPE_CHECKING:
 
 def watch_hit_line(stop: StopInfo) -> str:
     """The debug-monitor "Watchpoint hit message" for a watchpoint stop."""
-    kind = "READ " if stop.watch_access == WATCH_READ else "WRITE"
+    if stop.watch_access == WATCH_READ:
+        kind = "READ "
+    elif stop.watch_access == WATCH_WRITE:
+        kind = "WRITE"
+    else:
+        kind = f"access {stop.watch_access}"
     return (
         f"\n[WP] {kind} {stop.watch_addr:04X}h = {stop.watch_value:02X}h"
         f"  PC={stop.pc:04X}h"

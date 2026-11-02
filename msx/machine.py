@@ -16,6 +16,7 @@ from msx.boundary import (
     STATUS_BAD_IMAGE,
     STATUS_NO_DRIVE,
     STATUS_NO_MEDIUM,
+    STATUS_NO_PRINTER_PORT,
     STATUS_OK,
     STATUS_STATE_REJECTED,
     STOP_BREAKPOINT,
@@ -53,6 +54,7 @@ from msx.mapper import MajutsushiMapper
 from msx.memory import Memory
 from msx.mouse import TRIGGER_A_BIT, TRIGGER_B_BIT, MouseDevice
 from msx.ppi import PPI
+from msx.printer import PrinterPort
 from msx.psg import PSG, JoystickPort
 from msx.scc import SCC
 from msx.snapshot_schema import SnapshotError
@@ -97,6 +99,7 @@ class Machine:
     fmpac: "FmPac | None" = field(default=None, repr=False)
     kanji: KanjiRom | None = field(default=None, repr=False)
     ppi: PPI | None = field(default=None, repr=False)
+    printer: PrinterPort | None = field(default=None, repr=False)
     rtc: "RTC | None" = field(default=None, repr=False)
     input: InputLines = field(default_factory=InputLines)
     # Per-frame audio mix, produced by run_frame() and read with take_audio().
@@ -212,10 +215,11 @@ class Machine:
     def reset(self) -> int:
         """Full power-on reset: CPU, PSG, SCC (if present), FM-PAC (if
         present), VDP, FDC (if present), Kanji ROM (if present), PPI (if
-        present), the primary/secondary slot registers, the RAM mapper (if
-        present, in either its slot-3 or its expanded-slot-2-sub-slot
-        placement), and every `Mapper` -- `memory.mapper1`, `memory.mapper2`,
-        and every non-`None` entry of an expanded slot's per-sub-slot array
+        present), the printer port (if present), the primary/secondary slot
+        registers, the RAM mapper (if present, in either its slot-3 or its
+        expanded-slot-2-sub-slot placement), and every `Mapper` --
+        `memory.mapper1`, `memory.mapper2`, and every non-`None` entry of an
+        expanded slot's per-sub-slot array
         (this also covers a present Halnote cartridge, which only ever lives
         in one of those sub-slot entries). Memory/VRAM contents are retained.
 
@@ -237,6 +241,8 @@ class Machine:
             self.kanji.reset()
         if self.ppi is not None:
             self.ppi.reset()
+        if self.printer is not None:
+            self.printer.reset()
         # Power-on slot state: all pages select slot 0 (matches construction).
         self.memory.set_slot_register(0x00)
         self.memory.set_sub_slot_reg(0x00)
@@ -389,6 +395,23 @@ class Machine:
         self.psg.attach_mouse(MouseDevice(), JoystickPort(port))
         self._error_text = b""
         return STATUS_OK
+
+    def attach_printer(self) -> int:
+        """Connect a printer to the printer port and return STATUS_OK, or
+        STATUS_NO_PRINTER_PORT on a machine with no port. Repeating it changes
+        nothing."""
+        if self.printer is None:
+            return self._fail(STATUS_NO_PRINTER_PORT, "this machine has no printer port")
+        self.printer.attach()
+        self._error_text = b""
+        return STATUS_OK
+
+    def drain_printer(self) -> bytes:
+        """The strobed bytes in order; empties the buffer. b"" when there is
+        no port or no byte waits."""
+        if self.printer is None:
+            return b""
+        return self.printer.drain()
 
     def _enter_break(self, reason: int) -> None:
         """Record a stop (`reason` is a STOP_* value) at the current PC and

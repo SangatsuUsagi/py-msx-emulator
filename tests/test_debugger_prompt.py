@@ -5,6 +5,8 @@ from __future__ import annotations
 import functools
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from host.debugger import prompt as prompt_module
 from host.debugger.prompt import Debugger
 from host.debugger.slots import slot_bank_text
@@ -1421,3 +1423,15 @@ class TestDumpBypassesWatchpoints:
         assert m.last_stop().reason == STOP_NONE
         assert not m._stop_pending
         assert "[WP]" not in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# an unknown VDP kind (machine-c-abi "An unknown VDP kind")
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("command", ["_cmd_reg_vdp", "_cmd_reg_palette", "_cmd_vdp_status"])
+def test_an_unknown_vdp_kind_prints_its_number(command, capsys):
+    machine = MagicMock()
+    machine.vdp_info.return_value = MagicMock(kind=99)
+    getattr(Debugger(machine), command)()
+    assert capsys.readouterr().out == "unknown VDP kind 99\n"

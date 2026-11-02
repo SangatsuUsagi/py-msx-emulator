@@ -24,6 +24,7 @@ from msx.machine_spec import (
     MachineLoadError,
     MachineSpec,
     PpiControlRead,
+    PrinterPortForm,
     RomEntry,
     Slot0RamEntry,
 )
@@ -482,6 +483,51 @@ def test_keyboard_type_override_jp_from_real_config() -> None:
     for mid in ("cbios_msx1_jp", "cbios_msx2_jp"):
         spec = load_machine_spec(mid, Path("config"), reg, Path("."))
         assert spec.keyboard_type is KeyboardLayout.JAPANESE, mid
+
+
+# ---------------------------------------------------------------------------
+# printer port form resolution
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    ("machine_id", "form"),
+    [
+        ("hb_10", PrinterPortForm.PLAIN),
+        ("hb_10_64k", PrinterPortForm.PLAIN),
+        ("hb_f1xd", PrinterPortForm.S1985),
+        ("hb_f1xd_256k", PrinterPortForm.S1985),
+        ("fs_a1f", PrinterPortForm.S1985),
+        ("cbios_msx1", PrinterPortForm.NONE),
+        ("cbios_msx1_br", PrinterPortForm.NONE),
+        ("cbios_msx1_eu", PrinterPortForm.NONE),
+        ("cbios_msx1_jp", PrinterPortForm.NONE),
+        ("cbios_msx2", PrinterPortForm.NONE),
+        ("cbios_msx2_br", PrinterPortForm.NONE),
+        ("cbios_msx2_eu", PrinterPortForm.NONE),
+        ("cbios_msx2_jp", PrinterPortForm.NONE),
+    ],
+)
+def test_a_machine_declares_its_printer_port_form(
+    machine_id: str, form: PrinterPortForm
+) -> None:
+    reg = load_device_registry(Path("config"))
+    spec = load_machine_spec(machine_id, Path("config"), reg, Path("."))
+    assert spec.printer_port is form
+
+
+def test_an_unknown_printer_port_form_is_rejected(tmp_path: Path) -> None:
+    source = Path("config/machines/hb_10.yaml").read_text(encoding="utf-8")
+    config_dir = tmp_path / "config"
+    _write(
+        config_dir / "machines" / "hb_10.yaml",
+        source.replace("overrides: { form: plain }", "overrides: { form: bidi }"),
+    )
+    (config_dir / "devices").mkdir()
+    for path in Path("config/devices").glob("*.yaml"):
+        (config_dir / "devices" / path.name).write_bytes(path.read_bytes())
+    reg = load_device_registry(config_dir)
+    with pytest.raises(MachineLoadError, match="bidi"):
+        load_machine_spec("hb_10", config_dir, reg, tmp_path)
 
 
 # ---------------------------------------------------------------------------

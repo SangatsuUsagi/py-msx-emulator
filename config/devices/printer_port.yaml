@@ -1,0 +1,9 @@
+id: printer_port
+type: io_device
+implemented: true
+name: MSX parallel printer port
+controls: printer_port
+# The port decode: "plain" (0x90-0x91, unused status bits 1) or "s1985"
+# (0x90-0x97 with mirrors, unused status bits 0). Facts from openMSX's machine
+# files. Machines override it. The form sets the ports, so there is no io_ports.
+form: plain

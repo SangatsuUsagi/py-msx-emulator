@@ -154,3 +154,8 @@ def test_vdp_display_line_not_repeated_while_bl_stays_set() -> None:
 def test_hangs_at_different_pcs_are_both_reported() -> None:
     lines = _lines([_ev(TRACE_EVENT_HANG_PC_LOOP, 0x1000), _ev(TRACE_EVENT_HANG_PC_LOOP, 0x2000)])
     assert sum("PC-loop" in ln for ln in lines) == 2
+
+
+def test_an_unknown_event_kind_writes_no_line() -> None:
+    # machine-c-abi "A tolerated value keeps the host running".
+    assert _lines([_ev(99)]) == []

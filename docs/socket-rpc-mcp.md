@@ -142,7 +142,7 @@ The RPC methods share the machine's set with the `--break-point` and `--watch-po
 
 ### VDP
 
-- **`vdp.get_registers`** → `{ type: "V9938"|"TMS9918A", registers }` (`R0`.. as hex).
+- **`vdp.get_registers`** → `{ type: "V9938"|"TMS9918A"|"unknown", registers }` (`R0`.. as hex).
 - **`vdp.get_status`** → `{ status }` (hex byte).
 
 Both methods work in any state.

@@ -142,7 +142,7 @@ RPC のメソッドは、`--break-point`、`--watch-point` オプションや `b
 
 ### VDP
 
-- **`vdp.get_registers`** → `{ type: "V9938"|"TMS9918A", registers }`（`R0`.. を16進で）。
+- **`vdp.get_registers`** → `{ type: "V9938"|"TMS9918A"|"unknown", registers }`（`R0`.. を16進で）。
 - **`vdp.get_status`** → `{ status }`（16進バイト）。
 
 どちらもどの状態でも動作します。

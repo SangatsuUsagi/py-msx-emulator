@@ -25,6 +25,7 @@ from msx.boundary import (
     STOP_WATCHPOINT,
     TRACE_MAPPER,
     TRACE_VDP,
+    VDP_KIND_TMS9918A,
     VDP_KIND_V9938,
     SlotInfo,
 )
@@ -35,6 +36,7 @@ except ImportError:  # stock Windows CPython has no readline module
     readline = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:
+    from host.printer_output import PrinterOutput
     from msx.core_api import CoreApi
 
 
@@ -114,6 +116,7 @@ class Debugger:
     def __init__(
         self, machine: CoreApi, disk_files: DiskFiles | None = None,
         trace: TraceOutput | None = None, rom_names: tuple[str, str] = ("", ""),
+        printer: PrinterOutput | None = None,
     ) -> None:
         self._machine = machine
         # The main and sub ROM file names `sl`/`st` print ("" for none): the
@@ -125,6 +128,15 @@ class Debugger:
         # Where the run's VDP and mapper trace lines go (host/trace.py); the
         # CLI flags set it up, te/ce turn the traces on.
         self.trace = trace if trace is not None else TraceOutput()
+        # --printer-log's file (host/printer_output.py); None without the flag.
+        self._printer = printer
+
+    def drain_printer(self) -> None:
+        """Write the guest's printed bytes to --printer-log's file. The run
+        loops call it after each step_frame, the step command after each
+        step."""
+        if self._printer is not None:
+            self._printer.drain()
 
     def drain_trace(self) -> None:
         """Write the core's recorded trace events as text. The run loops call
@@ -233,8 +245,18 @@ class Debugger:
             f"  P/V={(f >> 2) & 1}  N={(f >> 1) & 1}  C={f & 1}"
         )
 
+    def _is_unknown_vdp(self, kind: int) -> bool:
+        """Print the kind of a VDP this host does not know (machine-c-abi "A
+        host keeps working on an unknown core value")."""
+        if kind in (VDP_KIND_TMS9918A, VDP_KIND_V9938):
+            return False
+        print(f"unknown VDP kind {kind}")
+        return True
+
     def _cmd_reg_vdp(self) -> None:
         info = self._machine.vdp_info()
+        if self._is_unknown_vdp(info.kind):
+            return
         if info.kind == VDP_KIND_V9938:
             regs = info.regs
             for row_start in range(0, 28, 8):
@@ -256,6 +278,8 @@ class Debugger:
 
     def _cmd_reg_palette(self) -> None:
         info = self._machine.vdp_info()
+        if self._is_unknown_vdp(info.kind):
+            return
         if info.kind != VDP_KIND_V9938:
             print("rp: TMS9918A has no programmable palette (MSX2 / V9938 only)")
             return
@@ -271,6 +295,8 @@ class Debugger:
 
     def _cmd_vdp_status(self) -> None:
         info = self._machine.vdp_info()
+        if self._is_unknown_vdp(info.kind):
+            return
         if info.kind == VDP_KIND_V9938:
             print_vdp_v9938(info)
         else:
@@ -541,6 +567,7 @@ class Debugger:
         for _ in range(count):
             self._machine.step()
             self.drain_trace()
+            self.drain_printer()
             stop = self._machine.last_stop()
             if stop.reason == STOP_WATCHPOINT:
                 print(watch_hit_line(stop))

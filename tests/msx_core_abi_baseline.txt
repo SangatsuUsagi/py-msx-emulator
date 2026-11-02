@@ -1,0 +1,176 @@
+version 1.1
+const msx_trace_event *msx_core_drain_trace(msx_core *core, size_t *count);
+int32_t msx_core_abi_version(void);
+int32_t msx_core_apply_input(msx_core *core, const msx_input_frame *frame_input);
+int32_t msx_core_attach_mouse(msx_core *core, int32_t port);
+int32_t msx_core_attach_printer(msx_core *core);
+int32_t msx_core_break_halt_di(msx_core *core);
+int32_t msx_core_breakpoints(msx_core *core, int32_t out[MSX_MAX_BREAKPOINTS]);
+int32_t msx_core_create(const msx_machine_config *config, msx_core **out_core, char *error_text, size_t error_cap, size_t *error_len);
+int32_t msx_core_dirty_media(msx_core *core, int32_t out_ids[MSX_MEDIA_COUNT]);
+int32_t msx_core_disk_mounted(msx_core *core, int32_t drive);
+int32_t msx_core_drive_count(msx_core *core);
+int32_t msx_core_eject_disk(msx_core *core, int32_t drive);
+int32_t msx_core_keyboard_layout(msx_core *core);
+int32_t msx_core_load_state(msx_core *core, const uint8_t *data, size_t len);
+int32_t msx_core_mark_persisted(msx_core *core, int32_t media_id);
+int32_t msx_core_mount_disk(msx_core *core, int32_t drive, const uint8_t *data, size_t len, int32_t write_protected);
+int32_t msx_core_request_break(msx_core *core);
+int32_t msx_core_reset(msx_core *core);
+int32_t msx_core_samples_per_frame(msx_core *core);
+int32_t msx_core_set_break_halt_di(msx_core *core, int32_t enabled);
+int32_t msx_core_set_breakpoints(msx_core *core, const int32_t *addrs, size_t count);
+int32_t msx_core_set_frame_breakpoint(msx_core *core, int64_t frame);
+int32_t msx_core_set_sp_range(msx_core *core, int32_t low, int32_t high);
+int32_t msx_core_set_sprites_hidden(msx_core *core, int32_t hidden);
+int32_t msx_core_set_step_out(msx_core *core, int32_t sp);
+int32_t msx_core_set_temp_breakpoint(msx_core *core, int32_t addr);
+int32_t msx_core_set_trace_kinds(msx_core *core, int32_t kinds);
+int32_t msx_core_set_watchpoints(msx_core *core, const msx_watchpoint *entries, size_t count);
+int32_t msx_core_sprites_hidden(msx_core *core);
+int32_t msx_core_step(msx_core *core);
+int32_t msx_core_trace_kinds(msx_core *core);
+int32_t msx_core_trace_sources(msx_core *core);
+int32_t msx_core_video_standard(msx_core *core);
+int32_t msx_core_vram_size(msx_core *core);
+int32_t msx_core_watchpoints(msx_core *core, msx_watchpoint out[MSX_MAX_WATCHPOINTS]);
+int32_t msx_core_write_memory(msx_core *core, int32_t addr, const uint8_t *data, size_t len);
+int64_t msx_core_cycle_count(msx_core *core);
+int64_t msx_core_frame_number(msx_core *core);
+macro ASCII16_SRAM2_SIZE 2048
+macro ASCII16_SRAM8_SIZE 8192
+macro ASCII8_SRAM2_SIZE 2048
+macro ASCII8_SRAM8_SIZE 8192
+macro AUDIO_SAMPLE_RATE 44100
+macro BANK_NONE 0
+macro BANK_SEGMENT 3
+macro BANK_SRAM_PAGE 4
+macro BANK_WINDOWS_8K 2
+macro BANK_WINDOW_16K 1
+macro FMPAC_SRAM_SIZE 8192
+macro GAME_MASTER2_SRAM_SIZE 8192
+macro HALNOTE_SRAM_SIZE 16384
+macro KEYBOARD_INTERNATIONAL 0
+macro KEYBOARD_JAPANESE 1
+macro KOEI_SRAM32_SIZE 32768
+macro MAPPER_ASCII16 3
+macro MAPPER_ASCII16_SRAM2 8
+macro MAPPER_ASCII16_SRAM8 9
+macro MAPPER_ASCII8 2
+macro MAPPER_ASCII8_SRAM2 4
+macro MAPPER_ASCII8_SRAM8 5
+macro MAPPER_FIXED_PAGE 1
+macro MAPPER_FLAT 0
+macro MAPPER_FMPAC 16
+macro MAPPER_GAME_MASTER2 7
+macro MAPPER_HALNOTE 15
+macro MAPPER_KOEI_SRAM32 6
+macro MAPPER_KONAMI 11
+macro MAPPER_KONAMI_SCC 13
+macro MAPPER_MAJUTSUSHI 12
+macro MAPPER_RAM_MAPPER 17
+macro MAPPER_R_TYPE 10
+macro MAPPER_SCC_I_CART 14
+macro MAX_BREAKPOINTS 4
+macro MAX_WATCHPOINTS 4
+macro MEDIA_COUNT 16
+macro MEDIA_DRIVE_A 12
+macro MEDIA_DRIVE_B 13
+macro MEDIA_DRIVE_C 14
+macro MEDIA_DRIVE_D 15
+macro MEDIA_FMPAC_SRAM 10
+macro MEDIA_RTC_CMOS 11
+macro MEDIA_SLOT1_SRAM 0
+macro MEDIA_SLOT1_SUB0_SRAM 2
+macro MEDIA_SLOT1_SUB1_SRAM 3
+macro MEDIA_SLOT1_SUB2_SRAM 4
+macro MEDIA_SLOT1_SUB3_SRAM 5
+macro MEDIA_SLOT2_SRAM 1
+macro MEDIA_SLOT2_SUB0_SRAM 6
+macro MEDIA_SLOT2_SUB1_SRAM 7
+macro MEDIA_SLOT2_SUB2_SRAM 8
+macro MEDIA_SLOT2_SUB3_SRAM 9
+macro MOUSE_LEFT 1
+macro MOUSE_RIGHT 2
+macro OUTPUT_HEIGHT 212
+macro PRINTER_BUFFER_SIZE 4096
+macro RTC_CMOS_SIZE 26
+macro SLOT_CONTENT_CARTRIDGE 3
+macro SLOT_CONTENT_CARTRIDGE_EMPTY 4
+macro SLOT_CONTENT_EMPTY 0
+macro SLOT_CONTENT_FDC 7
+macro SLOT_CONTENT_MAIN_ROM 1
+macro SLOT_CONTENT_RAM 5
+macro SLOT_CONTENT_RAM_MAPPER 6
+macro SLOT_CONTENT_SUB_ROM 2
+macro STATUS_BAD_ARGUMENT 6
+macro STATUS_BAD_CONFIG 4
+macro STATUS_BAD_IMAGE 3
+macro STATUS_NO_DRIVE 2
+macro STATUS_NO_MEDIUM 5
+macro STATUS_NO_PRINTER_PORT 7
+macro STATUS_OK 0
+macro STATUS_STATE_REJECTED 1
+macro STOP_BREAKPOINT 1
+macro STOP_NONE 0
+macro STOP_REQUESTED 3
+macro STOP_WATCHPOINT 2
+macro TRACE_CAPACITY 65536
+macro TRACE_DEBUG 4
+macro TRACE_EVENT_CPU_HISTORY 9
+macro TRACE_EVENT_HANG_HALT_DI 11
+macro TRACE_EVENT_HANG_PC_LOOP 10
+macro TRACE_EVENT_IO_READ 5
+macro TRACE_EVENT_IO_WRITE 6
+macro TRACE_EVENT_LOST 4
+macro TRACE_EVENT_MAP_BANK 3
+macro TRACE_EVENT_UNDEFINED_OP 8
+macro TRACE_EVENT_VDP_MODE_REG 7
+macro TRACE_EVENT_VDP_PORT99 1
+macro TRACE_EVENT_VDP_PORT9B 2
+macro TRACE_HISTORY_SIZE 64
+macro TRACE_LOST_MAX 2147483647
+macro TRACE_MAPPER 2
+macro TRACE_VDP 1
+macro VDP_KIND_TMS9918A 0
+macro VDP_KIND_V9938 1
+macro VIDEO_NTSC 0
+macro VIDEO_PAL 1
+macro WATCH_READ 1
+macro WATCH_WRITE 2
+macro WINDOW_NONE 0
+macro WINDOW_OPEN 3
+macro WINDOW_PAGE 1
+macro WINDOW_SRAM 2
+msx_bytes msx_core_drain_printer(msx_core *core);
+msx_bytes msx_core_last_error_text(msx_core *core);
+msx_bytes msx_core_read_media(msx_core *core, int32_t media_id);
+msx_bytes msx_core_read_memory(msx_core *core, int32_t addr, int32_t length);
+msx_bytes msx_core_read_vram(msx_core *core, int32_t addr, int32_t length);
+msx_bytes msx_core_save_state(msx_core *core);
+typedef struct msx_bytes { const uint8_t *data; size_t len; } msx_bytes;
+typedef struct msx_core msx_core;
+typedef struct msx_cpu_registers { int32_t AF, BC, DE, HL; int32_t AF_, BC_, DE_, HL_; int32_t IX, IY, SP, PC; int32_t I, R; int32_t IFF1, IFF2, IM; } msx_cpu_registers;
+typedef struct msx_disk_mount { int32_t drive; const uint8_t *data; size_t len; int32_t write_protected; } msx_disk_mount;
+typedef struct msx_frame_output { int32_t video_width; int32_t video_height; msx_bytes video_pixels; msx_bytes audio; int64_t frame_number; int32_t stop_reason; int32_t frame_complete; } msx_frame_output;
+typedef struct msx_input_frame { uint8_t key_matrix[11]; int32_t joy1; int32_t joy2; int32_t mouse_dx; int32_t mouse_dy; int32_t mouse_buttons; } msx_input_frame;
+typedef struct msx_machine_config { const uint8_t *document; size_t document_len; const msx_rom_image *roms; size_t rom_count; const msx_media_image *media; size_t media_count; const msx_disk_mount *disks; size_t disk_count; msx_rtc_time rtc_initial_time; } msx_machine_config;
+typedef struct msx_media_image { int32_t media_id; const uint8_t *data; size_t len; } msx_media_image;
+typedef struct msx_rgb_frame { int32_t width; int32_t height; msx_bytes pixels; } msx_rgb_frame;
+typedef struct msx_rom_image { char sha1[41]; const uint8_t *data; size_t len; } msx_rom_image;
+typedef struct msx_rtc_time { int32_t year; int32_t month; int32_t day; int32_t hour; int32_t minute; int32_t second; } msx_rtc_time;
+typedef struct msx_slot_info { int32_t content; int32_t mapper; int32_t size_kb; int32_t bank; int32_t window_kind[2]; int32_t window_value[2]; int32_t sub_bank_count; int32_t sub_bank[2]; int32_t sub_offset[2]; } msx_slot_info;
+typedef struct msx_slot_layout { int32_t primary; int32_t expanded; uint8_t secondary[4]; } msx_slot_layout;
+typedef struct msx_stop_info { int32_t reason; int32_t pc; int32_t watch_addr; int32_t watch_value; int32_t watch_access; } msx_stop_info;
+typedef struct msx_trace_event { int32_t kind; int64_t cycle; int64_t frame; int32_t pc; int32_t a, b, c, d; } msx_trace_event;
+typedef struct msx_vdp_info { int32_t kind; uint8_t regs[28]; int32_t regs_len; uint8_t cmd_regs[15]; int32_t cmd_regs_len; uint8_t status[10]; int32_t status_len; uint16_t palette[16]; int32_t palette_len; int32_t cmd_x, cmd_y, cmd_nx, cmd_ny, cmd_remaining; } msx_vdp_info;
+typedef struct msx_watchpoint { int32_t address; int32_t kind; } msx_watchpoint;
+void msx_core_cpu_registers(msx_core *core, msx_cpu_registers *out);
+void msx_core_destroy(msx_core *core);
+void msx_core_last_stop(msx_core *core, msx_stop_info *out);
+void msx_core_main_ram_range(msx_core *core, int32_t *low, int32_t *high);
+void msx_core_render_preview(msx_core *core, msx_rgb_frame *out);
+void msx_core_slot_info(msx_core *core, int32_t primary, int32_t secondary, int32_t page, msx_slot_info *out);
+void msx_core_slot_layout(msx_core *core, msx_slot_layout *out);
+void msx_core_step_frame(msx_core *core, const msx_input_frame *frame_input, int32_t render_video, msx_frame_output *out);
+void msx_core_vdp_info(msx_core *core, msx_vdp_info *out);

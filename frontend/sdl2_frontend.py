@@ -1069,6 +1069,7 @@ def _run_frame(ctx: _RunContext, state: _LoopState) -> None:
     )
     if hotkeys.debugger is not None:
         hotkeys.debugger.drain_trace()
+        hotkeys.debugger.drain_printer()
     if out.stop_reason != STOP_NONE:
         # A break: the frame continues on the next step_frame, after the REPL
         # returns or the RPC client resumes. Keep the last picture on screen.

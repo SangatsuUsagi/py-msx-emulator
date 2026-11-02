@@ -211,6 +211,10 @@ STATUS_BAD_ARGUMENT = 6     # a break setter: a value outside its range or too
                             # a flag setter, mount_disk: a flag not 0 or 1;
                             # read_memory, read_vram: a length (b"");
                             # slot_info: a slot, sub-slot or page
+STATUS_NO_PRINTER_PORT = 7  # attach_printer: the machine has no printer port
+
+# The bytes the printer buffer holds between two drain_printer() calls.
+PRINTER_BUFFER_SIZE = 4096
 
 # The most breakpoints set_breakpoints and watchpoints set_watchpoints take.
 MAX_BREAKPOINTS = 4

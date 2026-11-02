@@ -46,6 +46,7 @@ from msx.machine_spec import (
     ExtensionOverlay,
     MachineLoadError,
     MachineSpec,
+    PrinterPortForm,
 )
 from msx.mapper import (
     Ascii8Mapper,
@@ -71,6 +72,7 @@ from msx.mapper import (
 from msx.memory import Memory
 from msx.opll import Opll
 from msx.ppi import PPI
+from msx.printer import PrinterPort
 from msx.psg import PSG
 from msx.ram_mapper import RamMapper
 from msx.rtc import RTC, check_start
@@ -922,6 +924,11 @@ def _build(machine_config: MachineConfig) -> "Machine":
     if wiring.kanji_device is not None:
         io.register_read(0xD8, 0xDB, wiring.kanji_device.read_port)
         io.register_write(0xD8, 0xDB, wiring.kanji_device.write_port)
+    printer: PrinterPort | None = None
+    if spec.printer_port is not PrinterPortForm.NONE:
+        printer = PrinterPort(spec.printer_port)
+        io.register_read(printer.first_port(), printer.last_port(), printer.read_port)
+        io.register_write(printer.first_port(), printer.last_port(), printer.write_port)
     # An expanded slot's ram_mapper sub-slot (--extensionN memory_512k/
     # msxdos2_512k*) registers on the same standard memory-mapper ports
     # slot 3's own RamMapper would use -- safe because _wire_extension_overlay
@@ -940,6 +947,7 @@ def _build(machine_config: MachineConfig) -> "Machine":
         machine = _build_msx1(spec, bios, wiring, dac, input_state, psg, io)
 
     _wire_post_construction_attrs(machine, dac, wiring)
+    machine.printer = printer
     machine._sram_table = _sram_table(machine)
     machine.machine_config_sha256 = config.config_sha256
     return machine

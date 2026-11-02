@@ -231,6 +231,8 @@ io.register_write(0x98, 0x9B, vdp.write_port)
 | 0x9A      | V9938 パレット（MSX2 のみ）                   |
 | 0xA0–0xA2 | PSG（AY-3-8910）                              |
 | 0x7C–0x7D | FM-PAC の OPLL（`--extensionN fmpac` のとき） |
+| 0x90–0x91 | プリンタポート（`hb_10`、`hb_10_64k`）        |
+| 0x90–0x97 | プリンタポート（S-1985 のマシン）             |
 | 0xA8–0xAB | PPI（i8255）                                  |
 | 0xB4–0xB5 | RTC（RP5C01、MSX2 のみ）                      |
 | 0xD8–0xDB | 漢字 ROM（`hbi_j1` などの拡張）               |
@@ -456,7 +458,7 @@ MSX2 のデフォルトの配置：
 | `implemented` | bool | いいえ（デフォルト `true`） | `false` なら、`builtin_devices` の解決時に stderr に警告を出して飛ばします（起動は失敗しない）。そのため、エミュレーションより先にデバイス定義だけを入れられます |
 | `io_ports` | int のリスト | いいえ | 先頭と末尾の要素が、そのデバイスの `(start, end)` の I/O 範囲になります。キーがなければ `_DEFAULT_IO_PORTS` を使います |
 
-それ以外のキー（`name`、`chip`、`controls`、`vram_kb`、`segment_size_kb`、`keyboard_type` など）は `_DeviceDef.raw` に入りますが、汎用のコードはこれらを*読まない*です。コード全体で `dev.raw.get(...)` で読むキーは、上の `io_ports` と、下の `keyboard_type` と `control_read`（`ppi8255` だけ）の 3 つだけです。
+それ以外のキー（`name`、`chip`、`controls`、`vram_kb`、`segment_size_kb`、`keyboard_type` など）は `_DeviceDef.raw` に入りますが、汎用のコードはこれらを*読まない*です。コード全体で `dev.raw.get(...)` で読むキーは、上の `io_ports`、下の `keyboard_type` と `control_read`（`ppi8255` だけ）、`form`（`printer_port` だけ）の 4 つだけです。
 
 `vdp_v9938.yaml` の `vram_kb: 128` はどこからも読まれません。V9938 の VRAM サイズは、`msx/vdp/v9938.py` にハードコードした定数 `_VRAM_SIZE = 131072` で決まります。このキーと、マシン側でそれを写した `overrides: {vram_kb: 128}`（後述）は、意図を書いているだけで、動作中のエミュレータには何の効果もありません。
 
@@ -752,6 +754,8 @@ io_device:
 |  | `last_error_text() -> bytes` | ステータスを返すメンバー（と空の値を返した `read_media`、-1 の値を返した `slot_info`）のうち、最後に失敗した呼び出しのメッセージ（UTF-8）。成功した後は `b""`。コアの API のメンバーは、不正な引数に例外を出しません。`host/state_files.load_state` と `host/media.swap_disk` は、これを `ValueError("<ファイル>: <メッセージ>")` として出します |
 |  | `disk_mounted(drive)` | ドライブがあり、イメージが入っているか |
 | デバイス | `attach_mouse(port) -> int` | MSX のマウスをジョイスティックポート 1（`0`）か 2（`1`）につなぎます。マウスのデバイスはコアが作ります。ほかのポートには `STATUS_BAD_ARGUMENT`（6）を返します。host が呼ぶのは 1 回まで、最初の `step_frame` と最初の `load_state` の前。マウス付きで保存したステートは、マウスをつないだマシンでだけ読み込めます。取り外しはありません |
+|  | `attach_printer() -> int` | プリンタポートにプリンタをつなぎます。呼ぶ時期は問いません。ポートのないマシンには `STATUS_NO_PRINTER_PORT`（7）を返します。接続の有無はステートに入りません。取り外しはありません |
+|  | `drain_printer() -> bytes` | ゲストが STROBE で送ったバイトを順に返し、`PRINTER_BUFFER_SIZE`（4096）バイトのバッファを空にします。バッファが満杯のときは BUSY を返し、そのとき送られたバイトは捨てます。リセットとステートの読み込みではバッファは変わりません |
 | 状態の読み出し | `cpu_registers() -> CpuRegisters` | レジスタ一式 |
 |  | `read_memory(addr, length) -> bytes` | 今のスロットの選択で、CPU と同じように読みます。0xFFFF で折り返します。ウォッチポイントには反応しません。メモリに割り当てられたデバイスのレジスタは、副作用も含めて CPU と同じように読みます。長さが 0〜0x10000 の外なら `b""` を返し、`last_error_text()` を設定します |
 |  | `vram_size()`、`read_vram(addr, length) -> bytes` | 0x4000 か 0x20000。読み出しはアドレスの下位ビットで VRAM のサイズに折り返すので、負のアドレスは末尾に折り返します。長さが 0〜VRAM のサイズの外なら `b""` を返し、`last_error_text()` を設定します |
@@ -781,12 +785,12 @@ io_device:
 マシンの定義は、2 つの層を経てコアに届きます。
 
 1. **手で書く YAML**（`config/machines`、`config/devices`、`config/extensions`）。ハードウェアについてのコメントを残せます。読むのは host だけです（[マシンと拡張の YAML スキーマ](#マシンと拡張の-yaml-スキーマ) を参照）です。
-2. **MachineConfig の文書**。`load_machine_config()` が YAML とコマンドラインの指定から作ります。文書は RFC 8785（JCS）で正規化した JSON（UTF-8、キーはソート済み、空白なし、整数のみ）で、`format_version` は `1` です。解決済みのマシン、スロットごとのカートリッジとそのマッパー（`auto` にはならない）、拡張オーバーレイを持ちます。エンコードと解析は `msx/machine_config.py` が行い、形は `msx/machine_config.schema.json`（JSON Schema draft 2020-12）に書いてあります。スキーマを読むのはテストで、コアは読みません。`tests/vectors/canonical_json.json` には、入力とその正規形と SHA-256、読み込みで拒否する入力、base64 のバイト列を載せてあります。コアを別の言語で実装するときは、このファイルで自分の書き出しと読み込みを確かめられます。
+2. **MachineConfig の文書**。`load_machine_config()` が YAML とコマンドラインの指定から作ります。文書は RFC 8785（JCS）で正規化した JSON（UTF-8、キーはソート済み、空白なし、整数のみ）で、`format_version` は `2` です。書き出すのは 2 だけですが、パーサーは形式 1 も読みます。形式 1 には `printer_port` がなく、その場合の形式は `none` です。後の形式で追加するキーには、古い文書のための既定値を決め、ABI の minor を上げます。major が同じコアは、古い形式をすべて読み続けます。解決済みのマシン、スロットごとのカートリッジとそのマッパー（`auto` にはならない）、拡張オーバーレイを持ちます。エンコードと解析は `msx/machine_config.py` が行い、形は `msx/machine_config.schema.json`（JSON Schema draft 2020-12）に書いてあります。スキーマを読むのはテストで、コアは読みません。`tests/vectors/canonical_json.json` には、入力とその正規形と SHA-256、読み込みで拒否する入力、base64 のバイト列を載せてあります。コアを別の言語で実装するときは、このファイルで自分の書き出しと読み込みを確かめられます。
 
 文書の中の ROM は、どれも `{name, size, sha1, pages}` の参照で表します。`name` はディレクトリを含まないファイル名で、表示用のラベルにすぎません。`sha1` は host が読んだバイト列の SHA1 です。イメージは、その SHA1 をキーにして `MachineConfig.roms` で渡します。解析は厳密で、次のものを拒否します。
 
 - 知らないキーや欠けたキー、型や範囲の誤り、浮動小数点数、重複したキー
-- ほかの `format_version`
+- 1 と 2 以外の `format_version`
 - 閉じた集合にない名前（マッパー、FDC のコントローラ、接続方式、その 2 つの組、フラットな拡張のデバイス、サブスロットのデバイス、I/O のデバイス）
 - ROM が必要なのに持たないデバイス、`size_kb` のない `ram_mapper`
 - ない ROM イメージや、サイズか SHA1 が参照と違う ROM イメージ
@@ -797,7 +801,7 @@ YAML のローダを持たない移植では、文書を直接書けます。ま
 
 ### スナップショット
 
-`save_state()` は、マシンの全状態を正規化した JSON（フォーマットバージョン 21）で返します。形は `msx/snapshot.schema.json` に書いてあります。オブジェクトはコンポーネントごとに 1 つあります（`cpu`、`memory`、`slots`、`vdp`、`psg`、`ppi`、`scc`、`fdc`、`rtc`、`mouse`）。キーは常にすべてそろい、マシンにない部分の値は `null` になります。バイト列はパディング付きの RFC 4648 base64 の文字列で、整数はどれも ±(2^53 − 1) の範囲に入ります。
+`save_state()` は、マシンの全状態を正規化した JSON（フォーマットバージョン 22）で返します。形は `msx/snapshot.schema.json` に書いてあります。オブジェクトはコンポーネントごとに 1 つあります（`cpu`、`memory`、`slots`、`vdp`、`psg`、`ppi`、`scc`、`fdc`、`rtc`、`mouse`、`printer`）。キーは常にすべてそろい、マシンにない部分の値は `null` になります。バイト列はパディング付きの RFC 4648 base64 の文字列で、整数はどれも ±(2^53 − 1) の範囲に入ります。
 
 - `load_state()` は、空白もキーの順序も問いません。浮動小数点数、NaN や Infinity、重複したキー、ほかのフォーマットバージョンは拒否します。
 - 最初にマシンの同一性（マシンの種類、マッパーの種類、スロットの配線、FDC、マウント中のディスク。ディスクはサイズと SHA1 で比べるので、同じ内容なら別のファイルでも同じディスクとみなす）を調べます。続いて `machine_config_sha256` を動作中のマシンのハッシュと比べます。このハッシュは、カートリッジの ROM のバイト列も対象に含みます。つまり、スナップショットは同じ MachineConfig の文書から作ったコアにしか読み込めません。
@@ -864,7 +868,7 @@ SDL2 フロントエンド（`frontend/sdl2_frontend.py`）も同じ形で動き
 
 ネイティブのコアが実装するコア API の C の形は、`include/msx_core.h` にあります。`CoreApi` のメンバーごとに `msx_core_<member>` の関数が 1 つ、境界のレコードごとに構造体が 1 つあり、定数は `msx/boundary.py` と同じ値を持ちます。名前と定数が Python のコードと同じであることは、`tests/test_core_c_header.py` が確かめます。フレーム出力の映像と音声は、次の `step_frame`、`reset`、`load_state` まで有効です。コアが返すそれ以外のバイト列は、同じコアに対する次の呼び出しまで有効です。渡した入力は呼び出しの間だけ読まれます。1 つのコアは、一度に 1 つのスレッドからだけ使います。C の各型は、コアがマスクする値、範囲に収める値、拒否する値のどれも表せる幅を持ちます。マウスの移動量は `int32_t`、フレームのブレークポイントは `int64_t` です。`msx_core_create` は呼び出し側が渡したバッファにメッセージを書くので、コアはグローバルな状態を持ちません。host は音声のレートとフレームの高さを `msx/boundary.py`（`AUDIO_SAMPLE_RATE`、`OUTPUT_HEIGHT`）から取ります。MSX のキー名（`host/key_names.py`）とカートリッジの SRAM のサイズ（`host/machine_config.py`）は、コアのどのモジュールも使わないので、host が持ちます。
 
-このヘッダの ABI バージョンは 1 です。`MSX_CORE_ABI_VERSION` がその値で、`msx_core_abi_version()` が同じ値を返します。host は、この値を自分がビルドされたときの `MSX_CORE_ABI_VERSION` と比べます。宣言かマクロの値を変えたら、バージョンを 1 上げます。コメントだけの変更では上げません。`tests/test_core_c_header.py` は宣言のフィンガープリントをバージョンと一緒に記録しているので、宣言を変えると、両方を直すまでテストが失敗します。
+このヘッダの ABI バージョンは 1.1 です。`MSX_CORE_ABI_VERSION_MAJOR` と `MSX_CORE_ABI_VERSION_MINOR` がそれぞれの値で、`msx_core_abi_version()` は `(major << 16) | minor` を返します。関数か定数を追加したら minor を上げます。既存の宣言かマクロの値を変更または削除したら major を上げ、minor を 0 に戻します。ネイティブのコアがこのヘッダを実装するまで major は 1 のままなので、それまでは基準ファイルを更新するだけです。コメントだけの変更では何も変わりません。host は、major が異なるコアと、minor が自分のビルド時より小さいコアを拒否します。ネイティブのコアを読み込む host はまだないので、この判定をするコードもまだありません。host は、コアが返した定数の値を知らなくても動作を続けます。`tests/msx_core_abi_baseline.txt` は宣言とマクロの値をバージョンと一緒に記録しています。`tests/test_core_c_header.py` は、基準ファイルがヘッダと一致するまで失敗し、メッセージで変更の種類を示します。
 
 Python のコードは、`allium/core-frontend.allium` にある言語に依存しない契約と、次の点で違います（同ファイルの _Status_ のコメントに一覧がある）です。
 

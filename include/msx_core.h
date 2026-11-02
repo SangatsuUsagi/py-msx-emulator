@@ -27,6 +27,17 @@
  *     MSX_STATUS_BAD_ARGUMENT for any other value.
  *   - Lists with a fixed limit are written to a caller array, and the
  *     function returns the count.
+ *
+ * Versions:
+ *   - An added function or constant raises the minor version. A changed or
+ *     removed declaration or macro value raises the major version and resets
+ *     the minor version to 0. Until a native core implements this header, the
+ *     major version stays 1 and such a change only updates the baseline
+ *     (tests/msx_core_abi_baseline.txt).
+ *   - A host rejects a core with another major version or a lower minor
+ *     version than the host was built with, and accepts any other core.
+ *   - A host keeps working when the core returns a constant value it does not
+ *     know, and does not present that value as a known one.
  */
 #ifndef MSX_CORE_H
 #define MSX_CORE_H
@@ -38,7 +49,9 @@
 extern "C" {
 #endif
 
-#define MSX_CORE_ABI_VERSION 1
+#define MSX_CORE_ABI_VERSION_MAJOR 1
+#define MSX_CORE_ABI_VERSION_MINOR 1
+#define MSX_CORE_ABI_VERSION ((MSX_CORE_ABI_VERSION_MAJOR << 16) | MSX_CORE_ABI_VERSION_MINOR)
 
 /* -- Statuses (every control operation) ---------------------------------- */
 #define MSX_STATUS_OK 0
@@ -48,12 +61,16 @@ extern "C" {
 #define MSX_STATUS_BAD_CONFIG 4
 #define MSX_STATUS_NO_MEDIUM 5
 #define MSX_STATUS_BAD_ARGUMENT 6
+#define MSX_STATUS_NO_PRINTER_PORT 7
 
 /* -- Stop reasons (msx_stop_info.reason, msx_frame_output.stop_reason) ---- */
 #define MSX_STOP_NONE 0
 #define MSX_STOP_BREAKPOINT 1
 #define MSX_STOP_WATCHPOINT 2
 #define MSX_STOP_REQUESTED 3
+
+/* -- Printer ---------------------------------------------------------------- */
+#define MSX_PRINTER_BUFFER_SIZE 4096
 
 /* -- Break settings ------------------------------------------------------- */
 #define MSX_MAX_BREAKPOINTS 4
@@ -296,6 +313,7 @@ typedef struct msx_trace_event {
 
 /* -- Construction ----------------------------------------------------------- */
 
+/* MSX_CORE_ABI_VERSION. This signature does not change in any version. */
 int32_t msx_core_abi_version(void);
 
 /* MSX_STATUS_OK with *out_core set and *error_len 0, or MSX_STATUS_BAD_CONFIG
@@ -347,6 +365,14 @@ msx_bytes msx_core_last_error_text(msx_core *core);
 /* Once, before the first step_frame and the first load_state; port 0 = Joy1,
  * 1 = Joy2. There is no detach. */
 int32_t msx_core_attach_mouse(msx_core *core, int32_t port);
+/* At any time and any number of times; MSX_STATUS_NO_PRINTER_PORT on a machine
+ * with no port. There is no detach. The attachment and the bytes waiting (at
+ * most MSX_PRINTER_BUFFER_SIZE) are outside the saved state, and a reset or
+ * msx_core_load_state keeps both. */
+int32_t msx_core_attach_printer(msx_core *core);
+/* The strobed bytes in order; empty when none or on a machine with no port.
+ * Empties the core's buffer. */
+msx_bytes msx_core_drain_printer(msx_core *core);
 
 /* -- Break settings ----------------------------------------------------------- */
 
