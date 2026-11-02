@@ -868,7 +868,7 @@ SDL2 フロントエンド（`frontend/sdl2_frontend.py`）も同じ形で動き
 
 ネイティブのコアが実装するコア API の C の形は、`include/msx_core.h` にあります。`CoreApi` のメンバーごとに `msx_core_<member>` の関数が 1 つ、境界のレコードごとに構造体が 1 つあり、定数は `msx/boundary.py` と同じ値を持ちます。名前と定数が Python のコードと同じであることは、`tests/test_core_c_header.py` が確かめます。フレーム出力の映像と音声は、次の `step_frame`、`reset`、`load_state` まで有効です。コアが返すそれ以外のバイト列は、同じコアに対する次の呼び出しまで有効です。渡した入力は呼び出しの間だけ読まれます。1 つのコアは、一度に 1 つのスレッドからだけ使います。C の各型は、コアがマスクする値、範囲に収める値、拒否する値のどれも表せる幅を持ちます。マウスの移動量は `int32_t`、フレームのブレークポイントは `int64_t` です。`msx_core_create` は呼び出し側が渡したバッファにメッセージを書くので、コアはグローバルな状態を持ちません。host は音声のレートとフレームの高さを `msx/boundary.py`（`AUDIO_SAMPLE_RATE`、`OUTPUT_HEIGHT`）から取ります。MSX のキー名（`host/key_names.py`）とカートリッジの SRAM のサイズ（`host/machine_config.py`）は、コアのどのモジュールも使わないので、host が持ちます。
 
-このヘッダの ABI バージョンは 1 です。`MSX_CORE_ABI_VERSION` がその値で、`msx_core_abi_version()` が同じ値を返します。host は、この値を自分がビルドされたときの `MSX_CORE_ABI_VERSION` と比べます。ネイティブのコアがこのヘッダを実装するまで、バージョンは 1 のままです。実装したあとは、宣言かマクロの値を変えたらバージョンを 1 上げます。コメントだけの変更では上げません。`tests/test_core_c_header.py` は宣言のフィンガープリントをバージョンと一緒に記録しているので、宣言を変えると、フィンガープリントを直すまでテストが失敗します。
+このヘッダの ABI バージョンは 1.1 です。`MSX_CORE_ABI_VERSION_MAJOR` と `MSX_CORE_ABI_VERSION_MINOR` がそれぞれの値で、`msx_core_abi_version()` は `(major << 16) | minor` を返します。関数か定数を追加したら minor を上げます。既存の宣言かマクロの値を変更または削除したら major を上げ、minor を 0 に戻します。ネイティブのコアがこのヘッダを実装するまで major は 1 のままなので、それまでは基準ファイルを更新するだけです。コメントだけの変更では何も変わりません。host は、major が異なるコアと、minor が自分のビルド時より小さいコアを拒否します。ネイティブのコアを読み込む host はまだないので、この判定をするコードもまだありません。host は、コアが返した定数の値を知らなくても動作を続けます。`tests/msx_core_abi_baseline.txt` は宣言とマクロの値をバージョンと一緒に記録しています。`tests/test_core_c_header.py` は、基準ファイルがヘッダと一致するまで失敗し、メッセージで変更の種類を示します。
 
 Python のコードは、`allium/core-frontend.allium` にある言語に依存しない契約と、次の点で違います（同ファイルの _Status_ のコメントに一覧がある）です。
 

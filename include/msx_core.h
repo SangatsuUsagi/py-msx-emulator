@@ -27,6 +27,17 @@
  *     MSX_STATUS_BAD_ARGUMENT for any other value.
  *   - Lists with a fixed limit are written to a caller array, and the
  *     function returns the count.
+ *
+ * Versions:
+ *   - An added function or constant raises the minor version. A changed or
+ *     removed declaration or macro value raises the major version and resets
+ *     the minor version to 0. Until a native core implements this header, the
+ *     major version stays 1 and such a change only updates the baseline
+ *     (tests/msx_core_abi_baseline.txt).
+ *   - A host rejects a core with another major version or a lower minor
+ *     version than the host was built with, and accepts any other core.
+ *   - A host keeps working when the core returns a constant value it does not
+ *     know, and does not present that value as a known one.
  */
 #ifndef MSX_CORE_H
 #define MSX_CORE_H
@@ -38,7 +49,9 @@
 extern "C" {
 #endif
 
-#define MSX_CORE_ABI_VERSION 1
+#define MSX_CORE_ABI_VERSION_MAJOR 1
+#define MSX_CORE_ABI_VERSION_MINOR 1
+#define MSX_CORE_ABI_VERSION ((MSX_CORE_ABI_VERSION_MAJOR << 16) | MSX_CORE_ABI_VERSION_MINOR)
 
 /* -- Statuses (every control operation) ---------------------------------- */
 #define MSX_STATUS_OK 0
@@ -300,6 +313,7 @@ typedef struct msx_trace_event {
 
 /* -- Construction ----------------------------------------------------------- */
 
+/* MSX_CORE_ABI_VERSION. This signature does not change in any version. */
 int32_t msx_core_abi_version(void);
 
 /* MSX_STATUS_OK with *out_core set and *error_len 0, or MSX_STATUS_BAD_CONFIG

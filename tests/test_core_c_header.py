@@ -1,11 +1,11 @@
 """include/msx_core.h, the C form of the core API (machine-c-abi): one
 function per CoreApi member, the boundary constants with the Python values,
-valid C11, and the ownership rule in its comments. The header is read as
+valid C11, the ownership and version rules in its comments, and the version
+against a baseline of the declarations. The header is read as
 text; nothing is compiled into or loaded by Python."""
 from __future__ import annotations
 
 import enum
-import hashlib
 import re
 import shutil
 import subprocess
@@ -20,12 +20,11 @@ from msx.core_api import CoreApi
 _HEADER = Path(__file__).resolve().parent.parent / "include" / "msx_core.h"
 _EXTRA_FUNCTIONS = {"create", "destroy", "abi_version"}
 
-# The ABI version of the header, and the fingerprint of the declarations it
-# belongs to (machine-c-abi "The ABI version changes with the declarations").
-# A change to the declarations or macro values records the new fingerprint.
-# Once a native core implements the header, it also increases the version by 1.
-_ABI_VERSION = 1
-_ABI_FINGERPRINT = "6edbeb1131cadc47639e302de10123513e988bab31a3e170fd107954b94f47fe"
+# The header's declarations and macro values with their version, one item per
+# line (machine-c-abi "The ABI version follows the kind of header change").
+_BASELINE = Path(__file__).resolve().parent / "msx_core_abi_baseline.txt"
+_MACRO_PATTERN = r"^#define\s+MSX_(\w+)\s+\(?(-?(?:0x[0-9A-Fa-f]+|\d+))\)?\s*$"
+_VERSION_MACROS = {"CORE_ABI_VERSION_MAJOR", "CORE_ABI_VERSION_MINOR"}
 
 
 def _text() -> str:
@@ -42,10 +41,43 @@ def _code() -> str:
     return _strip_comments(_text())
 
 
-def _fingerprint(text: str) -> str:
-    """SHA-256 of the header text without its comments and whitespace runs."""
-    tokens = " ".join(_strip_comments(text).split())
-    return hashlib.sha256(tokens.encode("utf-8")).hexdigest()
+def _macros(code: str) -> dict[str, int]:
+    return {
+        name: int(value, 0)
+        for name, value in re.findall(_MACRO_PATTERN, code, flags=re.MULTILINE)
+    }
+
+
+def _abi_items(text: str) -> set[str]:
+    """One line per macro value, typedef and function of the header's text,
+    with its whitespace collapsed. The version macros are not items."""
+    code = _strip_comments(text)
+    items = set()
+    for name, value in _macros(code).items():
+        if name not in _VERSION_MACROS:
+            items.add(f"macro {name} {value}")
+    lines = [line for line in code.splitlines() if not line.startswith("#")]
+    body = " ".join(line for line in lines if line.strip() not in ('extern "C" {', "}"))
+    # A `}` that ends a struct stays with its typedef's name and `;`.
+    for match in re.finditer(r"[^;{}]+(?:\{[^}]*\}[^;]*)?;", body):
+        items.add(" ".join(match.group(0).split()))
+    return items
+
+
+def _classify(baseline: set[str], current: set[str]) -> str:
+    if baseline == current:
+        return "none"
+    return "minor" if baseline <= current else "major"
+
+
+def _read_baseline() -> tuple[str, set[str]]:
+    version, *items = _BASELINE.read_text(encoding="utf-8").splitlines()
+    return version, set(items)
+
+
+def _version_macros() -> tuple[int, int]:
+    macros = _macros(_code())
+    return macros["CORE_ABI_VERSION_MAJOR"], macros["CORE_ABI_VERSION_MINOR"]
 
 
 def _core_api_members() -> set[str]:
@@ -78,35 +110,92 @@ def test_every_core_api_member_has_a_c_function() -> None:
 
 def test_every_constant_matches() -> None:
     # machine-c-abi "Every constant matches".
-    pattern = r"^#define\s+MSX_(\w+)\s+\(?(-?(?:0x[0-9A-Fa-f]+|\d+))\)?\s*$"
-    macros = {
-        name: int(value, 0)
-        for name, value in re.findall(pattern, _code(), flags=re.MULTILINE)
-    }
-    assert macros.pop("CORE_ABI_VERSION") == _ABI_VERSION
+    macros = _macros(_code())
+    for name in _VERSION_MACROS:
+        del macros[name]
     assert macros == _python_constants()
 
 
-def test_the_version_stays_1_before_a_native_core() -> None:
-    # machine-c-abi "The version stays 1 before a native core".
-    assert _ABI_VERSION == 1
+def test_the_version_value_combines_both_parts() -> None:
+    # machine-c-abi "The version value combines both parts".
+    code = " ".join(_code().split())
+    assert (
+        "#define MSX_CORE_ABI_VERSION ((MSX_CORE_ABI_VERSION_MAJOR << 16) | "
+        "MSX_CORE_ABI_VERSION_MINOR)"
+    ) in code
+    assert "int32_t msx_core_abi_version(void);" in code
 
 
-def test_a_declaration_change_needs_a_new_version() -> None:
-    # machine-c-abi "A declaration change needs a new version".
-    assert _fingerprint(_text()) == _ABI_FINGERPRINT, (
-        "the header's declarations changed: record the new _ABI_FINGERPRINT, and "
-        "increase MSX_CORE_ABI_VERSION by 1 if a native core implements the header"
+def test_the_major_version_stays_1_before_a_native_core() -> None:
+    # machine-c-abi "The major version stays 1 before a native core".
+    assert _version_macros()[0] == 1
+
+
+def test_the_printer_port_is_the_first_minor_increase() -> None:
+    # machine-c-abi "The printer port is the first minor increase".
+    assert _version_macros()[1] >= 1
+    _version, items = _read_baseline()
+    assert "int32_t msx_core_attach_printer(msx_core *core);" in items
+    assert "msx_bytes msx_core_drain_printer(msx_core *core);" in items
+
+
+def test_the_header_matches_the_baseline() -> None:
+    version, baseline = _read_baseline()
+    kind = _classify(baseline, _abi_items(_text()))
+    assert kind == "none", (
+        f"a {kind} change to the header: raise the version as the header's Versions "
+        "comment says, then record the items and the version in the baseline"
     )
-    changed = _text().replace("int32_t mouse_dx;", "int16_t mouse_dx;")
-    assert changed != _text()
-    assert _fingerprint(changed) != _ABI_FINGERPRINT
+    major, minor = _version_macros()
+    assert version == f"version {major}.{minor}"
+
+
+def test_the_baseline_holds_every_function_struct_and_constant() -> None:
+    # A parse failure must not pass as an empty or short baseline.
+    _version, items = _read_baseline()
+    functions = [item for item in items if "msx_core_" in item and "(" in item]
+    assert len(functions) == len(_core_api_members()) + len(_EXTRA_FUNCTIONS)
+    assert sum(item.startswith("typedef struct") for item in items) == 17
+    assert sum(item.startswith("macro ") for item in items) == len(_python_constants())
+
+
+def test_an_added_declaration_raises_the_minor_version() -> None:
+    # machine-c-abi "An added declaration raises the minor version".
+    for added in ("int32_t msx_core_new(msx_core *core);\n", "#define MSX_MAPPER_NEW 99\n"):
+        assert _classify(_abi_items(_text()), _abi_items(_text() + added)) == "minor"
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("int32_t mouse_dx;", "int16_t mouse_dx;"),
+        ("int32_t msx_core_attach_printer(msx_core *core);",
+         "int32_t msx_core_attach_printer(msx_core *core, int32_t port);"),
+        ("#define MSX_MAX_BREAKPOINTS 4", "#define MSX_MAX_BREAKPOINTS 8"),
+    ],
+)
+def test_a_changed_declaration_is_a_major_change(old: str, new: str) -> None:
+    # machine-c-abi "A changed declaration is a major change".
+    assert old in _text()
+    changed = _text().replace(old, new)
+    assert _classify(_abi_items(_text()), _abi_items(changed)) == "major"
+
+
+@pytest.mark.parametrize(
+    "removed",
+    ["int32_t msx_core_attach_printer(msx_core *core);", "#define MSX_STATUS_NO_PRINTER_PORT 7"],
+)
+def test_a_removed_declaration_is_a_major_change(removed: str) -> None:
+    # machine-c-abi "A removed declaration is a major change".
+    assert removed in _text()
+    changed = _text().replace(removed, "")
+    assert _classify(_abi_items(_text()), _abi_items(changed)) == "major"
 
 
 def test_a_comment_change_keeps_the_version() -> None:
     # machine-c-abi "A comment change keeps the version".
     changed = "/* a new comment */\n" + _text().replace(";\n", ";  // note\n\n")
-    assert _fingerprint(changed) == _ABI_FINGERPRINT
+    assert _classify(_abi_items(_text()), _abi_items(changed)) == "none"
 
 
 def test_the_mouse_motion_and_the_frame_breakpoint_are_wide() -> None:
@@ -129,11 +218,22 @@ def test_the_create_call_takes_a_caller_buffer() -> None:
     assert "has_rtc_initial_time" not in code
 
 
-def test_the_header_states_the_ownership_rule() -> None:
-    # machine-c-abi "The header states the ownership rule".
+def _comment_words() -> str:
     # One line of words: each comment line's leading "*" dropped.
     lines = [re.sub(r"^\s*\*\s?", "", line) for line in _text().splitlines()]
-    text = " ".join(" ".join(lines).split())
+    return " ".join(" ".join(lines).split())
+
+
+def test_the_header_states_the_acceptance_rule() -> None:
+    # machine-c-abi "The header states the acceptance rule".
+    assert (
+        "A host rejects a core with another major version or a lower minor version"
+    ) in _comment_words()
+
+
+def test_the_header_states_the_ownership_rule() -> None:
+    # machine-c-abi "The header states the ownership rule".
+    text = _comment_words()
     assert "valid until the next step_frame, reset or load_state" in text
     assert "valid until the next call on the same core" in text
     assert "read only during the call" in text
