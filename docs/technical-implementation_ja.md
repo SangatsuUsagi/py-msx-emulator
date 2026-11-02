@@ -785,12 +785,12 @@ io_device:
 マシンの定義は、2 つの層を経てコアに届きます。
 
 1. **手で書く YAML**（`config/machines`、`config/devices`、`config/extensions`）。ハードウェアについてのコメントを残せます。読むのは host だけです（[マシンと拡張の YAML スキーマ](#マシンと拡張の-yaml-スキーマ) を参照）です。
-2. **MachineConfig の文書**。`load_machine_config()` が YAML とコマンドラインの指定から作ります。文書は RFC 8785（JCS）で正規化した JSON（UTF-8、キーはソート済み、空白なし、整数のみ）で、`format_version` は `2` です。解決済みのマシン、スロットごとのカートリッジとそのマッパー（`auto` にはならない）、拡張オーバーレイを持ちます。エンコードと解析は `msx/machine_config.py` が行い、形は `msx/machine_config.schema.json`（JSON Schema draft 2020-12）に書いてあります。スキーマを読むのはテストで、コアは読みません。`tests/vectors/canonical_json.json` には、入力とその正規形と SHA-256、読み込みで拒否する入力、base64 のバイト列を載せてあります。コアを別の言語で実装するときは、このファイルで自分の書き出しと読み込みを確かめられます。
+2. **MachineConfig の文書**。`load_machine_config()` が YAML とコマンドラインの指定から作ります。文書は RFC 8785（JCS）で正規化した JSON（UTF-8、キーはソート済み、空白なし、整数のみ）で、`format_version` は `2` です。書き出すのは 2 だけですが、パーサーは形式 1 も読みます。形式 1 には `printer_port` がなく、その場合の形式は `none` です。後の形式で追加するキーには、古い文書のための既定値を決め、ABI の minor を上げます。major が同じコアは、古い形式をすべて読み続けます。解決済みのマシン、スロットごとのカートリッジとそのマッパー（`auto` にはならない）、拡張オーバーレイを持ちます。エンコードと解析は `msx/machine_config.py` が行い、形は `msx/machine_config.schema.json`（JSON Schema draft 2020-12）に書いてあります。スキーマを読むのはテストで、コアは読みません。`tests/vectors/canonical_json.json` には、入力とその正規形と SHA-256、読み込みで拒否する入力、base64 のバイト列を載せてあります。コアを別の言語で実装するときは、このファイルで自分の書き出しと読み込みを確かめられます。
 
 文書の中の ROM は、どれも `{name, size, sha1, pages}` の参照で表します。`name` はディレクトリを含まないファイル名で、表示用のラベルにすぎません。`sha1` は host が読んだバイト列の SHA1 です。イメージは、その SHA1 をキーにして `MachineConfig.roms` で渡します。解析は厳密で、次のものを拒否します。
 
 - 知らないキーや欠けたキー、型や範囲の誤り、浮動小数点数、重複したキー
-- ほかの `format_version`
+- 1 と 2 以外の `format_version`
 - 閉じた集合にない名前（マッパー、FDC のコントローラ、接続方式、その 2 つの組、フラットな拡張のデバイス、サブスロットのデバイス、I/O のデバイス）
 - ROM が必要なのに持たないデバイス、`size_kb` のない `ram_mapper`
 - ない ROM イメージや、サイズか SHA1 が参照と違う ROM イメージ

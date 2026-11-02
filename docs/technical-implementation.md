@@ -787,12 +787,12 @@ The other members do not cross the boundary, and a port does not need them to ru
 The machine definition reaches the core in two layers:
 
 1. **Authored YAML** (`config/machines`, `config/devices`, `config/extensions`). It keeps its comments about the hardware, and only the host reads it (see [Machine and extension YAML schema](#machine-and-extension-yaml-schema)).
-2. **The MachineConfig document**, which `load_machine_config()` makes from the YAML and the command-line choices. It is RFC 8785 (JCS) canonical JSON: UTF-8, sorted keys, no whitespace, integers only. `format_version` is `2`. It holds the resolved machine, the cartridges per slot with their mapper (never `auto`), and the extension overlays. `msx/machine_config.py` encodes and parses it. `msx/machine_config.schema.json` (JSON Schema draft 2020-12) describes it. The tests read the schema, and the core never does. `tests/vectors/canonical_json.json` lists inputs with their canonical form and its SHA-256, inputs the reader refuses, and base64 blobs, so another implementation of the core can check its own writer and reader.
+2. **The MachineConfig document**, which `load_machine_config()` makes from the YAML and the command-line choices. It is RFC 8785 (JCS) canonical JSON: UTF-8, sorted keys, no whitespace, integers only. `format_version` is `2`. The encoder writes only 2. The parser also reads format 1, which has no `printer_port`, and the form is then `none`. A key that a later format adds has a default for older documents, and it raises the ABI minor version: a core of the same major version keeps reading every older format. It holds the resolved machine, the cartridges per slot with their mapper (never `auto`), and the extension overlays. `msx/machine_config.py` encodes and parses it. `msx/machine_config.schema.json` (JSON Schema draft 2020-12) describes it. The tests read the schema, and the core never does. `tests/vectors/canonical_json.json` lists inputs with their canonical form and its SHA-256, inputs the reader refuses, and base64 blobs, so another implementation of the core can check its own writer and reader.
 
 Every ROM in the document is a reference `{name, size, sha1, pages}`. `name` is a bare file name, used only as a label. `sha1` is the SHA1 of the bytes that the host read. The images travel in `MachineConfig.roms` by that SHA1. The parser is strict. It rejects:
 
 - an unknown or missing key, a wrong type or range, a float, and a duplicate key
-- another `format_version`
+- a `format_version` other than 1 and 2
 - a name outside a closed set (mapper, FDC controller, connection style and their pair, flat-extension device, sub-slot device, I/O device)
 - a device that needs a ROM and has none, and a `ram_mapper` without `size_kb`
 - a ROM image that is absent or whose size or SHA1 differs from its reference
