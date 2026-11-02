@@ -2,6 +2,17 @@
 
 [日本語版はこちら](CHANGELOG_ja.md)
 
+- **v2.9.2** (2026-11-02): Golden hashes of the whole core.
+  - `tests/vectors/golden_state.json` records five fixed runs: C-BIOS boot on `cbios_msx1`, `cbios_msx2` and
+    `cbios_msx2_eu`, the MSX1 homebrew game NOBORUNOCA, and the MSX2 port of the homebrew card game commodore-uno,
+    each with an input script. At fixed frames it records the SHA-256 of each save-state section, of the audio so
+    far and of the frame's video. A mismatch names the run, the frame and the section.
+  - `tools/golden_state.py` checks the core against the file, and `--write` records it again after an intended
+    change. `tests/test_golden_state.py` runs the same check. A port of the core can read the same file.
+  - The ROMs are not in the repository. A run whose ROM is absent, or has another SHA-256, is skipped.
+    `tools/README_tools.md` gives the download source and the path of each ROM. Both homebrew titles are
+    MIT-licensed.
+  - No change to the emulation, the save-state format or the C ABI.
 - **v2.9.1** (2026-11-02): The MSX printer port, ABI version 1.1, and save-state format 22.
   - The printer port is emulated on the HB-10 (ports 0x90-0x91) and on the S-1985 machines, HB-F1XD and FS-A1F
     (ports 0x90-0x97). The C-BIOS machines have no port. The status values and the mirrors come from the openMSX

@@ -12,6 +12,7 @@ emulator process. Each one is a separate `python tools/<script>.py` command.
 | [`dskdd.py`](#dskddpy) | Copy raw sectors between a `.dsk` image and a physical USB floppy drive (Linux only) |
 | [`run_z80_exercisers.py`](#run_z80_exerciserspy) | Run Z80 instruction exercisers (zexdoc, zexall, z80test) on the bare CPU core |
 | [`run_singlestep_tests.py`](#run_singlestep_testspy) | Run the SingleStepTests/z80 single-instruction cases on the bare CPU core |
+| [`golden_state.py`](#golden_statepy) | Run the golden cases of the whole core, and write or check their hashes |
 | [Remote control (Socket RPC & MCP)](#remote-control-socket-rpc--mcp) | Overview of the socket RPC + MCP control layer that `rpc_client.py` and `mcp_server.py` use |
 | [`rpc_client.py`](#rpc_clientpy) | Thin CLI client for the socket RPC server of the emulator, for manual testing |
 | [`mcp_server.py`](#mcp_serverpy) | MCP server that wraps the socket RPC API, so Claude Code can drive a running emulator |
@@ -159,6 +160,56 @@ stale. The exit status is 1 on any other failure or on a stale entry, else 0.
 The cases come from an emulator core, not from real hardware. A port of the
 core to another language can run the same files and the same divergence
 list.
+
+---
+
+## `golden_state.py`
+
+Runs fixed cases of the whole core and compares hashes of the result with
+`tests/vectors/golden_state.json`. A case gives a machine, an optional slot 1
+cartridge, an input script and checkpoint frames. At each checkpoint the file
+records the SHA-256 of each section of the saved state (`cpu`, `memory`,
+`vdp`, `psg` and the others), of the audio up to that frame, and of the video
+of that frame. A mismatch names the case, the frame and the section.
+
+```bash
+venvs/py-msx-emulator/bin/python tools/golden_state.py           # check
+venvs/py-msx-emulator/bin/python tools/golden_state.py --write   # record
+```
+
+After an intended change of behavior, run `--write` and commit the new file.
+`tests/test_golden_state.py` runs the same check in the test suite.
+
+The ROMs are not in this repository. A case whose ROM is absent, or has
+another SHA-256, is skipped, with the path in the reason. Put these files in
+place:
+
+| Path | Source | SHA-256 |
+| --- | --- | --- |
+| `roms/cbios/` | [C-BIOS](https://cbios.sourceforge.net/), as for any C-BIOS machine | (not checked) |
+| `roms/homebrew/noborunoca.rom` | `noborunoca.rom` of [NOBORUNOCA v1.0.2](https://github.com/h1romas4/noborunoca/releases/tag/v1.0.2) (MIT) | `57a3be2fe5c3190daa3e69cf23cd262cdc8af98c60993ea941d43c815cbb25f6` |
+| `roms/homebrew/uno-msx2.rom` | `uno-msx2.rom` of [commodore-uno v1.0.5](https://github.com/jhonnaker1/commodore-uno/releases/tag/v1.0.5) (MIT), or a build of v1.0.5 (below) | `74d74d8720e623a7b8aadce8e0b0c9094f8a2162339a8e7c677c7732f673ddb8` |
+
+The hashes were recorded with a build of commodore-uno v1.0.5. Another version
+can give another ROM, so use v1.0.5. The `uno-msx2.rom` files of the v1.0.5 and
+v1.0.10 releases have the same SHA-256 as that build. To build the ROM, use
+[SDCC](https://sdcc.sourceforge.net/) and GNU make:
+
+```bash
+# 1. Get the source
+git clone --branch v1.0.5 https://github.com/jhonnaker1/commodore-uno.git
+cd commodore-uno/msx2
+
+# 2. Build: the ROM is build/uno.rom (16 KB)
+make
+```
+
+Then copy `build/uno.rom` to `roms/homebrew/uno-msx2.rom`, and check that its
+SHA-256 is the value in the table.
+
+The hashes record what this core does, not what a real MSX does. They catch a
+change in behavior, and a port of the core can compare itself with the
+Python core by running the same cases.
 
 ## Remote control (Socket RPC & MCP)
 
