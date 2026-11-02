@@ -25,6 +25,7 @@ from msx.boundary import (
     STOP_WATCHPOINT,
     TRACE_MAPPER,
     TRACE_VDP,
+    VDP_KIND_TMS9918A,
     VDP_KIND_V9938,
     SlotInfo,
 )
@@ -244,8 +245,18 @@ class Debugger:
             f"  P/V={(f >> 2) & 1}  N={(f >> 1) & 1}  C={f & 1}"
         )
 
+    def _is_unknown_vdp(self, kind: int) -> bool:
+        """Print the kind of a VDP this host does not know (machine-c-abi "A
+        host keeps working on an unknown core value")."""
+        if kind in (VDP_KIND_TMS9918A, VDP_KIND_V9938):
+            return False
+        print(f"unknown VDP kind {kind}")
+        return True
+
     def _cmd_reg_vdp(self) -> None:
         info = self._machine.vdp_info()
+        if self._is_unknown_vdp(info.kind):
+            return
         if info.kind == VDP_KIND_V9938:
             regs = info.regs
             for row_start in range(0, 28, 8):
@@ -267,6 +278,8 @@ class Debugger:
 
     def _cmd_reg_palette(self) -> None:
         info = self._machine.vdp_info()
+        if self._is_unknown_vdp(info.kind):
+            return
         if info.kind != VDP_KIND_V9938:
             print("rp: TMS9918A has no programmable palette (MSX2 / V9938 only)")
             return
@@ -282,6 +295,8 @@ class Debugger:
 
     def _cmd_vdp_status(self) -> None:
         info = self._machine.vdp_info()
+        if self._is_unknown_vdp(info.kind):
+            return
         if info.kind == VDP_KIND_V9938:
             print_vdp_v9938(info)
         else:

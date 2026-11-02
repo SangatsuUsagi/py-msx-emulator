@@ -51,3 +51,11 @@ def test_loader_sets_video_standard_from_machine_yaml(machine_id: str) -> None:
     machine = build_machine_from_spec(spec)
     assert machine.video_standard is VideoStandard.PAL
     assert machine.lines_per_frame == 313
+
+
+def test_an_unknown_video_standard_paces_as_ntsc() -> None:
+    # machine-c-abi "A tolerated value keeps the host running".
+    class _Core:
+        video_standard = 99
+
+    assert _target_fps_for(_Core()) == 60.0  # type: ignore[arg-type]

@@ -67,6 +67,7 @@ from msx.boundary import (
     STOP_BREAKPOINT,
     STOP_REQUESTED,
     STOP_WATCHPOINT,
+    VDP_KIND_TMS9918A,
     VDP_KIND_V9938,
 )
 
@@ -721,9 +722,12 @@ def _h_memory_disassemble(server: DebugServer, params: dict[str, Any]) -> dict[s
 
 # ── VDP ─────────────────────────────────────────────────────────────────────
 
+_VDP_TYPE_NAMES = {VDP_KIND_TMS9918A: "TMS9918A", VDP_KIND_V9938: "V9938"}
+
+
 def _h_vdp_get_registers(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
     info = server.machine.vdp_info()
-    vtype = "V9938" if info.kind == VDP_KIND_V9938 else "TMS9918A"
+    vtype = _VDP_TYPE_NAMES.get(info.kind, "unknown")
     registers = {f"R{i}": hex8(v) for i, v in enumerate(info.regs)}
     return {"type": vtype, "registers": registers}
 

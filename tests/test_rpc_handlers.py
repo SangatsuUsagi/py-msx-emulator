@@ -12,11 +12,13 @@ import socket
 import threading
 import time
 from collections.abc import Iterator
+from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
 from host.debugger.stop import handle_stop
-from host.rpc_server import DebugServer
+from host.rpc_server import DebugServer, PauseReason, _h_vdp_get_registers
 from msx.boundary import WATCH_READ, WATCH_WRITE
 from tests.factories import make_machine, make_machine_msx2
 
@@ -434,3 +436,17 @@ def test_continue_sync_reads_no_register_on_the_socket_thread(sock_dir) -> None:
         stop.set()
         thread.join(timeout=1.0)
         srv.stop()
+
+
+def test_an_unknown_vdp_kind_is_reported_as_unknown() -> None:
+    # machine-c-abi "An unknown VDP kind over RPC".
+    server = MagicMock()
+    server.machine.vdp_info.return_value = MagicMock(kind=99, regs=(0,))
+    assert _h_vdp_get_registers(server, {})["type"] == "unknown"
+
+
+def test_an_unknown_stop_reason_pauses_as_a_user_request(tmp_path: Path) -> None:
+    # machine-c-abi "An unknown stop reason over RPC".
+    server = DebugServer(make_machine(bytes(0x8000)), sock_path=str(tmp_path / "rpc.sock"))
+    server.on_core_stop(99)
+    assert server.pause_state.reason == PauseReason.USER_REQUEST

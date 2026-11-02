@@ -112,3 +112,18 @@ def test_an_unknown_mapper_id_has_a_fallback_text() -> None:
     assert slot_content_text(SlotInfo(SLOT_CONTENT_CARTRIDGE, 999, 0), ("", "")) == (
         "Cartridge mapper 999"
     )
+
+
+def test_an_unknown_slot_content_shows_its_number() -> None:
+    # machine-c-abi "An unknown slot content".
+    assert _content(99) == "content 99"
+
+
+def test_an_unknown_bank_kind_shows_no_bank() -> None:
+    assert _bank(99, (WINDOW_NONE, WINDOW_NONE), (0, 0), 1) == "-"
+
+
+def test_an_unknown_window_kind_shows_its_number() -> None:
+    # machine-c-abi "An unknown window kind".
+    assert _bank(BANK_WINDOW_16K, (99, WINDOW_NONE), (3, 0), 1) == "bank kind 99"
+    assert _bank(BANK_WINDOWS_8K, (99, WINDOW_PAGE), (3, 4), 1) == "w0=kind 99  w1=b4@08000"
