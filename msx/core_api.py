@@ -43,7 +43,8 @@ and the kinds are outside the saved state.
 
 Printer. attach_printer connects a printer at any time and has no detach;
 a machine with no port returns STATUS_NO_PRINTER_PORT. The guest's bytes wait
-in a fixed buffer until drain_printer. The attachment and the buffer are
+in a fixed buffer until drain_printer; a full buffer drops the byte and does
+not change the status the guest reads. The attachment and the buffer are
 outside the saved state, and a reset or a state load keeps both.
 
 Bytes. Every bytes value a member returns belongs to the caller. An adapter

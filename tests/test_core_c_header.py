@@ -50,8 +50,9 @@ def _macros(code: str) -> dict[str, int]:
 
 def _abi_items(text: str) -> set[str]:
     """One line per macro value, typedef and function of the header's text,
-    with its whitespace collapsed. The version macros are not items."""
-    code = _strip_comments(text)
+    with its whitespace collapsed. The version macros are not items, and a
+    function-like macro is read as one `#` line, which is not an item."""
+    code = _strip_comments(text).replace("\\\n", " ")
     items = set()
     for name, value in _macros(code).items():
         if name not in _VERSION_MACROS:
@@ -250,3 +251,38 @@ def test_the_header_compiles(tmp_path: Path) -> None:
         capture_output=True, text=True, check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+def _accepts(version: int, major: int, minor: int) -> bool:
+    """machine-c-abi "A host accepts a core by version", for a host built
+    with major.minor."""
+    return version >> 16 == major and version & 0xFFFF >= minor
+
+
+@pytest.mark.skipif(shutil.which("cc") is None, reason="no cc on the path")
+def test_the_compatibility_macro_follows_the_rule(tmp_path: Path) -> None:
+    # machine-c-abi "The compatibility macro follows the rule".
+    major, minor = _version_macros()
+    versions = [
+        (major << 16) | minor,
+        (major << 16) | (minor + 1),
+        (major << 16) | (minor - 1),
+        ((major + 1) << 16) | minor,
+        ((major - 1) << 16) | minor,
+    ]
+    lines = [f'#include "{_HEADER}"', "#include <stdio.h>", "int main(void) {"]
+    for version in versions:
+        lines.append(f"    printf(\"%d\\n\", MSX_CORE_ABI_COMPATIBLE({version}) ? 1 : 0);")
+    lines += ["    return 0;", "}"]
+    source = tmp_path / "compatible.c"
+    source.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    program = tmp_path / "compatible"
+    build = subprocess.run(
+        ["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-o", str(program), str(source)],
+        capture_output=True, text=True, check=False,
+    )
+    assert build.returncode == 0, build.stderr
+    run = subprocess.run([str(program)], capture_output=True, text=True, check=True)
+    results = [line == "1" for line in run.stdout.split()]
+    assert results == [_accepts(v, major, minor) for v in versions]
+    assert results == [True, True, False, False, False]

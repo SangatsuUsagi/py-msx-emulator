@@ -8,7 +8,9 @@ writes. The decode and the unused bits are facts from openMSX's MSXPrinterPort
 and its machine files.
 
 Delivered bytes wait in a fixed buffer until the host drains them: the core
-writes no file and calls no host code.
+writes no file and calls no host code. BUSY depends on the attachment only, so
+what the guest reads does not depend on when the host drains. A byte strobed
+into a full buffer is dropped.
 """
 from __future__ import annotations
 
@@ -76,11 +78,11 @@ class PrinterPort:
     def _write_strobe(self, strobe: int) -> None:
         falling = self._strobe == 1 and strobe == 0
         self._strobe = strobe
-        if falling and not self._busy():
+        if falling and self._attached and len(self._buffer) < PRINTER_BUFFER_SIZE:
             self._buffer.append(self._data)
 
     def _busy(self) -> bool:
-        return not self._attached or len(self._buffer) >= PRINTER_BUFFER_SIZE
+        return not self._attached
 
     def snapshot_state(self) -> PrinterState:
         return {"data": self._data, "strobe": self._strobe}
