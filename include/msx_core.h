@@ -36,6 +36,8 @@
  *     (tests/msx_core_abi_baseline.txt).
  *   - A host rejects a core with another major version or a lower minor
  *     version than the host was built with, and accepts any other core.
+ *     MSX_CORE_ABI_COMPATIBLE(msx_core_abi_version()) makes this check. It is
+ *     evaluated in the host and is not a core declaration.
  *   - A host keeps working when the core returns a constant value it does not
  *     know, and does not present that value as a known one.
  */
@@ -52,6 +54,9 @@ extern "C" {
 #define MSX_CORE_ABI_VERSION_MAJOR 1
 #define MSX_CORE_ABI_VERSION_MINOR 1
 #define MSX_CORE_ABI_VERSION ((MSX_CORE_ABI_VERSION_MAJOR << 16) | MSX_CORE_ABI_VERSION_MINOR)
+#define MSX_CORE_ABI_COMPATIBLE(v)                         \
+    ((((v) >> 16) == MSX_CORE_ABI_VERSION_MAJOR) &&        \
+     (((v) & 0xFFFF) >= MSX_CORE_ABI_VERSION_MINOR))
 
 /* -- Statuses (every control operation) ---------------------------------- */
 #define MSX_STATUS_OK 0
@@ -371,7 +376,9 @@ int32_t msx_core_attach_mouse(msx_core *core, int32_t port);
  * msx_core_load_state keeps both. */
 int32_t msx_core_attach_printer(msx_core *core);
 /* The strobed bytes in order; empty when none or on a machine with no port.
- * Empties the core's buffer. */
+ * Empties the core's buffer. The buffer does not change the status the guest
+ * reads: a byte strobed into a full buffer is dropped. A host drains after
+ * each msx_core_step_frame; one frame cannot strobe a full buffer. */
 msx_bytes msx_core_drain_printer(msx_core *core);
 
 /* -- Break settings ----------------------------------------------------------- */

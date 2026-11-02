@@ -2,7 +2,7 @@
 
 A functionally accurate MSX1/MSX2 emulator, written in pure Python 3.10+ and driven by machine-readable component specifications.
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-4548%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-4550%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -806,7 +806,7 @@ To use a custom machine definition, add a new YAML file to `config/machines/` an
 
 ## Running tests
 
-The test suite has 4548 tests and covers all major components. It includes unit tests for individual opcodes and hardware registers, and integration tests that connect multiple components. It also includes scenario-level tests, with conditions that come directly from the component specs.
+The test suite has 4550 tests and covers all major components. It includes unit tests for individual opcodes and hardware registers, and integration tests that connect multiple components. It also includes scenario-level tests, with conditions that come directly from the component specs.
 
 ```bash
 # Install the development dependencies (pytest, ruff, mypy)
@@ -899,7 +899,7 @@ py-msx-emulator/
 ├── allium/                # Allium behaviour specs, verifying spec/implementation alignment (not published yet)
 ├── openspec/
 │   └── specs/             # Component specifications (not published yet)
-├── tests/                 # Test suite (4548 tests)
+├── tests/                 # Test suite (4550 tests)
 ├── py_emulator.example.yaml # Annotated example of the optional config file
 ├── QUICK_START.md         # Requirements, installation, BIOS setup
 ├── CHANGELOG.md           # Version history

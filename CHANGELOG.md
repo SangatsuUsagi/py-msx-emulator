@@ -2,6 +2,14 @@
 
 [日本語版はこちら](CHANGELOG_ja.md)
 
+- **v2.9.3** (2026-11-03): The printer status no longer depends on the host, and an ABI compatibility macro.
+  - The printer port reads BUSY only when no printer is attached. A full 4096-byte buffer now reads ready, and a byte
+    strobed then is still dropped. The buffer is outside the saved state, so before this change what the guest read
+    could depend on how often the host drains. Every host drains after each frame, and one frame cannot fill the
+    buffer, so no run changes.
+  - `include/msx_core.h` defines `MSX_CORE_ABI_COMPATIBLE(v)`, the host's version check in one place. It is evaluated
+    in the host, so the ABI version stays 1.1. A test builds and runs a C program to check it when `cc` is present.
+  - No change to the save-state format.
 - **v2.9.2** (2026-11-02): Golden hashes of the whole core.
   - `tests/vectors/golden_state.json` records five fixed runs: C-BIOS boot on `cbios_msx1`, `cbios_msx2` and
     `cbios_msx2_eu`, the MSX1 homebrew game NOBORUNOCA, and the MSX2 port of the homebrew card game commodore-uno,

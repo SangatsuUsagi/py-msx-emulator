@@ -755,7 +755,7 @@ io_device:
 |  | `disk_mounted(drive)` | ドライブがあり、イメージが入っているか |
 | デバイス | `attach_mouse(port) -> int` | MSX のマウスをジョイスティックポート 1（`0`）か 2（`1`）につなぎます。マウスのデバイスはコアが作ります。ほかのポートには `STATUS_BAD_ARGUMENT`（6）を返します。host が呼ぶのは 1 回まで、最初の `step_frame` と最初の `load_state` の前。マウス付きで保存したステートは、マウスをつないだマシンでだけ読み込めます。取り外しはありません |
 |  | `attach_printer() -> int` | プリンタポートにプリンタをつなぎます。呼ぶ時期は問いません。ポートのないマシンには `STATUS_NO_PRINTER_PORT`（7）を返します。接続の有無はステートに入りません。取り外しはありません |
-|  | `drain_printer() -> bytes` | ゲストが STROBE で送ったバイトを順に返し、`PRINTER_BUFFER_SIZE`（4096）バイトのバッファを空にします。バッファが満杯のときは BUSY を返し、そのとき送られたバイトは捨てます。リセットとステートの読み込みではバッファは変わりません |
+|  | `drain_printer() -> bytes` | ゲストが STROBE で送ったバイトを順に返し、`PRINTER_BUFFER_SIZE`（4096）バイトのバッファを空にします。バッファが満杯のときに送られたバイトは捨てますが、ステータスポートは準備完了のままです。そのため、ホストがどの間隔で取り出しても、ゲストが読む値は変わりません。実行ループは `step_frame` のたびに取り出し、1 フレームで 4096 バイトを送ることはできません。リセットとステートの読み込みではバッファは変わりません |
 | 状態の読み出し | `cpu_registers() -> CpuRegisters` | レジスタ一式 |
 |  | `read_memory(addr, length) -> bytes` | 今のスロットの選択で、CPU と同じように読みます。0xFFFF で折り返します。ウォッチポイントには反応しません。メモリに割り当てられたデバイスのレジスタは、副作用も含めて CPU と同じように読みます。長さが 0〜0x10000 の外なら `b""` を返し、`last_error_text()` を設定します |
 |  | `vram_size()`、`read_vram(addr, length) -> bytes` | 0x4000 か 0x20000。読み出しはアドレスの下位ビットで VRAM のサイズに折り返すので、負のアドレスは末尾に折り返します。長さが 0〜VRAM のサイズの外なら `b""` を返し、`last_error_text()` を設定します |
@@ -868,7 +868,7 @@ SDL2 フロントエンド（`frontend/sdl2_frontend.py`）も同じ形で動き
 
 ネイティブのコアが実装するコア API の C の形は、`include/msx_core.h` にあります。`CoreApi` のメンバーごとに `msx_core_<member>` の関数が 1 つ、境界のレコードごとに構造体が 1 つあり、定数は `msx/boundary.py` と同じ値を持ちます。名前と定数が Python のコードと同じであることは、`tests/test_core_c_header.py` が確かめます。フレーム出力の映像と音声は、次の `step_frame`、`reset`、`load_state` まで有効です。コアが返すそれ以外のバイト列は、同じコアに対する次の呼び出しまで有効です。渡した入力は呼び出しの間だけ読まれます。1 つのコアは、一度に 1 つのスレッドからだけ使います。C の各型は、コアがマスクする値、範囲に収める値、拒否する値のどれも表せる幅を持ちます。マウスの移動量は `int32_t`、フレームのブレークポイントは `int64_t` です。`msx_core_create` は呼び出し側が渡したバッファにメッセージを書くので、コアはグローバルな状態を持ちません。host は音声のレートとフレームの高さを `msx/boundary.py`（`AUDIO_SAMPLE_RATE`、`OUTPUT_HEIGHT`）から取ります。MSX のキー名（`host/key_names.py`）とカートリッジの SRAM のサイズ（`host/machine_config.py`）は、コアのどのモジュールも使わないので、host が持ちます。
 
-このヘッダの ABI バージョンは 1.1 です。`MSX_CORE_ABI_VERSION_MAJOR` と `MSX_CORE_ABI_VERSION_MINOR` がそれぞれの値で、`msx_core_abi_version()` は `(major << 16) | minor` を返します。関数か定数を追加したら minor を上げます。既存の宣言かマクロの値を変更または削除したら major を上げ、minor を 0 に戻します。ネイティブのコアがこのヘッダを実装するまで major は 1 のままなので、それまでは基準ファイルを更新するだけです。コメントだけの変更では何も変わりません。host は、major が異なるコアと、minor が自分のビルド時より小さいコアを拒否します。ネイティブのコアを読み込む host はまだないので、この判定をするコードもまだありません。host は、コアが返した定数の値を知らなくても動作を続けます。`tests/msx_core_abi_baseline.txt` は宣言とマクロの値をバージョンと一緒に記録しています。`tests/test_core_c_header.py` は、基準ファイルがヘッダと一致するまで失敗し、メッセージで変更の種類を示します。
+このヘッダの ABI バージョンは 1.1 です。`MSX_CORE_ABI_VERSION_MAJOR` と `MSX_CORE_ABI_VERSION_MINOR` がそれぞれの値で、`msx_core_abi_version()` は `(major << 16) | minor` を返します。関数か定数を追加したら minor を上げます。既存の宣言かマクロの値を変更または削除したら major を上げ、minor を 0 に戻します。ネイティブのコアがこのヘッダを実装するまで major は 1 のままなので、それまでは基準ファイルを更新するだけです。コメントだけの変更では何も変わりません。host は、major が異なるコアと、minor が自分のビルド時より小さいコアを拒否します。C や Zig の host は、ヘッダの `MSX_CORE_ABI_COMPATIBLE(v)` でこの判定をします。このマクロは host の側で評価するので、基準ファイルには入りません。ネイティブのコアを読み込む host はまだないので、このマクロを使う host もまだありません。Python のバインディングにも同じ判定が必要です。host は、コアが返した定数の値を知らなくても動作を続けます。`tests/msx_core_abi_baseline.txt` は宣言とマクロの値をバージョンと一緒に記録しています。`tests/test_core_c_header.py` は、基準ファイルがヘッダと一致するまで失敗し、メッセージで変更の種類を示します。
 
 Python のコードは、`allium/core-frontend.allium` にある言語に依存しない契約と、次の点で違います（同ファイルの _Status_ のコメントに一覧がある）です。
 

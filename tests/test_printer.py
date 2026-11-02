@@ -160,12 +160,11 @@ def test_s1985_form_with_a_printer() -> None:
 # -- buffer ---------------------------------------------------------------
 
 
-def test_a_full_buffer_reads_busy_and_recovers() -> None:
+def test_a_full_buffer_does_not_change_the_status() -> None:
+    # io-printer "A full buffer does not change the status".
     port = _port()
     for _ in range(PRINTER_BUFFER_SIZE):
         _send(port, 0x41)
-    assert port.read_port(0x90) == 0xFF
-    port.drain()
     assert port.read_port(0x90) == 0xFD
 
 
@@ -299,14 +298,24 @@ def test_a_drain_empties_the_buffer() -> None:
     assert machine.drain_printer() == b""
 
 
-def test_the_full_buffer_through_the_core_api() -> None:
+def test_a_full_buffer_reads_ready() -> None:
+    # machine-core "A full buffer reads ready".
+    machine = _machine()
+    machine.attach_printer()
+    for _ in range(PRINTER_BUFFER_SIZE):
+        _send(machine.io, 0x41)
+    assert machine.io.read_port(0x90) == 0xFD
+    assert machine.drain_printer() == b"\x41" * PRINTER_BUFFER_SIZE
+    assert machine.io.read_port(0x90) == 0xFD
+
+
+def test_a_byte_over_the_capacity_through_the_core_api() -> None:
+    # machine-core "A byte over the capacity is dropped".
     machine = _machine()
     machine.attach_printer()
     for _ in range(PRINTER_BUFFER_SIZE + 1):
         _send(machine.io, 0x41)
-    assert machine.io.read_port(0x90) == 0xFF
     assert machine.drain_printer() == b"\x41" * PRINTER_BUFFER_SIZE
-    assert machine.io.read_port(0x90) == 0xFD
 
 
 def test_attach_on_a_format_1_document() -> None:
