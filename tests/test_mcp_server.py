@@ -34,6 +34,12 @@ def _load(name: str, filename: str):
 def live(sock_dir) -> Iterator[tuple]:
     machine = make_machine(rom=bytes(32768))
     machine.memory.set_slot_register(0xD4)
+    yield from _serve(machine, sock_dir)
+
+
+def _serve(machine, sock_dir) -> Iterator[tuple]:
+    """Run a DebugServer and an emulator loop for `machine`; yields the MCP
+    module pointed at it, the machine and the server."""
     sock = str(sock_dir / "mcp.sock")
     srv = DebugServer(machine, sock_path=sock)
     srv.start()
@@ -70,6 +76,8 @@ def test_tools_registered() -> None:
     assert {
         "emulator_status", "cpu_step", "cpu_continue_until_pause",
         "memory_read", "memory_write", "screen_capture", "fdd_swap",
+        "tape_insert", "tape_eject", "tape_rewind", "tape_seek", "tape_status",
+        "tape_blocks",
     } <= names
 
 
@@ -124,3 +132,44 @@ def test_memory_write_read_tools(live) -> None:
     mod.memory_write("0xC000", "3E 01 C9")
     out = mod.memory_read("0xC000", 3)
     assert "3E 01 C9" in out
+
+
+def test_tape_tools_map_to_the_tape_methods(tmp_path: Path) -> None:
+    # remote-mcp-server "Tape tools map to the tape methods".
+    from unittest.mock import patch
+
+    mod = _load("mcp_server_tape", "mcp_server.py")
+    reply = {"mounted": True, "path": "game.cas", "motor": False, "position": 0,
+             "length": 3579545, "position_seconds": 0.0, "length_seconds": 1.0,
+             "block": 2}
+    with patch.object(mod, "_rpc", return_value=reply) as rpc:
+        out = mod.tape_seek(block=2)
+    rpc.assert_called_once_with("tape.seek", {"block": 2})
+    assert "block 2" in out and "game.cas" in out
+
+
+@pytest.fixture
+def live_tape(sock_dir) -> Iterator[tuple]:
+    import dataclasses
+
+    from host.machine_config import load_machine_config
+    from msx.machine_loader import build_machine
+    from tests.factories import _msx1_spec
+
+    spec = dataclasses.replace(_msx1_spec(), cassette_port=True)
+    rom = bytes([0xF3, 0x18, 0xFE]) + bytes(32765)
+    machine = build_machine(load_machine_config(spec, bios_override=rom).config)
+    yield from _serve(machine, sock_dir)
+
+
+def test_tape_tools_against_a_live_server(live_tape, tmp_path: Path) -> None:
+    from host.cas_image import CAS_HEADER
+
+    mod, _machine, _srv = live_tape
+    path = tmp_path / "game.cas"
+    path.write_bytes(CAS_HEADER + bytes([0xD0] * 10) + b"GAME  " + CAS_HEADER + bytes(8))
+    assert "2 blocks" in mod.tape_insert(str(path))
+    assert "binary GAME" in mod.tape_blocks()
+    assert "block 1" in mod.tape_seek(block=1)
+    assert mod.tape_eject() == "Tape: ejected."
+    assert mod.tape_status() == "Tape: empty."

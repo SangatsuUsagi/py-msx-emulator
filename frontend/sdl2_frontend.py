@@ -309,6 +309,11 @@ class _HotkeyState:
     ff_locked: bool = False
     muted: bool = False
     fullscreen: bool = False
+    # --tape-fast: run as fast-forward while a tape is mounted and its motor
+    # runs. tape_running is that condition, read from tape_info() once per
+    # frame (app-sdl2-video "Tape-fast runs as fast-forward").
+    tape_fast: bool = False
+    tape_running: bool = False
     # Output low-pass applied to the machine's PCM; one instance so its state
     # carries across frames. The reset action clears it with the machine.
     audio_filter: BiquadLowPass = field(default_factory=BiquadLowPass)
@@ -318,6 +323,14 @@ class _HotkeyState:
     @property
     def fast_forward(self) -> bool:
         return self.ff_hold_key is not None or self.ff_locked
+
+    def update_tape(self, machine: CoreApi) -> None:
+        """Read the deck once for this frame."""
+        if not self.tape_fast:
+            self.tape_running = False
+            return
+        info = machine.tape_info()
+        self.tape_running = info.mounted == 1 and info.motor == 1
 
 
 class _EventApi(Protocol):
@@ -942,6 +955,8 @@ def _window_title(
         parts.append("[PAUSED]")
     if hotkeys.fast_forward:
         parts.append("[FF]")
+    if hotkeys.tape_running:
+        parts.append("[TAPE]")
     if hotkeys.muted:
         parts.append("[MUTE]")
     disk = _disk_status(machine, hotkeys.disks)
@@ -1048,7 +1063,8 @@ def _run_frame(ctx: _RunContext, state: _LoopState) -> None:
         frame_timer.tick()
         return
 
-    fast_forward = hotkeys.fast_forward
+    hotkeys.update_tape(machine)
+    fast_forward = hotkeys.fast_forward or hotkeys.tape_running
     if fast_forward != state.fast_forward:
         state.fast_forward = fast_forward
         state.skip_counter = 0
@@ -1136,6 +1152,7 @@ def run(
     keyboard_joystick: Mapping[str, str] | None = None,
     debugger: Debugger | None = None,
     disk_files: DiskFiles | None = None,
+    tape_fast: bool = False,
 ) -> None:
     """Run the SDL2 window loop for `machine` until the user quits.
 
@@ -1167,6 +1184,8 @@ def run(
             Ctrl-C hotkey opens; None disables both.
         disk_files: the file of each drive's disk, shared with the debugger
             and the RPC server; None starts an empty table.
+        tape_fast: run as fast-forward while a tape is mounted and its motor
+            is on (--tape-fast); the emulation result does not change.
 
     Runtime hotkeys (built-in table; configurable): F6 next disk, Shift+F6
     eject/re-insert disk, F7 fast-forward while held, Shift+F7 latch
@@ -1244,6 +1263,7 @@ def run(
             files=disk_files if disk_files is not None else DiskFiles(),
         ),
         debugger=debugger,
+        tape_fast=tape_fast,
     )
 
     if resume is not None:

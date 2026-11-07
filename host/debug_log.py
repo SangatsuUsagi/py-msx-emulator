@@ -8,12 +8,14 @@ and turns them into `[CATEGORY]  message` lines.
 """
 from __future__ import annotations
 
+from host.cas_image import CPU_HZ
 from msx.boundary import (
     TRACE_EVENT_CPU_HISTORY,
     TRACE_EVENT_HANG_HALT_DI,
     TRACE_EVENT_HANG_PC_LOOP,
     TRACE_EVENT_IO_READ,
     TRACE_EVENT_IO_WRITE,
+    TRACE_EVENT_TAPE_MOTOR,
     TRACE_EVENT_UNDEFINED_OP,
     TRACE_EVENT_VDP_MODE_REG,
     TraceEvent,
@@ -35,7 +37,7 @@ _HALT_DI_KEY_BASE = 0x10000
 DEBUG_EVENT_KINDS = frozenset({
     TRACE_EVENT_IO_READ, TRACE_EVENT_IO_WRITE, TRACE_EVENT_VDP_MODE_REG,
     TRACE_EVENT_UNDEFINED_OP, TRACE_EVENT_CPU_HISTORY,
-    TRACE_EVENT_HANG_PC_LOOP, TRACE_EVENT_HANG_HALT_DI,
+    TRACE_EVENT_HANG_PC_LOOP, TRACE_EVENT_HANG_HALT_DI, TRACE_EVENT_TAPE_MOTOR,
 })
 
 
@@ -49,6 +51,15 @@ _R1_BL_BIT = 6
 _R1_M1_BIT = 4
 _R1_M2_BIT = 3
 _R0_M3_BIT = 1
+
+
+def _tape_motor_line(event: TraceEvent) -> str:
+    state = "on" if event.a else "off"
+    position = (event.b & 0xFFFFFFFF) | (event.c << 32)
+    tape = "tape mounted" if event.d else "no tape"
+    return _line(
+        "IO", f"tape motor {state}  position={position} ({position / CPU_HZ:.3f} s)  {tape}",
+    )
 
 
 class DebugLogFormatter:
@@ -83,6 +94,8 @@ class DebugLogFormatter:
                 event.a | _HALT_DI_KEY_BASE,
                 f"HALT with interrupts disabled  PC={event.a:04X}",
             )
+        if kind == TRACE_EVENT_TAPE_MOTOR:
+            return [_tape_motor_line(event)]
         return []
 
     def _hang(self, key: int, message: str) -> list[str]:

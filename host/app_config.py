@@ -133,7 +133,7 @@ _RESERVED_HOTKEY_NAMES = frozenset({
 
 _KNOWN_TOP_KEYS = frozenset({
     "machine", "speed", "scale", "extension", "extension1", "extension2",
-    "slot1", "slot2", "fdd1",
+    "slot1", "slot2", "fdd1", "tape",
     "frame_skip", "rpc", "joystick", "keyboard_joystick", "mouse", "hotkeys",
 })
 _KNOWN_RPC_KEYS = frozenset({"enabled", "socket"})
@@ -168,6 +168,8 @@ class AppConfig:
     slot2: str | None = None
     # Drive A disk list; a single path in the file becomes a one-element list.
     fdd1: list[str] | None = None
+    # A CAS file mounted at startup, like --tape.
+    tape: str | None = None
     frame_skip: bool | None = None
     rpc_enabled: bool | None = None
     rpc_socket: str | None = None
@@ -298,6 +300,7 @@ def load_app_config(root: Path) -> AppConfig:
     cfg.slot1 = _opt_rom_path(raw, "slot1", root)
     cfg.slot2 = _opt_rom_path(raw, "slot2", root)
     cfg.fdd1 = _opt_path_list(raw, "fdd1", root)
+    cfg.tape = _opt_rom_path(raw, "tape", root)
     cfg.frame_skip = _opt_bool(raw, "frame_skip")
     _parse_rpc(raw.get("rpc"), cfg)
     _parse_joystick(raw.get("joystick"), cfg)

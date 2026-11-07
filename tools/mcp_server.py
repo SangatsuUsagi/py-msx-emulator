@@ -417,5 +417,80 @@ def fdd_swap(drive: int, path: str = "") -> str:
     return f"Drive {drive}: unmounted."
 
 
+# ---------------------------------------------------------------------------
+# Cassette tape (none of these needs a pause)
+# ---------------------------------------------------------------------------
+
+def _tape_text(r: dict[str, Any]) -> str:
+    if not r.get("mounted"):
+        return "Tape: empty."
+    motor = "on" if r.get("motor") else "off"
+    return (f"Tape: {r['path']}  {r['position_seconds']:.2f} s (block {r['block']}) / "
+            f"{r['length_seconds']:.2f} s  motor {motor}")
+
+
+@mcp.tool()
+def tape_insert(path: str) -> str:
+    """Convert a CAS tape image and mount it at position 0. Only CAS files are
+    supported; convert a WAV recording to CAS with an external tool first.
+    The guest starts the motor (for example with BLOAD"CAS:",R).
+
+    Args:
+        path: Path to a .cas file.
+    """
+    r = _rpc("tape.insert", {"path": path})
+    return f"Tape: mounted {path} ({r['blocks']} blocks)"
+
+
+@mcp.tool()
+def tape_eject() -> str:
+    """Remove the tape from the cassette deck."""
+    _rpc("tape.eject")
+    return "Tape: ejected."
+
+
+@mcp.tool()
+def tape_rewind() -> str:
+    """Move the tape to position 0."""
+    return _tape_text(_rpc("tape.rewind"))
+
+
+@mcp.tool()
+def tape_seek(seconds: float | None = None, block: int | None = None) -> str:
+    """Move the tape to a time or to the start of a block. Give exactly one.
+
+    Args:
+        seconds: The position in seconds from the start of the tape.
+        block: A block number from tape_blocks.
+    """
+    params: dict[str, Any] = {}
+    if seconds is not None:
+        params["seconds"] = seconds
+    if block is not None:
+        params["block"] = block
+    return _tape_text(_rpc("tape.seek", params))
+
+
+@mcp.tool()
+def tape_status() -> str:
+    """Return the mounted tape file, the position and its block, the length
+    and the motor state."""
+    return _tape_text(_rpc("tape.status"))
+
+
+@mcp.tool()
+def tape_blocks() -> str:
+    """List the blocks of the mounted tape: number, type, file name, start
+    (seconds) and length (bytes)."""
+    blocks = _rpc("tape.blocks")["blocks"]
+    if not blocks:
+        return "Tape: no blocks."
+    return "\n".join(
+        f"#{b['number']} {b['type']} {b['name'] or ''} "
+        f"{b['start_seconds']:.2f} s {b['length']} bytes"
+        for b in blocks
+    )
+
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")
