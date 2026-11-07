@@ -47,6 +47,16 @@ in a fixed buffer until drain_printer; a full buffer drops the byte and does
 not change the status the guest reads. The attachment and the buffer are
 outside the saved state, and a reset or a state load keeps both.
 
+Tape. mount_tape takes an edge list (io-cassette: u32 little-endian T-state
+intervals between level changes, the first at level 1), copies it and starts
+at position 0; a list the format rejects returns STATUS_BAD_IMAGE and keeps
+the mounted tape. eject_tape empties the deck. seek_tape sets the position,
+0 to the tape length, else STATUS_BAD_ARGUMENT; with no tape it returns
+STATUS_NO_MEDIUM. A machine with no cassette port returns STATUS_NO_TAPE_PORT
+from all three. None of them changes the motor, which the guest drives
+through PPI Port C bit 4. tape_info has no side effect. The saved state holds
+the tape's identity, position and motor, not the edge list.
+
 Bytes. Every bytes value a member returns belongs to the caller. An adapter
 over a native core copies the core's buffer, whose life the header states
 (include/msx_core.h, machine-c-abi "The core owns the bytes it returns").
@@ -69,6 +79,7 @@ if TYPE_CHECKING:
         SlotInfo,
         SlotLayout,
         StopInfo,
+        TapeInfo,
         TraceEvent,
         VdpInfo,
     )
@@ -117,6 +128,13 @@ class CoreApi(Protocol):
     def attach_mouse(self, port: int) -> int: ...  # once, before the first step_frame
     def attach_printer(self) -> int: ...
     def drain_printer(self) -> bytes: ...  # the strobed bytes; b"" when none
+
+    # -- tape --------------------------------------------------------------------
+
+    def mount_tape(self, edges: bytes) -> int: ...  # the core copies the bytes
+    def eject_tape(self) -> int: ...
+    def seek_tape(self, position: int) -> int: ...  # rewind is seek_tape(0)
+    def tape_info(self) -> TapeInfo: ...
 
     # -- break settings ------------------------------------------------------------
 

@@ -951,6 +951,7 @@ def _build(machine_config: MachineConfig) -> "Machine":
     machine.printer = printer
     if spec.cassette_port:
         cassette = CassettePort(machine.clock)
+        cassette._trace = machine._trace
         machine.cassette = cassette
         machine.psg.attach_cassette(cassette)
         if machine.ppi is not None:

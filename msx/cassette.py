@@ -21,7 +21,9 @@ from bisect import bisect_right
 from dataclasses import dataclass, field
 from typing import TypedDict
 
+from msx.boundary import TRACE_DEBUG, TRACE_EVENT_TAPE_MOTOR
 from msx.clock import CoreClock
+from msx.trace import TraceLog
 
 
 class TapeIdentity(TypedDict):
@@ -68,6 +70,9 @@ class CassettePort:
     _motor: bool = field(default=False, init=False, repr=False)
     # The interval of the last read; reads move it forward one step at a time.
     _cursor: int = field(default=0, init=False, repr=False)
+    # The machine's trace buffer; a motor change records TRACE_EVENT_TAPE_MOTOR
+    # while TRACE_DEBUG is on.
+    _trace: TraceLog | None = field(default=None, init=False, repr=False)
 
     # --- the tape ---
 
@@ -138,6 +143,12 @@ class CassettePort:
         self._position = self.position()
         self._base_cycle = self.clock.cycle
         self._motor = on
+        trace = self._trace
+        if trace is not None and trace.kinds & TRACE_DEBUG:
+            position = self._position
+            trace.record(TRACE_EVENT_TAPE_MOTOR, 1 if on else 0,
+                         position & 0xFFFFFFFF, position >> 32,
+                         1 if self.mounted else 0)
         return True
 
     def read_level(self) -> int:

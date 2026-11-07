@@ -18,7 +18,7 @@ from host.machine_config import (
     load_machine_config,
     load_machine_spec,
 )
-from msx.boundary import MediaId, MediaImage, RomImage, RtcTime
+from msx.boundary import STATUS_NO_TAPE_PORT, MediaId, MediaImage, RomImage, RtcTime
 from msx.input import InputFrame
 from msx.machine_config import encode_machine_config, parse_machine_config
 from msx.machine_loader import build_machine
@@ -318,6 +318,7 @@ def test_a_format_2_document_has_no_cassette_port() -> None:
     machine = build_machine(format_2_config())
     assert machine.cassette is None
     assert machine.printer is not None
+    assert machine.mount_tape(b"\x10\x00\x00\x00") == STATUS_NO_TAPE_PORT
 
 
 def test_a_format_2_document_with_cassette_port_is_rejected() -> None:

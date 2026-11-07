@@ -17,6 +17,7 @@ from msx.boundary import (
     STATUS_NO_DRIVE,
     STATUS_NO_MEDIUM,
     STATUS_NO_PRINTER_PORT,
+    STATUS_NO_TAPE_PORT,
     STATUS_OK,
     STATUS_STATE_REJECTED,
     STOP_BREAKPOINT,
@@ -40,12 +41,13 @@ from msx.boundary import (
     SlotInfo,
     SlotLayout,
     StopInfo,
+    TapeInfo,
     TraceEvent,
     VdpInfo,
     VideoStandard,
     drive_media_id,
 )
-from msx.cassette import CassettePort
+from msx.cassette import CassettePort, edge_list_error
 from msx.clock import CoreClock
 from msx.cpu.z80 import Z80
 from msx.input import InputFrame, InputLines
@@ -415,6 +417,54 @@ class Machine:
         if self.printer is None:
             return b""
         return self.printer.drain()
+
+    def mount_tape(self, edges: bytes) -> int:
+        """Mount a copy of the edge list `edges` at position 0. Returns
+        STATUS_BAD_IMAGE, keeping the mounted tape, when the list is not
+        valid, and STATUS_NO_TAPE_PORT on a machine with no cassette port.
+        The motor does not change."""
+        if self.cassette is None:
+            return self._fail(STATUS_NO_TAPE_PORT, "this machine has no cassette port")
+        error = edge_list_error(edges)
+        if error is not None:
+            return self._fail(STATUS_BAD_IMAGE, error)
+        self.cassette.mount(edges)
+        self._error_text = b""
+        return STATUS_OK
+
+    def eject_tape(self) -> int:
+        """Empty the deck; STATUS_OK also when it is empty."""
+        if self.cassette is None:
+            return self._fail(STATUS_NO_TAPE_PORT, "this machine has no cassette port")
+        self.cassette.eject()
+        self._error_text = b""
+        return STATUS_OK
+
+    def seek_tape(self, position: int) -> int:
+        """Set the tape position in T-states, 0 to the tape length."""
+        cassette = self.cassette
+        if cassette is None:
+            return self._fail(STATUS_NO_TAPE_PORT, "this machine has no cassette port")
+        if not cassette.mounted:
+            return self._fail(STATUS_NO_MEDIUM, "no tape is mounted")
+        if not cassette.seek(position):
+            return self._fail(
+                STATUS_BAD_ARGUMENT,
+                f"tape position {position} is outside 0-{cassette.length}")
+        self._error_text = b""
+        return STATUS_OK
+
+    def tape_info(self) -> TapeInfo:
+        """The deck state; all 0 on a machine with no cassette port."""
+        cassette = self.cassette
+        if cassette is None:
+            return TapeInfo()
+        return TapeInfo(
+            mounted=1 if cassette.mounted else 0,
+            motor=1 if cassette.motor else 0,
+            position=cassette.position(),
+            length=cassette.length,
+        )
 
     def _enter_break(self, reason: int) -> None:
         """Record a stop (`reason` is a STOP_* value) at the current PC and

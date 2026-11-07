@@ -140,6 +140,39 @@ def test_the_printer_port_is_the_first_minor_increase() -> None:
     assert "msx_bytes msx_core_drain_printer(msx_core *core);" in items
 
 
+_TAPE_ITEMS = {
+    "int32_t msx_core_mount_tape(msx_core *core, const uint8_t *edges, size_t len);",
+    "int32_t msx_core_eject_tape(msx_core *core);",
+    "int32_t msx_core_seek_tape(msx_core *core, int64_t position);",
+    "void msx_core_tape_info(msx_core *core, msx_tape_info *out);",
+    "typedef struct msx_tape_info { int32_t mounted; int32_t motor; "
+    "int64_t position; int64_t length; } msx_tape_info;",
+    "macro STATUS_NO_TAPE_PORT 8",
+    "macro TRACE_EVENT_TAPE_MOTOR 12",
+}
+
+
+def test_the_cassette_is_the_second_minor_increase() -> None:
+    # machine-c-abi "The cassette is the second minor increase".
+    assert _version_macros() == (1, 2)
+
+
+def test_the_cassette_additions_are_a_minor_change() -> None:
+    # machine-c-abi "The additions are a minor change": the 1.1 items are the
+    # 1.2 baseline without the cassette items.
+    version, items = _read_baseline()
+    assert version == "version 1.2"
+    assert _TAPE_ITEMS <= items
+    assert _classify(items - _TAPE_ITEMS, _abi_items(_text())) == "minor"
+
+
+def test_the_cassette_constants_match_the_boundary() -> None:
+    # machine-c-abi "The constants match the boundary".
+    macros = _macros(_code())
+    assert macros["STATUS_NO_TAPE_PORT"] == boundary.STATUS_NO_TAPE_PORT == 8
+    assert macros["TRACE_EVENT_TAPE_MOTOR"] == boundary.TRACE_EVENT_TAPE_MOTOR == 12
+
+
 def test_the_header_matches_the_baseline() -> None:
     version, baseline = _read_baseline()
     kind = _classify(baseline, _abi_items(_text()))
@@ -156,7 +189,7 @@ def test_the_baseline_holds_every_function_struct_and_constant() -> None:
     _version, items = _read_baseline()
     functions = [item for item in items if "msx_core_" in item and "(" in item]
     assert len(functions) == len(_core_api_members()) + len(_EXTRA_FUNCTIONS)
-    assert sum(item.startswith("typedef struct") for item in items) == 17
+    assert sum(item.startswith("typedef struct") for item in items) == 18
     assert sum(item.startswith("macro ") for item in items) == len(_python_constants())
 
 

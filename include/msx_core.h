@@ -52,7 +52,7 @@ extern "C" {
 #endif
 
 #define MSX_CORE_ABI_VERSION_MAJOR 1
-#define MSX_CORE_ABI_VERSION_MINOR 1
+#define MSX_CORE_ABI_VERSION_MINOR 2
 #define MSX_CORE_ABI_VERSION ((MSX_CORE_ABI_VERSION_MAJOR << 16) | MSX_CORE_ABI_VERSION_MINOR)
 #define MSX_CORE_ABI_COMPATIBLE(v)                         \
     ((((v) >> 16) == MSX_CORE_ABI_VERSION_MAJOR) &&        \
@@ -67,6 +67,7 @@ extern "C" {
 #define MSX_STATUS_NO_MEDIUM 5
 #define MSX_STATUS_BAD_ARGUMENT 6
 #define MSX_STATUS_NO_PRINTER_PORT 7
+#define MSX_STATUS_NO_TAPE_PORT 8
 
 /* -- Stop reasons (msx_stop_info.reason, msx_frame_output.stop_reason) ---- */
 #define MSX_STOP_NONE 0
@@ -102,6 +103,7 @@ extern "C" {
 #define MSX_TRACE_EVENT_CPU_HISTORY 9
 #define MSX_TRACE_EVENT_HANG_PC_LOOP 10
 #define MSX_TRACE_EVENT_HANG_HALT_DI 11
+#define MSX_TRACE_EVENT_TAPE_MOTOR 12
 #define MSX_TRACE_HISTORY_SIZE 64
 #define MSX_TRACE_CAPACITY 65536
 #define MSX_TRACE_LOST_MAX 0x7FFFFFFF
@@ -316,6 +318,13 @@ typedef struct msx_trace_event {
     int32_t a, b, c, d;
 } msx_trace_event;
 
+typedef struct msx_tape_info {
+    int32_t mounted;  /* 1 when a tape is in the deck */
+    int32_t motor;    /* 1 when the guest runs the motor */
+    int64_t position; /* T-states from the start of the tape */
+    int64_t length;   /* T-states; 0 with no tape */
+} msx_tape_info;
+
 /* -- Construction ----------------------------------------------------------- */
 
 /* MSX_CORE_ABI_VERSION. This signature does not change in any version. */
@@ -380,6 +389,20 @@ int32_t msx_core_attach_printer(msx_core *core);
  * reads: a byte strobed into a full buffer is dropped. A host drains after
  * each msx_core_step_frame; one frame cannot strobe a full buffer. */
 msx_bytes msx_core_drain_printer(msx_core *core);
+
+/* -- Tape --------------------------------------------------------------------- */
+
+/* The edge list: u32 little-endian T-state intervals between level changes,
+ * the first at level 1; the core copies it. MSX_STATUS_BAD_IMAGE keeps the
+ * mounted tape. All three return MSX_STATUS_NO_TAPE_PORT on a machine with no
+ * cassette port and do not change the motor, which the guest drives. */
+int32_t msx_core_mount_tape(msx_core *core, const uint8_t *edges, size_t len);
+int32_t msx_core_eject_tape(msx_core *core);
+/* 0 to the tape length, else MSX_STATUS_BAD_ARGUMENT; MSX_STATUS_NO_MEDIUM with
+ * no tape. Rewind is position 0. */
+int32_t msx_core_seek_tape(msx_core *core, int64_t position);
+/* No side effect; all 0 on a machine with no cassette port. */
+void msx_core_tape_info(msx_core *core, msx_tape_info *out);
 
 /* -- Break settings ----------------------------------------------------------- */
 

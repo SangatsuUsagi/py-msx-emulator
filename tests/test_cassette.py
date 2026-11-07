@@ -1,6 +1,6 @@
 """io-cassette: the cassette port in the core (edge list, input level, motor,
-position, exact read time, reset and saved state), and the register 14 bit 7
-scenarios of audio-psg."""
+position, exact read time, reset and saved state), the register 14 bit 7
+scenarios of audio-psg, and the tape members of machine-core."""
 from __future__ import annotations
 
 import dataclasses
@@ -9,7 +9,17 @@ import struct
 import pytest
 
 from host.machine_config import load_machine_config
-from msx.boundary import STATUS_OK, STATUS_STATE_REJECTED
+from msx.boundary import (
+    STATUS_BAD_ARGUMENT,
+    STATUS_BAD_IMAGE,
+    STATUS_NO_MEDIUM,
+    STATUS_NO_TAPE_PORT,
+    STATUS_OK,
+    STATUS_STATE_REJECTED,
+    TRACE_DEBUG,
+    TRACE_EVENT_TAPE_MOTOR,
+    TapeInfo,
+)
 from msx.cassette import CassettePort
 from msx.clock import CoreClock
 from msx.input import InputLines
@@ -376,3 +386,112 @@ def test_no_port_saves_null() -> None:
     import json
 
     assert json.loads(_machine(port=False).save_state())["tape"] is None
+
+
+# --- machine-core: the host mounts, ejects and seeks the tape ---
+
+def test_a_mount_starts_at_position_0() -> None:
+    machine = _machine()
+    assert machine.mount_tape(_edges([5_000_000])) == STATUS_OK
+    assert machine.seek_tape(2_000_000) == STATUS_OK
+    assert machine.mount_tape(_edges([1_000, 2_000])) == STATUS_OK
+    assert machine.tape_info() == TapeInfo(mounted=1, motor=0, position=0, length=3_000)
+
+
+def test_a_bad_list_keeps_the_old_tape() -> None:
+    machine = _machine()
+    assert machine.mount_tape(_edges([5_000_000])) == STATUS_OK
+    assert machine.seek_tape(2_000_000) == STATUS_OK
+    assert machine.mount_tape(bytes(6)) == STATUS_BAD_IMAGE
+    assert machine.last_error_text() != b""
+    assert machine.tape_info() == TapeInfo(mounted=1, motor=0, position=2_000_000,
+                                           length=5_000_000)
+
+
+def test_eject_empties_the_deck() -> None:
+    machine = _machine()
+    assert machine.mount_tape(_edges([5_000_000])) == STATUS_OK
+    assert machine.eject_tape() == STATUS_OK
+    assert machine.eject_tape() == STATUS_OK
+    assert machine.tape_info() == TapeInfo()
+
+
+def test_no_port() -> None:
+    machine = _machine(port=False)
+    for status in (machine.mount_tape(_edges([1000])), machine.eject_tape(),
+                   machine.seek_tape(0)):
+        assert status == STATUS_NO_TAPE_PORT
+        assert b"no cassette port" in machine.last_error_text()
+    assert machine.tape_info() == TapeInfo()
+
+
+def test_a_seek_moves_the_position() -> None:
+    machine = _machine()
+    assert machine.mount_tape(_edges([10_000_000])) == STATUS_OK
+    assert machine.seek_tape(3_000_000) == STATUS_OK
+    assert machine.tape_info().position == 3_000_000
+
+
+@pytest.mark.parametrize("offset", [-1, 1])
+def test_a_seek_outside_the_tape_is_rejected(offset: int) -> None:
+    machine = _machine()
+    assert machine.mount_tape(_edges([10_000_000])) == STATUS_OK
+    assert machine.seek_tape(3_000_000) == STATUS_OK
+    target = -1 if offset < 0 else 10_000_000 + 1
+    assert machine.seek_tape(target) == STATUS_BAD_ARGUMENT
+    assert machine.tape_info().position == 3_000_000
+
+
+def test_a_seek_with_no_tape() -> None:
+    assert _machine().seek_tape(0) == STATUS_NO_MEDIUM
+
+
+# --- machine-core: the host reads the tape state ---
+
+def _motor_on(machine: Machine) -> None:
+    """Start the motor the way the guest does: Port C output, bit 4 = 0."""
+    machine.ppi.write_port(0xAB, 0x82)
+    machine.ppi.write_port(0xAA, 0x40)
+
+
+def test_the_status_while_playing() -> None:
+    machine = _machine()
+    assert machine.mount_tape(_edges([10_000_000])) == STATUS_OK
+    _motor_on(machine)
+    machine.clock.cycle += 3_579_545
+    assert machine.tape_info() == TapeInfo(mounted=1, motor=1, position=3_579_545,
+                                           length=10_000_000)
+
+
+def test_the_status_is_a_pure_query() -> None:
+    machine = _tape_machine()
+    machine.run_frame()
+    before = machine.save_state()
+    first = machine.tape_info()
+    assert machine.tape_info() == first
+    assert first.motor == 1 and first.position > 0
+    assert machine.save_state() == before
+
+
+# --- machine-core: the motor change is a trace event ---
+
+def test_motor_on_and_off() -> None:
+    machine = _machine()
+    ppi = machine.ppi
+    ppi.write_port(0xAB, 0x82)
+    ppi.write_port(0xAA, 0x50)  # motor off
+    assert machine.mount_tape(_edges([10_000_000])) == STATUS_OK
+    assert machine.set_trace_kinds(TRACE_DEBUG) == STATUS_OK
+    machine.drain_trace()
+    ppi.write_port(0xAA, 0x40)  # motor on
+    machine.clock.cycle += 1000
+    ppi.write_port(0xAA, 0x50)  # motor off
+    events = [e for e in machine.drain_trace() if e.kind == TRACE_EVENT_TAPE_MOTOR]
+    assert [(e.a, e.b | (e.c << 32), e.d) for e in events] == [(1, 0, 1), (0, 1000, 1)]
+
+
+def test_no_motor_event_without_trace_debug() -> None:
+    machine = _machine()
+    assert machine.mount_tape(_edges([10_000_000])) == STATUS_OK
+    _motor_on(machine)
+    assert all(e.kind != TRACE_EVENT_TAPE_MOTOR for e in machine.drain_trace())
