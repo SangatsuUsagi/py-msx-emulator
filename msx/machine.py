@@ -45,6 +45,7 @@ from msx.boundary import (
     VideoStandard,
     drive_media_id,
 )
+from msx.cassette import CassettePort
 from msx.clock import CoreClock
 from msx.cpu.z80 import Z80
 from msx.input import InputFrame, InputLines
@@ -100,6 +101,8 @@ class Machine:
     kanji: KanjiRom | None = field(default=None, repr=False)
     ppi: PPI | None = field(default=None, repr=False)
     printer: PrinterPort | None = field(default=None, repr=False)
+    # The cassette port's tape deck, or None when the machine has no port.
+    cassette: CassettePort | None = field(default=None, repr=False)
     rtc: "RTC | None" = field(default=None, repr=False)
     input: InputLines = field(default_factory=InputLines)
     # Per-frame audio mix, produced by run_frame() and read with take_audio().
@@ -1103,8 +1106,18 @@ class Machine:
         if self._break_conditions_active():
             return self._run_lines_debug(vdp9938, first_line, end_line, total)
         if not self._trace.kinds & TRACE_DEBUG:
+            if self._tape_mounted():
+                return self._run_lines_exact(vdp9938, first_line, end_line, total)
             return self._run_lines_fast(vdp9938, first_line, end_line, total)
         return self._run_lines_traced(vdp9938, first_line, end_line, total)
+
+    def _tape_mounted(self) -> bool:
+        """Whether the clock must count per instruction: a tape is mounted,
+        so a read of the tape input sees the T-state of its instruction
+        (io-cassette). Chosen by "mounted", not "motor on": a mount happens
+        only between frames, so the arm cannot change inside a call however
+        the host breaks the frame (add-cassette-playback design D4)."""
+        return self.cassette is not None and self.cassette.mounted
 
     def _run_lines_debug(
         self, vdp9938: V9938 | None, first_line: int, end_line: int, total: int
@@ -1121,6 +1134,9 @@ class Machine:
         # cycle_count aggregation into a per-line local flushed once a scanline.
         post_checks = self._post_step_checks_armed()
         step_one = self._step_one
+        # While a tape is mounted the clock counts per instruction, as in
+        # _run_lines_exact, so a break does not change what a read sees.
+        exact = self._tape_mounted()
         # Either chip; hot-loop local for the per-instruction .irq read. When
         # vdp9938 is not None it is this same object, passed only to gate the
         # V9938 per-scanline hooks.
@@ -1144,7 +1160,10 @@ class Machine:
                 cpu.int_pending = vdp.irq
                 n = cpu_step()
                 total += n
-                line_cycles += n
+                if exact:
+                    clock.cycle += n
+                else:
+                    line_cycles += n
                 if vdp9938 is not None:
                     # Full tick() (command-timer decrement + _line_cycle) only
                     # while a command is actually running -- see _run_lines_fast's
@@ -1289,6 +1308,48 @@ class Machine:
                     total += n
                     line_cycles += n
                 clock.cycle += line_cycles
+        return total
+
+    def _run_lines_exact(
+        self, vdp9938: V9938 | None, first_line: int, end_line: int, total: int
+    ) -> int:
+        """Scanline loop while a tape is mounted (no break conditions,
+        TRACE_DEBUG off): as _run_lines_fast, but the clock counts each
+        instruction before the next one starts, so a device reads the T-state
+        of the instruction that accesses it. The HALT and JR $ batching of
+        _run_lines_fast stays: a batched idle instruction does no port I/O."""
+        cpu = self.cpu
+        cpu_step = cpu.step
+        cpf = self.cycles_per_frame
+        lpf = self.lines_per_frame
+        clock = self.clock
+        vdp = self.vdp
+        for line in range(first_line, end_line):
+            line_end = (line + 1) * cpf // lpf
+            while total < line_end:
+                cpu.int_pending = vdp.irq
+                # The batching condition of _run_lines_fast (KEEP IN SYNC).
+                would_accept_interrupt = (
+                    cpu.int_pending and cpu.iff1 and not cpu.ei_pending
+                )
+                if (
+                    cpu.idle_hint
+                    and not cpu.nmi_pending
+                    and not would_accept_interrupt
+                    and not (vdp9938 is not None and vdp9938._cmd_active)
+                ):
+                    n = cpu.step_idle_batch(line_end - total)
+                else:
+                    n = cpu_step()
+                total += n
+                clock.cycle += n
+                if vdp9938 is not None:
+                    if vdp9938._cmd_active:
+                        vdp9938.tick(n)
+                    else:
+                        vdp9938._line_cycle += n
+            if vdp9938 is not None:
+                vdp9938.begin_scanline(line)
         return total
 
     def _run_lines_traced(

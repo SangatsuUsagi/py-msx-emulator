@@ -50,11 +50,12 @@ _T = TypeVar("_T")
 # Version 1: the first MachineConfig document (openspec/changes/archive/
 #   2026-10-25-portable-machine-config).
 # Version 2: machine.printer_port added.
-MACHINE_CONFIG_FORMAT_VERSION: int = 2
+# Version 3: machine.cassette_port added (openspec/changes/add-cassette-playback).
+MACHINE_CONFIG_FORMAT_VERSION: int = 3
 # The oldest version the parser accepts (machine-loader "build_machine checks
 # the document and its ROM images"). A key that a later version adds has a
 # default for an older document: version 1 has no printer_port, so its form
-# is none.
+# is none, and versions 1 and 2 have no cassette_port, so the machine has none.
 MACHINE_CONFIG_MIN_FORMAT_VERSION: int = 1
 
 _SHA1_HEX_LEN = 40
@@ -236,6 +237,7 @@ def _machine_object(
         "keyboard_layout": spec.keyboard_type.spelling,
         "ppi_control_read": spec.ppi_control_read.value,
         "printer_port": spec.printer_port.value,
+        "cassette_port": spec.cassette_port,
         "has_v9938": spec.has_v9938,
         "has_rtc": spec.has_rtc,
         "main_rom": main_ref,
@@ -303,7 +305,8 @@ def encode_machine_config(
 _TOP_KEYS = frozenset({"format_version", "machine", "cartridges", "extensions"})
 _MACHINE_KEYS = frozenset({
     "id", "name", "generation", "video_standard", "m1_wait_states", "keyboard_layout",
-    "ppi_control_read", "printer_port", "has_v9938", "has_rtc", "main_rom", "logo_rom",
+    "ppi_control_read", "printer_port", "cassette_port", "has_v9938", "has_rtc", "main_rom",
+    "logo_rom",
     "slot0_ram", "ram_size_kb", "sub_rom", "sub_rom_subslot", "has_ram_mapper",
     "ram_mapper_size_kb", "flat_ram_subslot", "flat_ram_size_kb", "fdc", "fdc_subslot",
     "io_device", "device_io_ports",
@@ -415,8 +418,18 @@ def _printer_port(obj: dict[str, object], label: str) -> PrinterPortForm:
     )
 
 
+def _cassette_port(obj: dict[str, object], label: str) -> bool:
+    if "cassette_port" not in obj:  # format version 1 or 2
+        return False
+    return check_bool(obj["cassette_port"], f"{label}.cassette_port")
+
+
 def _parse_machine(value: object, roms: dict[str, RomRef], version: int) -> MachineSpec:
-    keys = _MACHINE_KEYS if version >= 2 else _MACHINE_KEYS - {"printer_port"}
+    keys = _MACHINE_KEYS
+    if version < 3:
+        keys = keys - {"cassette_port"}
+    if version < 2:
+        keys = keys - {"printer_port"}
     obj = check_object(value, "machine", keys)
     label = "machine"
     main = _add_rom(roms, "main", _rom(obj["main_rom"], f"{label}.main_rom"))
@@ -485,6 +498,7 @@ def _parse_machine(value: object, roms: dict[str, RomRef], version: int) -> Mach
             [mode.value for mode in PpiControlRead],
         ),
         printer_port=_printer_port(obj, label),
+        cassette_port=_cassette_port(obj, label),
         ram_mapper_size_kb=mapper_kb,
         machine_id=check_str(obj["id"], f"{label}.id"),
         device_io_ports=io_ports,

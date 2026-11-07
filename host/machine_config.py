@@ -688,6 +688,7 @@ class _BuiltinDevices(NamedTuple):
     keyboard_type: KeyboardLayout
     ppi_control_read: PpiControlRead
     printer_port: PrinterPortForm
+    cassette_port: bool
     io_ports: dict[str, tuple[int, int]]
 
 
@@ -747,6 +748,7 @@ def _parse_builtin_devices(
     keyboard_type = KeyboardLayout.INTERNATIONAL
     ppi_control_read = PpiControlRead.CONTROL
     printer_port = PrinterPortForm.NONE
+    cassette_port = False
     device_io_ports: dict[str, tuple[int, int]] = {}
 
     for entry in raw.get("builtin_devices", []):
@@ -775,12 +777,15 @@ def _parse_builtin_devices(
             keyboard_type, ppi_control_read = _parse_ppi8255(dev, entry, machine_path)
         elif ref_str == "printer_port":
             printer_port = _parse_printer_port(dev, entry, machine_path)
+        elif ref_str == "cassette_port":
+            cassette_port = True
         ports_raw: Any = dev.raw.get("io_ports")
         if isinstance(ports_raw, list) and len(ports_raw) >= 1:
             device_io_ports[ref_str] = (int(ports_raw[0]), int(ports_raw[-1]))
 
     return _BuiltinDevices(
-        has_v9938, has_rtc, keyboard_type, ppi_control_read, printer_port, device_io_ports
+        has_v9938, has_rtc, keyboard_type, ppi_control_read, printer_port, cassette_port,
+        device_io_ports,
     )
 
 
@@ -884,9 +889,10 @@ def load_machine_spec(
         ram_size_kb = _parse_slot3_msx1(cast(Slot3Msx1Yaml, slot3))
 
     # --- Builtin device resolution ---
-    has_v9938, has_rtc, keyboard_type, ppi_control_read, printer_port, device_io_ports = (
-        _parse_builtin_devices(raw, device_registry, machine_path)
-    )
+    (
+        has_v9938, has_rtc, keyboard_type, ppi_control_read, printer_port, cassette_port,
+        device_io_ports,
+    ) = _parse_builtin_devices(raw, device_registry, machine_path)
 
     # --- Machine-level global I/O device (e.g. a built-in Kanji font ROM) ---
     io_device_raw = raw.get("io_device")
@@ -916,6 +922,7 @@ def load_machine_spec(
         keyboard_type=keyboard_type,
         ppi_control_read=ppi_control_read,
         printer_port=printer_port,
+        cassette_port=cassette_port,
         device_io_ports=device_io_ports,
         video_standard=video_standard,
         m1_wait_states=m1_wait_states,

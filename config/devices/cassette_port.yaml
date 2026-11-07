@@ -1,0 +1,8 @@
+id: cassette_port
+type: io_device
+implemented: true
+name: MSX cassette port
+controls: cassette_port
+# The tape input is PSG register 14 bit 7 and the motor is PPI Port C bit 4
+# (msx/cassette.py), so the device has no io_ports. A machine without this
+# entry reads bit 7 as 0, as openMSX's DummyCassettePort does.

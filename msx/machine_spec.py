@@ -113,6 +113,10 @@ class MachineSpec:
     # The printer port, resolved from the printer_port device.
     printer_port: PrinterPortForm = PrinterPortForm.NONE
 
+    # Whether the machine has a cassette port (msx/cassette.py), resolved
+    # from the cassette_port device.
+    cassette_port: bool = False
+
     # RAM mapper's configured size (MSX2, when has_ram_mapper is True), resolved
     # from the mapper: standard sub-slot's size_kb -- default 128 preserves
     # every machine configured before this became configurable.

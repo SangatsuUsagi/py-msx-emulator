@@ -102,9 +102,9 @@ def test_machine_properties_are_integers() -> None:
 # The canonical documents' SHA-256, recorded at format version 2. The video
 # standard and the keyboard layout stay text in the document.
 _DOCUMENT_SHA256 = {
-    "cbios_msx1_eu": "97a27f506f9c319c51fbc8d290c7dd50d844e271b73650a1b35b453831f75e8e",
-    "cbios_msx1_jp": "e021757fb173df591afdb11295511ce884ee0859f219789ad24329595cf39910",
-    "hb_f1xd": "3e20d54c2386f78638747a60793056c4ceac2fedc5e0c3a2a0990767eb027f1f",
+    "cbios_msx1_eu": "9da04593fb165388ba8ae444cd00997f2b4189b87dcba3cabd0d9215f16f9796",
+    "cbios_msx1_jp": "c545fb791d172f0190f700a96324b5c3e5b671b1d52593fba5e30cb54a9d4be0",
+    "hb_f1xd": "00e34c2153d5b4e5f803e12b763d16ce33d03d3684bbbaa046745ec6618b8d25",
 }
 
 
@@ -119,6 +119,7 @@ def test_the_canonical_document_spells_the_enums_as_text(machine_id: str) -> Non
     assert parsed.video_standard.spelling == machine["video_standard"]
     assert parsed.keyboard_type.spelling == machine["keyboard_layout"]
     assert parsed.printer_port.value == machine["printer_port"]
+    assert parsed.cassette_port == machine["cassette_port"]
 
 
 def test_machine_keyboard_layout_defaults_to_international() -> None:
@@ -192,7 +193,7 @@ def test_the_same_inputs_give_the_same_document_bytes(
     first = _document(cartridge1=_CART, mapper1="ASCII8")
     second = _document(cartridge1=_CART, mapper1="ASCII8")
     assert first == second
-    assert json.loads(first)["format_version"] == 2
+    assert json.loads(first)["format_version"] == 3
 
 
 def test_run_inputs_do_not_change_the_document(
@@ -293,16 +294,43 @@ def format_1_config(machine_id: str = "hb_10", keep_printer_port: bool = False):
     config = load_machine_config(spec, **_overrides(spec)).config
     document = json.loads(config.document)
     document["format_version"] = 1
+    del document["machine"]["cassette_port"]
     if not keep_printer_port:
         del document["machine"]["printer_port"]
     config.document = json.dumps(document).encode("utf-8")
     return config
 
 
+def format_2_config(machine_id: str = "hb_10", keep_cassette_port: bool = False):
+    """A machine's config with its document written as format version 2."""
+    spec = _spec(machine_id)
+    config = load_machine_config(spec, **_overrides(spec)).config
+    document = json.loads(config.document)
+    document["format_version"] = 2
+    if not keep_cassette_port:
+        del document["machine"]["cassette_port"]
+    config.document = json.dumps(document).encode("utf-8")
+    return config
+
+
+def test_a_format_2_document_has_no_cassette_port() -> None:
+    # machine-loader "A format 2 document has no cassette port".
+    machine = build_machine(format_2_config())
+    assert machine.cassette is None
+    assert machine.printer is not None
+
+
+def test_a_format_2_document_with_cassette_port_is_rejected() -> None:
+    # machine-loader "A format 2 document with cassette_port is rejected".
+    with pytest.raises(MachineLoadError, match="cassette_port"):
+        build_machine(format_2_config(keep_cassette_port=True))
+
+
 def test_a_format_1_document_has_no_printer_port() -> None:
     # machine-loader "A format 1 document has no printer port".
     machine = build_machine(format_1_config())
     assert machine.printer is None
+    assert machine.cassette is None
 
 
 def test_a_format_1_document_with_printer_port_is_rejected() -> None:
@@ -311,7 +339,7 @@ def test_a_format_1_document_with_printer_port_is_rejected() -> None:
         build_machine(format_1_config(keep_printer_port=True))
 
 
-@pytest.mark.parametrize("version", [0, 3])
+@pytest.mark.parametrize("version", [0, 4])
 def test_an_unsupported_format_version_is_rejected(version: int) -> None:
     # machine-loader "An unsupported format version is rejected".
     config = format_1_config()
@@ -322,7 +350,7 @@ def test_an_unsupported_format_version_is_rejected(version: int) -> None:
         build_machine(config)
 
 
-@pytest.mark.parametrize(("version", "message"), [(3, "version 3, expected 1 to 2"),
+@pytest.mark.parametrize(("version", "message"), [(4, "version 4, expected 1 to 3"),
                                                   (1, "not valid JSON")])
 def test_a_document_that_is_not_strict_json_names_an_unsupported_version(
     version: int, message: str
@@ -736,3 +764,37 @@ def test_a_bad_io_range_is_rejected(
     document = _edited_document(lambda machine: machine["device_io_ports"].__setitem__(key, ports))
     with pytest.raises(MachineLoadError, match=key):
         parse_machine_config(document)
+
+
+# --- machine-loader "A machine declares its cassette port" ---
+
+_ALL_MACHINES = sorted(p.stem for p in (_CONFIG / "machines").glob("*.yaml"))
+
+
+@pytest.mark.parametrize("machine_id", _ALL_MACHINES)
+def test_every_shipped_machine_has_a_cassette_port(machine_id: str) -> None:
+    assert _spec(machine_id).cassette_port is True
+
+
+def test_a_machine_without_the_entry_has_no_cassette_port(tmp_path: Path) -> None:
+    import shutil
+
+    from host.machine_config import load_device_registry, load_machine_spec
+
+    config = tmp_path / "config"
+    shutil.copytree(_CONFIG, config)
+    path = config / "machines" / "hb_10.yaml"
+    lines = path.read_text().splitlines(keepends=True)
+    start = lines.index("  - ref: cassette_port\n")
+    end = start + 1
+    while lines[end].startswith("    #"):
+        end += 1
+    path.write_text("".join(lines[:start] + lines[end:]))
+    spec = load_machine_spec("hb_10", config, load_device_registry(config), _PROJECT)
+    assert spec.cassette_port is False
+
+
+def test_the_cassette_port_round_trips_through_the_document() -> None:
+    document = _document("hb_10")
+    assert json.loads(document)["machine"]["cassette_port"] is True
+    assert parse_machine_config(document).spec.cassette_port is True

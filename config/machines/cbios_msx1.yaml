@@ -34,5 +34,8 @@ builtin_devices:
   - ref: ppi8255
   - ref: vdp_tms9918a
   - ref: psg_ay8910
+  - ref: cassette_port
+    # Cassette input on PSG R#14 bit 7, motor on PPI Port C bit 4 (openMSX
+    # machine files have a CassettePort).
 
 default_extensions: []

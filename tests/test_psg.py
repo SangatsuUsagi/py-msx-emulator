@@ -1,9 +1,19 @@
 import pytest
 
+from msx.cassette import CassettePort
+from msx.clock import CoreClock
 from msx.input import InputLines
 from msx.mouse import MouseDevice
 from msx.psg import PSG, PSG_CLOCK, JoystickPort, MouseSlot
 from tests.factories import restore_psg_synth
+
+
+def _psg(lines: InputLines) -> PSG:
+    """A PSG with joystick lines, on a machine with a cassette port and no
+    tape: register 14 bits 6 and 7 read 1 (audio-psg)."""
+    psg = PSG(_input=lines)
+    psg.attach_cassette(CassettePort(CoreClock()))
+    return psg
 
 
 def _press(lines: InputLines, port: int, bit: int) -> None:
@@ -52,7 +62,7 @@ def test_unmapped_read_returns_ff() -> None:
 
 def test_reg14_all_released_returns_ff() -> None:
     # All bits = 1 (released) when no buttons pressed, JOY_SELECT=0 (default)
-    psg = PSG(_input=InputLines())
+    psg = _psg(InputLines())
     psg.write_port(0xA0, 14)
     assert psg.read_port(0xA2) == 0xFF
 
@@ -60,7 +70,7 @@ def test_reg14_all_released_returns_ff() -> None:
 def test_reg14_joy1_up_pressed_clears_bit0() -> None:
     state = InputLines()
     _press(state, 0, 0)  # Joy1 Up
-    psg = PSG(_input=state)
+    psg = _psg(state)
     psg.write_port(0xA0, 14)
     result = psg.read_port(0xA2)
     assert result & 0x01 == 0   # bit 0 cleared
@@ -70,7 +80,7 @@ def test_reg14_joy1_up_pressed_clears_bit0() -> None:
 def test_reg14_joy1_trigger_a_clears_bit4() -> None:
     state = InputLines()
     _press(state, 0, 4)  # Joy1 Trigger A
-    psg = PSG(_input=state)
+    psg = _psg(state)
     psg.write_port(0xA0, 14)
     assert psg.read_port(0xA2) & (1 << 4) == 0
 
@@ -78,7 +88,7 @@ def test_reg14_joy1_trigger_a_clears_bit4() -> None:
 def test_reg14_joy1_trigger_b_clears_bit5() -> None:
     state = InputLines()
     _press(state, 0, 5)  # Joy1 Trigger B
-    psg = PSG(_input=state)
+    psg = _psg(state)
     psg.write_port(0xA0, 14)
     assert psg.read_port(0xA2) & (1 << 5) == 0
 
@@ -89,7 +99,7 @@ def test_reg14_joy2_trigger_a_selected_clears_bit4() -> None:
     # are always 1 (not joystick lines). (Previously Joy2 triggers were on 6-7.)
     state = InputLines()
     _press(state, 1, 4)  # Joy2 Trigger A
-    psg = PSG(_input=state)
+    psg = _psg(state)
     psg.write_port(0xA0, 15)
     psg.write_port(0xA1, 0x40)  # JOY_SELECT=1
     psg.write_port(0xA0, 14)
@@ -102,7 +112,7 @@ def test_reg14_joy2_trigger_b_selected_clears_bit5() -> None:
     # Corrected behaviour (Phase 2): Joy2 Trigger B is on bit 5 when JOY_SELECT=1.
     state = InputLines()
     _press(state, 1, 5)  # Joy2 Trigger B
-    psg = PSG(_input=state)
+    psg = _psg(state)
     psg.write_port(0xA0, 15)
     psg.write_port(0xA1, 0x40)  # JOY_SELECT=1
     psg.write_port(0xA0, 14)
@@ -115,7 +125,7 @@ def test_reg14_joy_select_0_selects_joy1_triggers() -> None:
     # With JOY_SELECT=0 the selected port is Joy1; a Joy2 trigger must not show.
     state = InputLines()
     _press(state, 1, 4)  # Joy2 Trigger A (should be hidden)
-    psg = PSG(_input=state)
+    psg = _psg(state)
     psg.write_port(0xA0, 14)          # JOY_SELECT defaults to 0 → Joy1
     result = psg.read_port(0xA2)
     assert result & (1 << 4) != 0     # Joy2 not visible on the Joy1 view
@@ -127,7 +137,7 @@ def test_reg14_joy_select_0_reads_joy1_directions() -> None:
     state = InputLines()
     _press(state, 0, 0)  # Joy1 Up
     _press(state, 1, 0)  # Joy2 Up (should NOT appear at bit 0)
-    psg = PSG(_input=state)
+    psg = _psg(state)
     psg.write_port(0xA0, 14)
     result = psg.read_port(0xA2)
     assert result & 0x01 == 0   # Joy1 Up visible
@@ -136,7 +146,7 @@ def test_reg14_joy_select_0_reads_joy1_directions() -> None:
 def test_reg14_joy_select_1_reads_joy2_directions() -> None:
     state = InputLines()
     _press(state, 1, 0)  # Joy2 Up
-    psg = PSG(_input=state)
+    psg = _psg(state)
     # Set JOY_SELECT=1 via reg15 bit6
     psg.write_port(0xA0, 15)
     psg.write_port(0xA1, 0x40)  # bit 6 = 1
@@ -148,7 +158,7 @@ def test_reg14_joy_select_1_reads_joy2_directions() -> None:
 def test_reg14_joy_select_1_hides_joy1_directions() -> None:
     state = InputLines()
     _press(state, 0, 0)  # Joy1 Up pressed
-    psg = PSG(_input=state)
+    psg = _psg(state)
     psg.write_port(0xA0, 15)
     psg.write_port(0xA1, 0x40)  # JOY_SELECT=1
     psg.write_port(0xA0, 14)
@@ -166,7 +176,7 @@ def test_reg14_returns_register_value_when_no_input() -> None:
 def test_reg14_not_overridden_for_other_regs() -> None:
     state = InputLines()
     _press(state, 0, 0)
-    psg = PSG(_input=state)
+    psg = _psg(state)
     psg.write_port(0xA0, 7)
     psg.write_port(0xA1, 0x38)
     assert psg.read_port(0xA2) == 0x38
@@ -197,7 +207,7 @@ class _FakeMouse:
 
 
 def test_reg15_write_forwards_pin8_bit_for_mouse_port() -> None:
-    psg = PSG(_input=InputLines())
+    psg = _psg(InputLines())
     mouse = _FakeMouse()
     psg._mouse = MouseSlot(mouse, JoystickPort.JOY2)  # bit 5
     psg.write_port(0xA0, 15)
@@ -208,7 +218,7 @@ def test_reg15_write_forwards_pin8_bit_for_mouse_port() -> None:
 
 
 def test_reg15_other_port_pin8_bit_does_not_affect_mouse() -> None:
-    psg = PSG(_input=InputLines())
+    psg = _psg(InputLines())
     mouse = _FakeMouse()
     psg._mouse = MouseSlot(mouse, JoystickPort.JOY2)  # bit 5
     psg.write_port(0xA0, 15)
@@ -217,7 +227,7 @@ def test_reg15_other_port_pin8_bit_does_not_affect_mouse() -> None:
 
 
 def test_reg14_delegates_to_mouse_when_its_port_is_selected() -> None:
-    psg = PSG(_input=InputLines())
+    psg = _psg(InputLines())
     mouse = _FakeMouse()
     mouse.read_value = 0x05
     psg._mouse = MouseSlot(mouse, JoystickPort.JOY2)
@@ -230,7 +240,7 @@ def test_reg14_delegates_to_mouse_when_its_port_is_selected() -> None:
 def test_reg14_reads_input_state_when_other_port_selected() -> None:
     state = InputLines()
     _press(state, 0, 0)  # Joy1 Up pressed
-    psg = PSG(_input=state)
+    psg = _psg(state)
     mouse = _FakeMouse()
     mouse.read_value = 0xFF  # would show up if wrongly delegated
     psg._mouse = MouseSlot(mouse, JoystickPort.JOY2)  # mouse attached to Joy2
@@ -249,7 +259,7 @@ def test_reg14_reads_input_state_when_other_port_selected() -> None:
 def test_real_mouse_device_reports_motion_through_psg_ports() -> None:
     mouse = MouseDevice()
     mouse.add_motion(5, -1)
-    psg = PSG(_input=InputLines())
+    psg = _psg(InputLines())
     psg._mouse = MouseSlot(mouse, JoystickPort.JOY2)
 
     psg.write_port(0xA0, 15)
@@ -267,7 +277,7 @@ def test_real_mouse_device_reports_motion_through_psg_ports() -> None:
 def test_real_mouse_device_button_state_via_psg_port() -> None:
     mouse = MouseDevice()
     mouse.set_button(4, True)  # left button (Trigger A, 0x10) pressed
-    psg = PSG(_input=InputLines())
+    psg = _psg(InputLines())
     psg._mouse = MouseSlot(mouse, JoystickPort.JOY1)
 
     psg.write_port(0xA0, 14)
