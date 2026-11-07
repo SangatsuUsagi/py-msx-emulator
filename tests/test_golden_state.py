@@ -29,6 +29,9 @@ _CASES = {case["id"]: case for case in _DATA["cases"]}
 _BOOT = "cbios-msx1-boot"
 _MSX1_HOMEBREW = "msx1-homebrew-scroller"
 _MSX2_HOMEBREW = "msx2-homebrew-card-game"
+# Runs with only the checkpoint frames rendered, by case id: several
+# scenarios read the same run.
+_RUNS: dict[str, list[Any]] = {}
 
 
 def _run_or_skip(case: dict[str, Any], **kwargs: Any) -> list[Any]:
@@ -39,21 +42,81 @@ def _run_or_skip(case: dict[str, Any], **kwargs: Any) -> list[Any]:
     return result
 
 
+def _run_once(case_id: str) -> list[Any]:
+    if case_id not in _RUNS:
+        _RUNS[case_id] = _run_or_skip(_CASES[case_id])
+    return _RUNS[case_id]
+
+
+def _check_or_skip(case: dict[str, Any]) -> list[str]:
+    """The differences of a case from its recorded hashes, or a skip when it
+    has none."""
+    if not golden.has_recorded_hashes(case):
+        pytest.skip(f"{case['id']}: no recorded hashes")
+    return golden.differences(case, _run_or_skip(case))
+
+
+def _frame_only(case: dict[str, Any]) -> dict[str, Any]:
+    result = copy.deepcopy(case)
+    result["checkpoints"] = [{"frame": point["frame"]} for point in case["checkpoints"]]
+    return result
+
+
 @pytest.mark.parametrize("case_id", sorted(_CASES))
 def test_a_matching_case_passes(case_id: str) -> None:
     # dev-golden-state "A matching case passes".
-    case = _CASES[case_id]
-    lines = golden.differences(case, _run_or_skip(case))
+    lines = _check_or_skip(_CASES[case_id])
     hint = "\nRecord an intended change with tools/golden_state.py --write"
     assert not lines, "\n".join(lines) + hint
 
 
 def test_a_mismatch_names_where_it_differs() -> None:
     # dev-golden-state "A mismatch names where it differs".
+    # The run gives the expected hashes, and one section differs in a copy.
+    actual = _run_once(_BOOT)
     case = copy.deepcopy(_CASES[_BOOT])
-    actual = _run_or_skip(case)
+    case["checkpoints"] = copy.deepcopy([point.as_json() for point in actual])
+    assert golden.differences(case, actual) == []
     case["checkpoints"][1]["state"]["vdp"] = "0" * 64
     assert golden.differences(case, actual) == [f"{_BOOT} frame 300: state section vdp differs"]
+
+
+def test_a_case_with_no_recorded_hashes_is_skipped() -> None:
+    # dev-golden-state "A case with no recorded hashes is skipped".
+    case = _frame_only(_CASES[_BOOT])
+    with pytest.raises(pytest.skip.Exception, match=f"{_BOOT}: no recorded hashes"):
+        _check_or_skip(case)
+
+
+def test_a_checkpoint_may_give_its_frame_only(tmp_path: Path) -> None:
+    # dev-golden-state "A checkpoint may give its frame only": the file is
+    # read, and only the checkpoint with hashes is compared.
+    path = tmp_path / "vectors.json"
+    case = _frame_only(_CASES[_BOOT])
+    golden.write_vectors({"cases": [case], "format_version": 1}, path)
+    read = golden.read_vectors(path)["cases"][0]
+    assert read["checkpoints"] == [{"frame": 60}, {"frame": 300}]
+    assert not golden.has_recorded_hashes(read)
+    actual = [golden.Checkpoint(frame=60, state={"cpu": "1" * 64}, audio="2" * 64,
+                                video="3" * 64),
+              golden.Checkpoint(frame=300, state={"cpu": "4" * 64}, audio="5" * 64,
+                                video="6" * 64)]
+    assert golden.differences(read, actual) == []
+    read["checkpoints"][1] = actual[1].as_json() | {"audio": "0" * 64}
+    assert golden.has_recorded_hashes(read)
+    assert golden.differences(read, actual) == [f"{_BOOT} frame 300: audio differs"]
+
+
+def test_the_check_does_not_fail_on_a_case_with_no_recorded_hashes(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # dev-golden-state "The check does not fail on a case with no recorded hashes".
+    path = tmp_path / "vectors.json"
+    cases = [_frame_only(_CASES[case_id]) for case_id in sorted(_CASES)]
+    golden.write_vectors({"cases": cases, "format_version": 1}, path)
+    assert golden.main(["--vectors", str(path)]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines == [f"{case_id}: no recorded hashes" for case_id in sorted(_CASES)]
 
 
 def test_a_missing_rom_skips_the_case(tmp_path: Path) -> None:
@@ -118,9 +181,8 @@ def test_a_section_hash_is_the_hash_of_its_canonical_json() -> None:
 
 def test_rendering_does_not_change_a_result() -> None:
     # dev-golden-state "Rendering does not change a result".
-    case = _CASES[_BOOT]
-    checkpoints = _run_or_skip(case, render_all=True)
-    assert golden.differences(case, checkpoints) == []
+    rendered = _run_or_skip(_CASES[_BOOT], render_all=True)
+    assert [point.state for point in rendered] == [point.state for point in _run_once(_BOOT)]
 
 
 def test_writing_twice_gives_the_same_file(tmp_path: Path) -> None:
@@ -171,9 +233,8 @@ def test_the_msx1_homebrew_case_plays_to_its_game_over() -> None:
     # last checkpoint comes after the start and that the PSG keeps changing.
     case = _CASES[_MSX1_HOMEBREW]
     assert case["inputs"] == [{"first": 400, "last": 405, "row": 8, "bit": 0}]
-    points = case["checkpoints"]
-    assert points[-1]["frame"] >= 700
-    psg = [point["state"]["psg"] for point in points]
+    assert case["checkpoints"][-1]["frame"] >= 700
+    psg = [point.state["psg"] for point in _run_once(_MSX1_HOMEBREW)]
     assert len(set(psg)) == len(psg)
 
 
@@ -183,9 +244,9 @@ def test_the_msx2_homebrew_case_reaches_a_cpu_turn() -> None:
     case = _CASES[_MSX2_HOMEBREW]
     draw = [held for held in case["inputs"] if (held["row"], held["bit"]) == (5, 2)]
     assert len(draw) == 1
-    points = case["checkpoints"]
+    points = _run_once(_MSX2_HOMEBREW)
     title = points[0]
-    after = [point for point in points if point["frame"] > draw[0]["last"]]
+    after = [point for point in points if point.frame > draw[0]["last"]]
     assert after
     for point in after:
-        assert point["state"]["vdp"] != title["state"]["vdp"]
+        assert point.state["vdp"] != title.state["vdp"]
