@@ -168,17 +168,26 @@ list.
 Runs fixed cases of the whole core and compares hashes of the result with
 `tests/vectors/golden_state.json`. A case gives a machine, an optional slot 1
 cartridge, an input script and checkpoint frames. At each checkpoint the file
-records the SHA-256 of each section of the saved state (`cpu`, `memory`,
+can record the SHA-256 of each section of the saved state (`cpu`, `memory`,
 `vdp`, `psg` and the others), of the audio up to that frame, and of the video
 of that frame. A mismatch names the case, the frame and the section.
+
+The file in the repository holds the cases and their checkpoint frames, with
+no hashes yet. The save-state layout still changes (cassette, disk and other
+devices), so the hashes are recorded before the port of the core starts,
+after a review of the core and of the cases. The check reports a case with no
+recorded hashes and does not fail on it.
 
 ```bash
 venvs/py-msx-emulator/bin/python tools/golden_state.py           # check
 venvs/py-msx-emulator/bin/python tools/golden_state.py --write   # record
 ```
 
-After an intended change of behavior, run `--write` and commit the new file.
-`tests/test_golden_state.py` runs the same check in the test suite.
+To check that a change keeps the behavior, record a copy of the file before
+the change and check against it after the change with `--vectors <copy>`.
+After the hashes are in the repository, run `--write` after an intended change
+of behavior and commit the new file. `tests/test_golden_state.py` runs the
+same check in the test suite.
 
 The ROMs are not in this repository. A case whose ROM is absent, or has
 another SHA-256, is skipped, with the path in the reason. Put these files in
