@@ -2,6 +2,33 @@
 
 [日本語版はこちら](CHANGELOG_ja.md)
 
+- **v2.10.0** (2026-11-08): Cassette tape playback, tape WAV tools, ABI version 1.2, and save-state format 23.
+  - The cassette port plays a CAS tape image on every shipped machine. The host converts the CAS file into a
+    1200-baud tape signal, and the guest BIOS reads it with its own routines (`CLOAD`, `BLOAD"CAS:",R`,
+    `RUN"CAS:"`). PPI Port C bit 4 drives the motor, and PSG register 14 bit 7 is the tape input. Tape loads are not
+    yet checked on real hardware.
+  - `--tape FILE.cas` (or the `tape` key of `py_emulator.yaml`) mounts a tape at startup. While the motor runs, the
+    frontend runs as fast-forward and the window title shows `[TAPE]`. `--no-tape-fast` loads at normal speed.
+  - The debugger `tape` command, the RPC methods `tape.insert`, `tape.eject`, `tape.rewind`, `tape.seek`,
+    `tape.status` and `tape.blocks`, and the matching MCP tools change the tape at run time and list its blocks.
+  - Limits: CAS files only. There is no TSX support, no recording (Port C bit 5) and no fast loader. While a tape is
+    mounted, CPython runs about 2.7% slower on an MSX2 cartridge game in the benchmark. PyPy shows no measurable
+    difference.
+  - `tools/bas2wav.py` makes a tape WAV from an ASCII BASIC program, and `tools/wav2cas.py` converts a tape WAV to a
+    CAS file.
+  - Core API: `mount_tape()`, `eject_tape()`, `seek_tape()` and `tape_info()`. The ABI version is 1.2. The
+    MachineConfig document is format 3, with `machine.cassette_port`. The parser also reads formats 1 and 2, which
+    have no cassette port.
+  - **Breaking:** the save-state format version is 23. It adds the cassette position and motor, and the identity
+    (size and SHA1) of the mounted tape. A state loads only with the same tape mounted. Save states from v2.9.3 and
+    earlier cannot be loaded.
+  - The debugger `sl` and `st` commands show a non-expanded slot 3 as its RAM. Before, they showed it as empty on the
+    MSX1 machines.
+  - The golden hashes are deferred until the port of the core starts. `tests/vectors/golden_state.json` keeps the
+    five cases, their input scripts and their checkpoint frames, but no hashes. `tools/golden_state.py` compares only
+    the checkpoints that have hashes.
+  - Docs: the README, the debugger, RPC/MCP and tools references, and the technical document describe the tape. The
+    README benchmark results are for v2.10.0.
 - **v2.9.3** (2026-11-03): The printer status no longer depends on the host, and an ABI compatibility macro.
   - The printer port reads BUSY only when no printer is attached. A full 4096-byte buffer now reads ready, and a byte
     strobed then is still dropped. The buffer is outside the saved state, so before this change what the guest read
