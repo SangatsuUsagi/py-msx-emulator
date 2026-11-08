@@ -19,8 +19,8 @@
 
 いずれも素のPython 3.10+で、プロジェクト本体の依存(`requirements.txt` /
 `requirements-dev.txt`)以外の追加依存はありません。ただし `mcp_server.py` だけは
-オプションの `mcp` 依存も必要です([`mcp_server.py`](#mcp_serverpy) を参照)。プロジェクトのvenvで実行し
-ます: 例 `venvs/py-msx-emulator/bin/python tools/dskftp.py`。
+オプションの `mcp` 依存も必要です([`mcp_server.py`](#mcp_serverpy) を参照)。実行には
+プロジェクトのvenvを使います(例: `venvs/py-msx-emulator/bin/python tools/dskftp.py`)。
 
 ---
 
@@ -41,7 +41,7 @@ python tools/dskftp.py game.dsk        # 起動時に接続
 python tools/dskftp.py                 # 後から `open` で接続
 ```
 
-シェル内のコマンド(完全な一覧と使い方は `help` を参照):
+シェル内の主なコマンドを次の表に示します(完全な一覧と使い方は `help` を参照)。
 
 | コマンド | 動作 |
 | --- | --- |
@@ -60,15 +60,15 @@ python tools/dskftp.py                 # 後から `open` で接続
 
 `format` はデータディスクを作成します。標準的なMSX-DOSブートセクタローダー
 (`CALL FORMAT` が書き込むのと同じ、"Boot error / Press any key for retry" の
-スタブ)は含みますが、`MSXDOS.SYS` は含みません。そのためDOSとしては起動でき
-ず、単純なFAT12ボリュームとして読み書きされるだけです。
+スタブ)は含みますが、`MSXDOS.SYS` は含みません。DOS は起動できません。読み書き
+は、ふつうの FAT12 ボリュームとしてだけできます。
 
 ## `dskblank.py`
 
-`--fdd1` / `--fdd2` で使う、空の `*.dsk` イメージを作成します。ファイルは
-`0xE5`(フロッピーの標準フィルバイト)で埋められており、ブートセクタ・BPB・
-FATは一切書き込まれず、フォーマット前の未使用メディアのように見える状態になり
-ます。作成後はエミュレータ内でMSX BASICの `CALL FORMAT` を使うか、
+`--fdd1` / `--fdd2` で使う、空の `*.dsk` イメージを作成します。スクリプトはファイルを
+`0xE5`(フロッピーの標準フィルバイト)で埋めます。そのため、トラックはフォーマット
+済みで、ファイルシステムのないディスクのように見えます。ブートセクタ、BPB、FAT
+は書き込みません。作成後はエミュレータ内でMSX BASICの `CALL FORMAT` を使うか、
 `dskftp.py format` でフォーマットしてください。
 
 ```bash
@@ -80,9 +80,7 @@ python tools/dskblank.py blank.dsk --force       # 既存ファイルを上書�
 ## `dskdd.py`
 
 `.dsk` イメージとUSB接続の3モードフロッピードライブ間で生セクタをコピーしま
-す。**Linux専用。**
-[`extras/msx_2dd_disk_imaging_linux.md`](../extras/msx_2dd_disk_imaging_linux.md)
-にある「USB FDD + dd」方式の両方向を実装しています:
+す。**Linux専用。** `dd` と同じく、ブロックデバイスとしてディスクを読み書きします。
 
 ```bash
 sudo python3 tools/dskdd.py read /dev/sdb msxdisk.dsk            # ディスク -> イメージ
@@ -94,16 +92,15 @@ LinuxではUSB FDDは(`/dev/fd0` ではなく)ブロックデバイスとして 
 現れます。実行前に `sudo ufiformat -i` でデバイスノードを調べ、`sudo ufiformat
 -i /dev/sdX` で挿入中のメディアを確認してください。
 
-どちらの方向も、次のすべてを満たさない限り実行を拒否します:
+どちらの方向も、次の条件をすべて満たさない限り実行を拒否します。
 
 - 対象がブロックデバイスである
 - マウントされていない
 - メディアが入っている
 - フロッピーとして妥当なサイズである(4MB以下、`--force` で上書き可能)
 
-`write` はさらに、
-誤ったデバイスへの書き込みで既存データが失われるのを防ぐため、デバイスパスを
-操作者に再入力させます。`read` は `--overwrite` を指定しない限り既存イメージ
+`write` は、さらにデバイスパスを操作者にもう一度入力させます。誤ったデバイスに
+書き込むと、そのデバイスのデータがすべて失われるからです。`read` は `--overwrite` を指定しない限り既存イメージ
 を上書きしません。
 
 | サブコマンド | オプション |
@@ -197,8 +194,9 @@ venvs/pypy-msx-emulator/bin/python tools/run_singlestep_tests.py \
 
 全件は PyPy で実行してください(1604 ファイルで約 3 分)。CPython では `--limit N`
 で各ファイルの先頭 N 件だけを流せます。コアが意図して別の結果を出すテストは、
-根拠とともに `tools/singlestep_known_divergences.json` に載せています。これらは
-別に数え、失敗にはしません。どのテストにも当てはまらなくなった項目は、役目を
+根拠とともに `tools/singlestep_known_divergences.json` に載せています
+(`--divergences <ファイル>` で別の一覧を使えます)。これらは別に数え、失敗には
+しません。どのテストにも当てはまらなくなった項目は、役目を
 終えた項目(stale)として報告します。それ以外の失敗があるか、役目を終えた項目が
 あると終了コードは 1、それ以外は 0 です。
 
@@ -238,7 +236,7 @@ ROM はこのリポジトリに含めていません。ROM がないケースや
 | `roms/homebrew/noborunoca.rom` | [NOBORUNOCA v1.0.2](https://github.com/h1romas4/noborunoca/releases/tag/v1.0.2) の `noborunoca.rom`(MIT) | `57a3be2fe5c3190daa3e69cf23cd262cdc8af98c60993ea941d43c815cbb25f6` |
 | `roms/homebrew/uno-msx2.rom` | [commodore-uno v1.0.5](https://github.com/jhonnaker1/commodore-uno/releases/tag/v1.0.5) の `uno-msx2.rom`(MIT)、または v1.0.5 をビルドしたもの(下記) | `74d74d8720e623a7b8aadce8e0b0c9094f8a2162339a8e7c677c7732f673ddb8` |
 
-ハッシュは、commodore-uno v1.0.5 をビルドした ROM で記録しました。バージョンが違うと
+表の SHA-256 は、commodore-uno v1.0.5 をビルドした ROM の値です。バージョンが違うと
 ROM が変わることがあるので、v1.0.5 を使ってください。v1.0.5 と v1.0.10 のリリースの
 `uno-msx2.rom` は、このビルドと同じ SHA-256 です。ROM をビルドするには、
 [SDCC](https://sdcc.sourceforge.net/) と GNU make を使います。
@@ -262,16 +260,16 @@ make
 
 エミュレータは小さなローカル制御インターフェースを公開できます。外部ツール(シェ
 ルスクリプト、テストハーネス、AIコーディングエージェントなど)から実行中のイ
-ンスタンスを一時停止・検査・操作できます。2つの層があります:
+ンスタンスを一時停止・検査・操作できます。制御は次の 2 つの層からなります。
 
-- **Socket RPC** — エミュレータプロセスに組み込まれたUnixドメインソケットの
+- **Socket RPC**: エミュレータプロセスに組み込まれたUnixドメインソケットの
   JSON-RPCサーバー(`host/rpc_server.py`)。**既定では無効**で、`--rpc` で有効
   化します。
-- **MCPサーバー** — 下記の [`mcp_server.py`](#mcp_serverpy)。Socket RPCを
+- **MCPサーバー**: 下記の [`mcp_server.py`](#mcp_serverpy)。Socket RPCを
   [Model Context Protocol](https://modelcontextprotocol.io) ツールとしてラッ
-  プするスタンドアロンのstdioサーバーで、Claude Codeのようなクライアントがエ
-  ミュレータ機能をネイティブツールとして呼び出せます(スクリーンショットはイ
-  ンライン画像として受け取れます)。
+  プする、スタンドアロンのstdioサーバーです。Claude Codeのようなクライアント
+  は、エミュレータの機能をネイティブのツールとして呼び出せます。スクリーンショ
+  ットはインライン画像として受け取れます。
 
 ```
 MCPクライアント ──stdio/MCP──▶ tools/mcp_server.py ──Unixソケット──▶ エミュレータ (--rpc)
@@ -287,7 +285,7 @@ python . path/to/game.rom --rpc
 python . path/to/game.rom --rpc --rpc-socket /tmp/py_msx_alt.sock
 ```
 
-RPCメソッドは次を網羅します:
+RPCメソッドで次の操作ができます。
 
 - デバッガの一時停止/ステップ/継続
 - ブレークポイントとウォッチポイント
@@ -297,6 +295,7 @@ RPCメソッドは次を網羅します:
 - スクリーンショット取得
 - ステートのセーブ/ロード
 - ディスク入れ替え
+- テープの挿入/取り出し/巻き戻し/シーク
 
 ワイヤプロトコルと全メソッドの一覧は
 [`../docs/socket-rpc-mcp_ja.md`](../docs/socket-rpc-mcp_ja.md) を参照してく
@@ -312,18 +311,18 @@ MCP層を介さない手動テストは下記の [`rpc_client.py`](#rpc_clientpy
   す。
 - `memory.write` と `cpu.step` はマシン状態を変更するため、**一時停止中のみ**
   実行できます。
-- 認証はありません。共有ホストでは `chmod 600` でソケットを保護してください
-  ——保護しないと、同一ホストの他のユーザーが接続して `memory.write`/
-  `cpu.step` を呼び出し、実行中のマシンの状態を自由に書き換えられてしまいま
-  す。制御インターフェースであるため、サーバーは明示的なオプトイン
-  (`--rpc`)方式で、指定しない限りソケットは作成されません。
+- 認証はありません。共有ホストでは `chmod 600` でソケットを保護してください。
+  保護しないと、同一ホストの他のユーザーが接続して `memory.write`/
+  `cpu.step` を呼び出し、実行中のマシンの状態を書き換えられます。サーバーは制
+  御インターフェースなので、明示的なオプトイン(`--rpc`)方式にしています。指定
+  しない限り、ソケットは作られません。
 
 ## `rpc_client.py`
 
 エミュレータのUnixソケットJSON-RPCサーバー向けの、手動テスト用の薄いCLIクラ
 イアントです。MCP層を介さずメソッドを1回呼び出し、レスポンスを表示します。エ
 ミュレータを `--rpc` 付きで起動しておく必要があります。メソッドの全リファレ
-ンスは [`../docs/socket-rpc-mcp.md`](../docs/socket-rpc-mcp.md) を参照してく
+ンスは [`../docs/socket-rpc-mcp_ja.md`](../docs/socket-rpc-mcp_ja.md) を参照してく
 ださい。
 
 ```bash
@@ -341,8 +340,8 @@ python tools/rpc_client.py --socket /tmp/alt.sock cpu.get_registers
 ## `mcp_server.py`
 
 エミュレータのソケットRPC APIをMCPツールとしてラップし、Claude CodeなどのMCP
-クライアントから起動中のエミュレータを直接操作できるようにします。主な操作は
-次のとおりです:
+クライアントから起動中のエミュレータを直接操作できるようにします。主な操作を
+次に挙げます。
 
 - Z80のポーズ/ステップ/再開
 - ブレークポイント・ウォッチポイントの設定
@@ -351,7 +350,7 @@ python tools/rpc_client.py --socket /tmp/alt.sock cpu.get_registers
 - スクリーンショットの取得
 
 アーキテクチャとツールの全リストは
-[`../docs/socket-rpc-mcp.md`](../docs/socket-rpc-mcp.md) を参照してくださ
+[`../docs/socket-rpc-mcp_ja.md`](../docs/socket-rpc-mcp_ja.md) を参照してくださ
 い。
 
 MCPサーバーにはオプションの `mcp` 依存が必要です。
@@ -370,6 +369,7 @@ claude mcp add --transport stdio --scope project msx-emulator \
 claude mcp list        # msx-emulator  ●  connected
 ```
 
-登録後はClaude Codeがセッションごとに自動でこのプロセスを起動します。ソケッ
-トパスは環境変数 `MSX_RPC_SOCKET`(既定 `/tmp/py_msx_emu.sock`、上記のように
-登録した場合は `.mcp.json` の `env` ブロックで設定可能)から読み込まれます。
+登録後はClaude Codeがセッションごとに自動でこのプロセスを起動します。サーバー
+はソケットパスを環境変数 `MSX_RPC_SOCKET` から読みます(既定は
+`/tmp/py_msx_emu.sock`)。上記のように登録した場合は、この変数を `.mcp.json` の
+`env` ブロックで設定できます。

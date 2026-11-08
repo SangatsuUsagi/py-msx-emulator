@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
 """dskdd.py - Copy raw sectors between a .dsk image and a USB-connected 3-mode FDD.
 
-Linux only. Implements both directions of "method 1: plain USB FDD + dd" from
-msx_2dd_disk_imaging_linux.md:
+Linux only. It reads and writes the disk with plain block-device I/O, as `dd`
+does:
 
-    read    physical disk -> .dsk image  (replaces `dd if=/dev/sdb of=disk.dsk`)
+    read   physical disk -> .dsk image  (replaces `dd if=/dev/sdb of=disk.dsk`)
     write   .dsk image -> physical disk
 
 On Linux a USB FDD shows up as /dev/sdX (a block device), not /dev/fd0. Run
 `sudo ufiformat -i` to find the device node, and `sudo ufiformat -i /dev/sdX`
 to confirm the inserted media, before running this.
 
-A .dsk image in this project is a headerless linear array of 512-byte sectors
-(see openspec/specs/fdc-disk-image/spec.md); 720 KB 2DD = 737280 bytes = 1440
-sectors.
+A .dsk image in this project is a headerless linear array of 512-byte sectors.
+A 720 KB 2DD image is 737280 bytes, 1440 sectors.
 
 Usage:
     sudo python3 dskdd.py read /dev/sdb msxdisk.dsk
@@ -270,9 +269,8 @@ def cmd_read(args: argparse.Namespace) -> int:
         print(f"warning: {len(bad)} of {sectors} sector(s) unreadable, zero-filled:")
         print(f"  {format_sector_ranges(bad)}")
         print(
-            "the image is incomplete. For a disk this drive cannot read, see the "
-            "flux-level route (Greaseweazle / FluxEngine) in "
-            "msx_2dd_disk_imaging_linux.md."
+            "the image is incomplete. For a disk this drive cannot read, try a "
+            "flux-level tool such as Greaseweazle or FluxEngine."
         )
         return EXIT_INCOMPLETE
 

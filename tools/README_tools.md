@@ -71,8 +71,8 @@ it as a plain FAT12 volume.
 
 Creates a blank `*.dsk` image for use with `--fdd1` / `--fdd2`. The script
 fills the file with `0xE5`, the standard floppy fill byte. The file thus looks
-like media that is formatted but empty. The script writes no boot sector, BPB,
-or FAT. Format the image after you create it, with MSX BASIC `CALL FORMAT` in
+like a disk with formatted tracks but no file system. The script writes no boot
+sector, BPB, or FAT. Format the image after you create it, with MSX BASIC `CALL FORMAT` in
 the emulator or with `dskftp.py format`.
 
 ```bash
@@ -84,9 +84,8 @@ python tools/dskblank.py blank.dsk --force       # overwrite an existing file
 ## `dskdd.py`
 
 Copies raw sectors between a `.dsk` image and a USB-connected 3-mode floppy
-drive. **Linux only.** It implements both directions of "plain USB FDD + dd"
-from
-[`extras/msx_2dd_disk_imaging_linux.md`](../extras/msx_2dd_disk_imaging_linux.md):
+drive. **Linux only.** It reads and writes the disk with plain block-device
+I/O, as `dd` does:
 
 ```bash
 sudo python3 tools/dskdd.py read /dev/sdb msxdisk.dsk            # disk -> image
@@ -176,7 +175,7 @@ finds no block, it writes no file and exits with status `1`.
 Runs Z80 instruction exercisers on the bare `Z80` core, with no MSX machine
 around it: CP/M `.com` programs (zexdoc, zexall) and the `.tap` images of
 [z80test](https://github.com/raxoft/z80test). The test programs are not in
-this repository; pass their paths. The exit status is 1 if any program
+this repository. Pass their paths. The exit status is 1 if any program
 reports a failure, else 0.
 
 ```bash
@@ -196,17 +195,18 @@ on the bare `Z80` core. Each file holds 1000 cases for one opcode: the CPU
 state before and after one instruction. The tool runs one instruction per
 case and compares every register, MEMPTR (WZ), Q, IFF1/IFF2, IM, the RAM, the
 port transactions and the T-state count. It does not compare the bus state of
-each cycle. The test files are not in this repository; pass their paths.
+each cycle. The test files are not in this repository. Pass their paths.
 
 ```bash
 venvs/pypy-msx-emulator/bin/python tools/run_singlestep_tests.py \
     path/to/SingleStepTests/z80/v1/*.json
 ```
 
-Use PyPy for the full set (all 1604 files take about 3 minutes); on CPython,
+Use PyPy for the full set (all 1604 files take about 3 minutes). On CPython,
 `--limit N` runs only the first N cases of each file. Cases where the core
 deliberately gives another result are listed, with their sources, in
-`tools/singlestep_known_divergences.json`. They are counted separately and do
+`tools/singlestep_known_divergences.json` (`--divergences <file>` uses another
+list). They are counted separately and do
 not fail the run. An entry that no longer matches any case is reported as
 stale. The exit status is 1 on any other failure or on a stale entry, else 0.
 
@@ -252,7 +252,7 @@ place:
 | `roms/homebrew/noborunoca.rom` | `noborunoca.rom` of [NOBORUNOCA v1.0.2](https://github.com/h1romas4/noborunoca/releases/tag/v1.0.2) (MIT) | `57a3be2fe5c3190daa3e69cf23cd262cdc8af98c60993ea941d43c815cbb25f6` |
 | `roms/homebrew/uno-msx2.rom` | `uno-msx2.rom` of [commodore-uno v1.0.5](https://github.com/jhonnaker1/commodore-uno/releases/tag/v1.0.5) (MIT), or a build of v1.0.5 (below) | `74d74d8720e623a7b8aadce8e0b0c9094f8a2162339a8e7c677c7732f673ddb8` |
 
-The hashes were recorded with a build of commodore-uno v1.0.5. Another version
+The SHA-256 in the table comes from a build of commodore-uno v1.0.5. Another version
 can give another ROM, so use v1.0.5. The `uno-msx2.rom` files of the v1.0.5 and
 v1.0.10 releases have the same SHA-256 as that build. To build the ROM, use
 [SDCC](https://sdcc.sourceforge.net/) and GNU make:
@@ -311,6 +311,7 @@ The RPC methods cover these functions:
 - screenshot capture
 - state save/load
 - disk swap
+- tape insert/eject/rewind/seek
 
 [`../docs/socket-rpc-mcp.md`](../docs/socket-rpc-mcp.md) documents the wire
 protocol and the full method reference.
