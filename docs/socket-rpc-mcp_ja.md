@@ -1,13 +1,13 @@
 # ソケット RPC と MCP サーバー
 
-エミュレータはローカルの制御インターフェースを公開でき、外部ツール——シェルスクリプト、テストハーネス、あるいは Claude Code のような AI コーディングエージェント——が SDL ウィンドウに触れることなく、一時停止・Z80/VDP 状態の確認・入力の注入・スクリーンショットの取得を行えます。次の2つの要素が連携して動作します。
+エミュレータは、ローカルの制御インターフェースを外部ツールに公開できます。外部ツールとは、シェルスクリプト、テストハーネス、Claude Code のような AI コーディングエージェントなどです。外部ツールは、SDL ウィンドウを使わずに、エミュレータの一時停止、Z80/VDP の状態の確認、入力の送信、スクリーンショットの取得ができます。次の2つの要素が連携して動作します。
 
 - **ソケット RPC**（`host/rpc_server.py`）：エミュレータ自体に組み込まれた、Unix ドメインソケット上の JSON-RPC サーバー。`--rpc` で有効化します。
 - **MCP サーバー**（`tools/mcp_server.py`）：ソケット RPC を MCP ツールとしてラップするスタンドアロンプロセスで、Claude Code から直接呼び出せます。
 
-どちらもデフォルトでは無効であり、通常の実行に新たなランタイム依存を追加しません。ターミナルのデバッガと同じブレークポイント・ウォッチポイント・ステップ実行のモデルを使っています（[`docs/debugger.md`](debugger_ja.md) を参照）。RPC はそれを人間ではなくプログラムから操作できるようにするだけです。
+どちらもデフォルトでは無効であり、通常の実行に新たなランタイム依存を追加しません。ターミナルのデバッガと同じブレークポイント・ウォッチポイント・ステップ実行のモデルを使っています（[`docs/debugger_ja.md`](debugger_ja.md) を参照）。RPC はそれを人間ではなくプログラムから操作できるようにするだけです。
 
-本ドキュメントは両レイヤーのリファレンスであり、コードに追随して更新します。[`docs/msx_emulator_rpc_spec.md`](msx_emulator_rpc_spec.md) は同じ機能の設計記録で、実装前に書かれたものでありソース全文を含みます。現在の挙動ではなく、設計判断の背景を知りたいときに参照してください。
+本ドキュメントは両レイヤーのリファレンスであり、コードに追随して更新します。[`docs/msx_emulator_rpc_spec.md`](msx_emulator_rpc_spec.md) は同じ機能の設計記録です。実装の前に書いたもので、ソースの全文を含みます。現在の挙動ではなく、設計判断の背景を知りたいときに参照してください。
 
 ---
 
@@ -17,13 +17,13 @@
 MCP client  <-- MCP (stdio) -->  tools/mcp_server.py  <-- Unix socket -->  host/rpc_server.py (in-process)
 ```
 
-`tools/mcp_server.py` はそれ自体エミュレータの状態を保持しません——各ツール呼び出しはソケットへの短命な接続を開き、1つの RPC リクエストを送信して接続を閉じます。これにより MCP サーバーは呼び出しの合間にエミュレータが再起動されても存続でき、まだ何もリッスンしていない場合はそのリクエストが失敗するだけです。
+`tools/mcp_server.py` は、エミュレータの状態を自分では持ちません。ツールを呼び出すたびに、ソケットへの短い接続を開き、RPC リクエストを 1 つ送り、接続を閉じます。そのため、呼び出しの合間にエミュレータを再起動しても、MCP サーバーは動き続けます。ソケットでまだ何も待ち受けていなければ、そのリクエストは失敗します。
 
-エミュレータプロセス内部では、`DebugServer`（`host/rpc_server.py`）がソケットの accept/read ループをバックグラウンドのデーモンスレッドで実行します。リクエストはそのスレッドでパースされますが、実行はされません。各リクエストはキューに積まれ、ホストループが `DebugServer.drain()` を呼び出したとき（1フレームに1回、およびデバッガで一時停止している間は継続的に）にエミュレータのメインスレッドで処理されます。これにより CPU/VDP のホットパスはロックフリーのままとなり、RPC ハンドラが CPU ステップや VDP レンダリングと並行して実行されることはありません。
+エミュレータプロセス内部では、`DebugServer`（`host/rpc_server.py`）がソケットの accept/read ループをバックグラウンドのデーモンスレッドで実行します。リクエストはそのスレッドでパースしますが、実行はしません。各リクエストはキューに積み、ホストループが `DebugServer.drain()` を呼び出したときに、エミュレータのメインスレッドで処理します。ホストループはこれを 1 フレームに 1 回呼び、デバッガで一時停止している間は続けて呼びます。そのため、CPU/VDP のホットパスにロックは要りません。RPC ハンドラが CPU のステップや VDP の描画と同時に動くことはないからです。
 
 1つ例外があります。`cpu.continue_sync` は呼び出し元のソケットスレッドを次の一時停止イベントまでブロックするため、キューに積まれずそのスレッド上でインラインに処理されます（`DebugServer._continue_sync` を参照）。このスレッドはコアを呼びません。エミュレータのスレッドが呼び出しを起こす前に書いた一時停止の記録から応答します。
 
-コアのエミュレータ（`machine`、`cpu`、`vdp`、`memory`）は RPC について一切関知しません。`host/rpc_server.py` はこの機能のために `socket`・`json`・`threading` を使用する唯一の場所です。コアが RPC サーバーを呼ぶことはありません。ブレークすると `step_frame` が停止理由を返し、フロントエンドのループがそれを `DebugServer.on_core_stop` に渡します（`host/debugger/stop.py`）。このレイヤー構造が Python 以外への移植先にどう対応するかは、`host/rpc_server.py` 冒頭の移植性に関する注記を参照してください。
+コアのエミュレータ（`machine`、`cpu`、`vdp`、`memory`）は RPC について一切関知しません。この機能で `socket`・`json`・`threading` を使うのは `host/rpc_server.py` だけです。コアが RPC サーバーを呼ぶことはありません。ブレークすると `step_frame` が停止理由を返し、フロントエンドのループがそれを `DebugServer.on_core_stop` に渡します（`host/debugger/stop.py`）。このレイヤー構造が Python 以外への移植先にどう対応するかは、`host/rpc_server.py` 冒頭の移植性に関する注記を参照してください。
 
 ---
 
@@ -43,15 +43,15 @@ python . path/to/game.rom --machine cbios_msx2_jp --rpc --rpc-socket /tmp/alt.so
 rpc     : /tmp/py_msx_emu.sock
 ```
 
-サーバーは同時に1つのアクティブなクライアントのみを受け付けます。ソケットパスが（クラッシュしたプロセスの残骸などで）既に古いファイルとして存在している場合は、削除してから次回起動時に再バインドされます。
+サーバーは同時に1つのアクティブなクライアントのみを受け付けます。ソケットパスに古いファイルが残っているとき（クラッシュしたプロセスの残骸など）は、サーバーが次の起動時にそれを消して作り直します。
 
-RPC は Unix ドメインソケットを使うため、macOS か Linux が必要です——エミュレータ自体が対象としているのと同じプラットフォームです。Windows は未検証です（[`QUICK_START_ja.md`](../QUICK_START_ja.md) を参照）。
+RPC は Unix ドメインソケットを使うため、macOS か Linux が必要です。エミュレータ自体が対象としているのと同じプラットフォームです。Windows は未検証です（[`QUICK_START_ja.md`](../QUICK_START_ja.md) を参照）。
 
 ---
 
 ## ワイヤープロトコル
 
-トランスポートは `AF_UNIX` / `SOCK_STREAM` で、改行区切りの JSON——1行に1つの UTF-8 JSON オブジェクト——としてフレーミングされます。
+トランスポートは `AF_UNIX` / `SOCK_STREAM` で、改行区切りの JSON でフレーミングします。1 行に UTF-8 の JSON オブジェクトを 1 つ置きます。
 
 接続時、サーバーはバナー通知を送信します。
 
@@ -84,11 +84,11 @@ RPC は Unix ドメインソケットを使うため、macOS か Linux が必要
 | `1`      | エミュレータが一時停止していることが必要な操作             |
 | `3`      | エミュレータ内部エラー。後述の dispatch timeout を含みます |
 
-（`2` は未使用——対応するコードは定義されていません。）
+（`2` は使っていません。プロトコルはこのコードに意味を定めていません。）
 
 ### サーバープッシュ通知
 
-エミュレータが一時停止状態に遷移するたび（ブレークポイント、ウォッチポイント、ステップ完了、または `debugger.pause` 呼び出し）、サーバーは接続中のクライアントに `id` を持たない未要求のフレームをプッシュします。
+エミュレータが一時停止するたびに、サーバーは接続中のクライアントへ、要求されていないフレームをプッシュします。このフレームには `id` がありません。一時停止のきっかけは、ブレークポイント、ウォッチポイント、ステップの完了、`debugger.pause` の呼び出しです。
 
 ```json
 {
@@ -105,7 +105,7 @@ RPC は Unix ドメインソケットを使うため、macOS か Linux が必要
 
 ## メソッドリファレンス
 
-全体で使われる `reason` の値：`"user_request"`、`"breakpoint"`、`"watchpoint"`、`"step_complete"`です。
+`reason` の値は、どのメソッドでも `"user_request"`、`"breakpoint"`、`"watchpoint"`、`"step_complete"` のどれかです。
 
 ### デバッガ制御
 
@@ -116,29 +116,29 @@ RPC は Unix ドメインソケットを使うため、macOS か Linux が必要
 
 - **`cpu.step`** _（一時停止が必要）_ → `{ pc, t_states, mnemonic, registers }`。Z80 命令を1つだけ実行します。
 - **`cpu.continue`** _（一時停止が必要）_ → `{ running: true }`。再開して即座に返ります（非ブロッキング）。ブレークで止まったフレームは、止まった位置から続きを実行します。
-- **`cpu.continue_sync`** _（一時停止が必要）_ — params: `{ timeout_ms? }`（デフォルト 5000）。再開し、次の一時停止イベントまたはタイムアウトまでブロックします。`{ paused: true, reason, pc, registers }` または `{ paused: false, reason: "timeout" }` を返します。エミュレータループを止めずにブロックできるよう、ソケットスレッド上で処理されます。
+- **`cpu.continue_sync`** _（一時停止が必要）_：params は `{ timeout_ms? }`（デフォルト 5000）。再開し、次の一時停止イベントまたはタイムアウトまでブロックします。`{ paused: true, reason, pc, registers }` または `{ paused: false, reason: "timeout" }` を返します。エミュレータループを止めずにブロックできるよう、ソケットスレッド上で処理されます。
 - **`cpu.get_registers`** → `{ registers }`。どの状態でも動作します。
 
-`registers` オブジェクト：`AF`、`BC`、`DE`、`HL`、`IX`、`IY`、`SP`、`PC`（`0xXXXX` の16進文字列）、シャドウレジスタ `AF'`/`BC'`/`DE'`/`HL'`、`I`/`R`（`0xXX`）、`IFF1`/`IFF2`（真偽値）、`IM`です（整数）。
+`registers` オブジェクトは、`AF`、`BC`、`DE`、`HL`、`IX`、`IY`、`SP`、`PC`（`0xXXXX` の16進文字列）、シャドウレジスタ `AF'`/`BC'`/`DE'`/`HL'`、`I`/`R`（`0xXX`）、`IFF1`/`IFF2`（真偽値）、`IM`（整数）を持ちます。
 
 ### ブレークポイント / ウォッチポイント
 
-- **`debug.set_breakpoint`** — params: `{ address }` → `{ id, address, active }`。
-- **`debug.remove_breakpoint`** — params: `{ id }` → `{ removed }`。
+- **`debug.set_breakpoint`**：params は `{ address }` → `{ id, address, active }`。
+- **`debug.remove_breakpoint`**：params は `{ id }` → `{ removed }`。
 - **`debug.list_breakpoints`** → `{ breakpoints: [{ id, address, active }] }`。
-- **`debug.set_watchpoint`** — params: `{ address, mode? }`（`"r"` / `"w"` / `"rw"`、デフォルト `"rw"`）→ `{ id, address, mode, active }`。
-- **`debug.remove_watchpoint`** — params: `{ id }` → `{ removed }`。
+- **`debug.set_watchpoint`**：params は `{ address, mode? }`（`"r"` / `"w"` / `"rw"`、デフォルト `"rw"`）→ `{ id, address, mode, active }`。
+- **`debug.remove_watchpoint`**：params は `{ id }` → `{ removed }`。
 
-アドレスは JSON の整数または16進文字列（`"0xC000"` あるいは `"C000"`）のどちらでも指定できます。実機側は最大4個のブレークポイントと4個のウォッチポイントしか保持しません（[インタラクティブデバッガ](debugger_ja.md)の `ba`/`wa` の上限と同じ）。5個目の `debug.set_*` 呼び出しは invalid params のエラー（`-32602`）を返し、設定済みの4個はそのまま有効です。
+アドレスは JSON の整数または16進文字列（`"0xC000"` あるいは `"C000"`）のどちらでも指定できます。マシンが持てるのは、最大 4 個のブレークポイントと 4 個のウォッチポイントです（[インタラクティブデバッガ](debugger_ja.md)の `ba`/`wa` の上限と同じ）。5個目の `debug.set_*` 呼び出しは invalid params のエラー（`-32602`）を返し、設定済みの4個はそのまま有効です。
 
-RPC のメソッドは、`--break-point`、`--watch-point` オプションや `ba`/`wa` コマンドと、実機側の同じ設定を共有します。追加と削除は自分のエントリだけを変え、4個の上限はすべてのエントリを数えます。実機側は 1 つのアドレスに 1 つのエントリしか持ちません。そのため、削除するとデバッガが同じアドレスに設定したエントリも消えます。また、ウォッチ中のアドレスにウォッチポイントを設定すると、そのアドレスにモードが加わります。`debug.list_breakpoints` の `active` は、アドレスが設定されていないとき（たとえばデバッガの `br` で消した後）`false` です。
+RPC のメソッドは、`--break-point`、`--watch-point` オプションや `ba`/`wa` コマンドと、マシンの同じ設定を共有します。追加と削除は自分のエントリだけを変え、4個の上限はすべてのエントリを数えます。マシンは 1 つのアドレスに 1 つのエントリしか持ちません。そのため、削除するとデバッガが同じアドレスに設定したエントリも消えます。また、ウォッチ中のアドレスにウォッチポイントを設定すると、そのアドレスにモードが加わります。`debug.list_breakpoints` の `active` は、アドレスが設定されていないとき（たとえばデバッガの `br` で消した後）`false` です。
 
 ### メモリ
 
-- **`memory.read`** — params: `{ address, length? }`（デフォルト 16）→ `{ address, data }`。`data` はスペース区切りの16進バイト列です。長さは 0〜0x10000 です。それ以外の長さは invalid-params エラー（`-32602`）になります。
-- **`memory.write`** _（一時停止が必要）_ — params: `{ address, data }`（16進バイト、例：`"3E 01 C9"`）→ `{ written }`。
-- **`memory.read_vram`** — params: `{ address, length? }`（デフォルト 32）→ `{ address, data }`。アドレスは VRAM サイズ（0x4000 か 0x20000）内でラップするので、MSX2 では 0xFFFF より上のアドレスで 64 KB より上の VRAM を読めます。そのとき結果の `address` は 16進 5 桁（`0x1C000`）です。長さは 0〜VRAM サイズです。それ以外の長さは invalid-params エラー（`-32602`）になります。
-- **`memory.disassemble`** — params: `{ address, count? }`（デフォルト 10）→ `{ instructions: [{ address, bytes, mnemonic }] }`。
+- **`memory.read`**：params は `{ address, length? }`（デフォルト 16）→ `{ address, data }`。`data` はスペース区切りの16進バイト列です。長さは 0〜0x10000 です。それ以外の長さは invalid-params エラー（`-32602`）になります。
+- **`memory.write`** _（一時停止が必要）_：params は `{ address, data }`（16進バイト、例：`"3E 01 C9"`）→ `{ written }`。
+- **`memory.read_vram`**：params は `{ address, length? }`（デフォルト 32）→ `{ address, data }`。アドレスは VRAM サイズ（0x4000 か 0x20000）内でラップするので、MSX2 では 0xFFFF より上のアドレスで 64 KB より上の VRAM を読めます。そのとき結果の `address` は 16進 5 桁（`0x1C000`）です。長さは 0〜VRAM サイズです。それ以外の長さは invalid-params エラー（`-32602`）になります。
+- **`memory.disassemble`**：params は `{ address, count? }`（デフォルト 10）→ `{ instructions: [{ address, bytes, mnemonic }] }`。
 
 ### VDP
 
@@ -149,34 +149,34 @@ RPC のメソッドは、`--break-point`、`--watch-point` オプションや `b
 
 ### 入力の注入
 
-- **`input.press_key`** / **`input.release_key`** — params: `{ row, bit }`（生のキーボードマトリクスセル）。
-- **`input.press_key_named`** — params: `{ key, duration_ms? }`（デフォルト 100）。`key` は MSX のキー名（`SPACE`、`RETURN`、`ESC`、`UP`/`DOWN`/`LEFT`/`RIGHT`、`SHIFT`、`CTRL`、`GRAPH`、`CAPS`、`CODE`、`STOP`、`HOME`、`INS`、`DEL`、`BS`、`TAB`、`SELECT`、`F1`-`F5`、`A`-`Z`、`0`-`9`）で、大文字小文字を区別しません。キーを押し、`duration_ms` 後に自動的に離すようスケジュールします。
-- **`input.joystick`** — params: `{ port? (1|2, デフォルト 1), up?, down?, left?, right?, trigger_a?, trigger_b? }`（すべて真偽値）→ `{ port, state }`。状態は次の呼び出しまで保持されます。
-- **`input.joystick_release`** — params: `{ port? }` → そのポートのすべての方向とトリガーをクリアします。
+- **`input.press_key`** / **`input.release_key`**：params は `{ row, bit }`（生のキーボードマトリクスセル）。
+- **`input.press_key_named`**：params は `{ key, duration_ms? }`（デフォルト 100）。`key` は MSX のキー名（`SPACE`、`RETURN`、`ESC`、`UP`/`DOWN`/`LEFT`/`RIGHT`、`SHIFT`、`CTRL`、`GRAPH`、`CAPS`、`CODE`、`STOP`、`HOME`、`INS`、`DEL`、`BS`、`TAB`、`SELECT`、`F1`-`F5`、`A`-`Z`、`0`-`9`）で、大文字小文字を区別しません。キーを押し、`duration_ms` 後に自動的に離すようスケジュールします。
+- **`input.joystick`**：params は `{ port? (1|2, デフォルト 1), up?, down?, left?, right?, trigger_a?, trigger_b? }`（すべて真偽値）→ `{ port, state }`。状態は次の呼び出しまで保持されます。
+- **`input.joystick_release`**：params は `{ port? }`。そのポートのすべての方向とトリガーをクリアします。
 
 すべての入力系メソッドは一時停止中・実行中の両方で動作し、その効果は次の PPI/ジョイスティック読み取り時に反映されます。
 
 ### スクリーンショット
 
-- **`screen.capture`** — params: `{ scale? }`（デフォルト 1）→ `{ width, height, format: "png", encoding: "base64", data }`。フレームカウンタを進めずに現在の VDP フレームを描画します。どの状態でも動作します。
+- **`screen.capture`**：params は `{ scale? }`（デフォルト 1）→ `{ width, height, format: "png", encoding: "base64", data }`。フレームカウンタを進めずに現在の VDP フレームを描画します。どの状態でも動作します。
 
 ### ステート保存 / 読み込み
 
-- **`state.save`** — params: `{ path? }` → `{ path }`。CPU、RAM、VDP、PSG、マッパーのバンク状態をキャプチャします。常に `saves/states/` 配下に新しいタイムスタンプ付きファイルを書き込みます。任意の `path` はスナップショットのタイトルとしてそのファイル名部分を提供するだけで、出力先としては使われません。
-- **`state.load`** — params: `{ path }`（必須）→ `{ path, loaded: true }`。
+- **`state.save`**：params は `{ path? }` → `{ path }`。マシン全体のスナップショットを保存します。常に `saves/states/` 配下に新しいタイムスタンプ付きファイルを書き込みます。`path` を渡すと、そのファイル名部分がスナップショットのタイトルになります。出力先には使いません。
+- **`state.load`**：params は `{ path }`（必須）→ `{ path, loaded: true }`。
 
 ### フロッピーディスク
 
-- **`fdd.swap`** — params: `{ drive (1|2), path? }`。`path` を指定するとその `.dsk` イメージがマウントされ、省略または null にするとイジェクトされます → `{ drive, path, mounted }`。マシンにフロッピーインターフェースがない場合はエラーになります。
+- **`fdd.swap`**：params は `{ drive (1|2), path? }` → `{ drive, path, mounted }`。`path` を指定するとその `.dsk` イメージをマウントし、省略するか null にするとディスクを取り出します。マシンにフロッピーインターフェースがない場合はエラーになります。
 
 ### カセットテープ
 
 どのメソッドも一時停止を必要としません。失敗したとき（カセットポートがない、テープがない、ファイルや位置が不正）はコード `-32602` を返し、テープは変えません。
 
-- **`tape.insert`** — params: `{ path }`（必須）→ `{ mounted: true, blocks }`。`.cas` ファイルを変換し、位置 0 でマウントします。対応するのは CAS だけです。WAV ファイルは、外部ツールで変換するよう伝えるエラーになります。
+- **`tape.insert`**：params は `{ path }`（必須）→ `{ mounted: true, blocks }`。`.cas` ファイルを変換し、位置 0 でマウントします。対応するのは CAS だけです。WAV ファイルはエラーになります。WAV の録音は、先に [`tools/wav2cas.py`](../tools/README_tools_ja.md#wav2caspy) で変換してください。
 - **`tape.eject`** → `{ mounted: false }`。
 - **`tape.rewind`** → `tape.status` と同じ結果。位置を 0 に戻します。
-- **`tape.seek`** — params: `{ seconds }` か `{ block }` のどちらか 1 つ → `tape.status` と同じ結果。`seconds` は 0 以上の数、`block` は `tape.blocks` のブロック番号です。
+- **`tape.seek`**：params は `{ seconds }` か `{ block }` のどちらか 1 つ → `tape.status` と同じ結果。`seconds` は 0 以上の数、`block` は `tape.blocks` のブロック番号です。
 - **`tape.status`** → `{ mounted, path, motor, position, length, position_seconds, length_seconds, block }`。`position` と `length` は 3.579545 MHz のクロックで数えた T ステートです。`block` は、位置かそれより前で始まる最後のブロックです。テープがないときは `path` と `block` が null、数値は 0 です。
 - **`tape.blocks`** → `{ blocks: [{ number, type, name, start, start_seconds, length }] }`。`type` はファイルヘッダなら `binary`、`basic`、`ascii`、ほかのブロックなら `data` です。`name` はヘッダのファイル名で、データのブロックでは null です。`length` はバイト数です。テープがないときは空の一覧を返します。
 
@@ -196,17 +196,17 @@ python tools/rpc_client.py debug.set_breakpoint '{"address": "0xC000"}'
 python tools/rpc_client.py --socket /tmp/alt.sock cpu.get_registers
 ```
 
-params は `key=value` の組（int/bool/文字列に変換されます）または単一の JSON オブジェクトのどちらかで指定します。レスポンス待ち中に受信したプッシュ通知は stderr に出力されます。レスポンスは整形された JSON として stdout に出力され、エラーレスポンスの場合はプロセスが非0で終了します。
+params は `key=value` の組か、1 つの JSON オブジェクトで指定します。`key=value` の値は int、bool、文字列のどれかに変換します。レスポンスを待つ間に受け取ったプッシュ通知は stderr に出力します。レスポンスは整形した JSON として stdout に出力します。エラーレスポンスのときは、プロセスが 0 以外のコードで終了します。
 
 ---
 
 ## MCP サーバー
 
-`tools/mcp_server.py` は `FastMCP` ベースの stdio サーバーで、各ツール呼び出しを1つの RPC リクエストに変換し、結果をテキスト（スクリーンショットの場合は画像も）として整形します。ソケットパスは環境変数 `MSX_RPC_SOCKET`（デフォルト `/tmp/py_msx_emu.sock`）から読み込まれるため、プロジェクトごとに MCP 登録の `env` ブロックで非デフォルトのソケットを指定できます。
+`tools/mcp_server.py` は `FastMCP` ベースの stdio サーバーで、各ツール呼び出しを1つの RPC リクエストに変換し、結果をテキスト（スクリーンショットの場合は画像も）として整形します。ソケットパスは環境変数 `MSX_RPC_SOCKET`（デフォルト `/tmp/py_msx_emu.sock`）から読みます。そのため、MCP 登録の `env` ブロックで、プロジェクトごとにデフォルト以外のソケットを指定できます。
 
 ### ツール一覧
 
-各ツールは[メソッドリファレンス](#メソッドリファレンス)に記載した同名の RPC メソッド（`.` を `_` に置き換えた名前）をラップします。生のキーボードマトリクスを行とビットで指定する 2 メソッド（`input.press_key` / `input.release_key`）に対応するツールはありません——`input_press_key` はキー名指定の方です。
+ほとんどのツールは、[メソッドリファレンス](#メソッドリファレンス)に記載した同名の RPC メソッド（`.` を `_` に置き換えた名前）をラップします。名前の違うツールは 4 つです。`emulator_status` と `emulator_pause` は `debugger.status` と `debugger.pause` を、`cpu_continue_until_pause` は `cpu.continue_sync` を、`input_press_key` は `input.press_key_named` をラップします。生のキーボードマトリクスを行とビットで指定する 2 メソッド（`input.press_key` / `input.release_key`）に対応するツールはありません。
 
 - `emulator_status`、`emulator_pause`
 - `cpu_get_registers`、`cpu_step`（一時停止が必要）、`cpu_continue`（一時停止が必要、非ブロッキング）、`cpu_continue_until_pause(timeout_seconds=30)`（一時停止が必要、ブロッキング）
@@ -214,7 +214,7 @@ params は `key=value` の組（int/bool/文字列に変換されます）また
 - `memory_read(address, length=16)`、`memory_write(address, data_hex)`（一時停止が必要）、`memory_disassemble(address, count=10)`、`memory_read_vram(address, length=32)`
 - `vdp_get_registers`、`vdp_get_status`
 - `input_press_key(key, duration_ms=100)`、`input_joystick(port=1, up=, down=, left=, right=, trigger_a=, trigger_b=)`、`input_joystick_release(port=1)`
-- `screen_capture(scale=1)` — テキストだけでなく実際の画像を返します
+- `screen_capture(scale=1)`：テキストに加えて画像を返します
 - `state_save(path="")`、`state_load(path)`
 - `fdd_swap(drive, path="")`
 - `tape_insert(path)`、`tape_eject`、`tape_rewind`、`tape_seek(seconds=None, block=None)`、`tape_status`、`tape_blocks`
@@ -223,7 +223,7 @@ params は `key=value` の組（int/bool/文字列に変換されます）また
 
 ### オプション依存関係のインストール
 
-MCP サーバーには `mcp[cli]` パッケージが必要です。通常のエミュレータインストールを依存関係なしに保つため、オプションの extra として宣言されています。
+MCP サーバーには `mcp[cli]` パッケージが必要です。通常のインストールにこの依存が入らないよう、オプションの extra として宣言しています。
 
 ```bash
 pip install -e ".[mcp]"
@@ -242,7 +242,7 @@ claude mcp add --transport stdio --scope project msx-emulator \
     -- python tools/mcp_server.py
 ```
 
-これにより `.mcp.json` にエントリが書き込まれます。Claude Code はそれを使用するセッションの開始時に `tools/mcp_server.py` を自動的に起動します——手動で常駐させておく必要はありません。以下で確認できます。
+これにより `.mcp.json` にエントリが書き込まれます。Claude Code はそれを使用するセッションの開始時に `tools/mcp_server.py` を自動的に起動します。手動で常駐させておく必要はありません。登録は次のコマンドで確認できます。
 
 ```bash
 claude mcp list
@@ -262,7 +262,7 @@ claude mcp add --transport stdio --scope project msx-emulator \
 python . path/to/game.rom --machine cbios_msx2_jp --rpc
 ```
 
-これを別のターミナルで動かし続けてください（あるいは Claude Code の Bash ツールでバックグラウンド起動しても構いません）——MCP ツールはエミュレータプロセスがソケットをリッスンしている間だけ機能します。
+これを別のターミナルで動かし続けてください。Claude Code の Bash ツールでバックグラウンドで起動してもかまいません。MCP ツールが使えるのは、エミュレータのプロセスがソケットで待ち受けている間だけです。
 
 ### 3. Claude Code セッションから操作する
 
@@ -285,8 +285,8 @@ MCP サーバーを登録済みであれば、Claude に `msx-emulator` のツ�
 
 ## セキュリティに関する注意
 
-- ソケットはローカルユーザー専用（Unix ドメインソケットであり、ネットワークには公開されません）で、それ自体に認証機構はありません。アクセス制御はソケットファイルのファイルシステム権限に依存します。
-- `memory.write` と `cpu.step`（状態を変更し、タイミングの正確さが要る操作）は、事前にエミュレータが一時停止していることを要求します。
+- ソケットは Unix ドメインソケットなので、届くのはローカルのプロセスだけです。ソケット自体に認証の仕組みはありません。アクセスはソケットファイルのパーミッションで決まります。共有ホストでは `chmod 600` でファイルを制限してください。
+- `memory.write` と `cpu.step` は命令の境目で状態を変えるので、エミュレータが一時停止しているときだけ動きます。
 - RPC は完全にオプトイン（`--rpc`）です。通常の実行にはソケットもバックグラウンドスレッドもなく、追加の攻撃対象領域はありません。
 
 ---
@@ -294,6 +294,6 @@ MCP サーバーを登録済みであれば、Claude に `msx-emulator` のツ�
 ## 既知の制限
 
 - **アクティブなクライアントは1つのみ。** accept ループはシングルスレッドのため一度に処理されるクライアントは1つだけです。同じソケットに対して2つの MCP セッション（または MCP セッションと `tools/rpc_client.py`）を同時に動かすと、後から接続した方は最初の接続が切断されるまでブロックされます。
-- **エミュレータの自動起動はしません。** MCP サーバーはエミュレータを代わりに起動しません——先に `--rpc` 付きで別途起動しておく必要があり、そうでなければ最初のツール呼び出しが明確な「接続できない」エラーで失敗します。
-- **`cpu.continue_sync` のタイムアウトは呼び出し単位です。** `timeout_ms` が経過する前にエミュレータが一時停止しなければ、無期限にブロックする代わりに `{ paused: false, reason: "timeout" }` を返します。エミュレータ自体は実行を続けます。
-- **リクエストはホストループの稼働を前提とします。** `cpu.continue_sync` 以外のメソッドはすべて `DebugServer.drain()` 用のキューに積まれます（ホストは1フレームに1回、一時停止中は継続的に呼びます）。エミュレータが 30 秒のあいだ drain できないほど停止している場合、クライアントをハングさせる代わりに `"dispatch timeout"` の内部エラー（コード `3`）で失敗します。
+- **エミュレータの自動起動はしません。** MCP サーバーはエミュレータを起動しません。先に `--rpc` 付きで別に起動しておいてください。起動していないと、最初のツール呼び出しが、[ツール一覧](#ツール一覧)で説明した接続エラーで失敗します。
+- **`cpu.continue_sync` のタイムアウトは呼び出し単位です。** `timeout_ms` が経過する前にエミュレータが一時停止しなければ、無期限には待たず、`{ paused: false, reason: "timeout" }` を返します。エミュレータ自体は実行を続けます。
+- **リクエストはホストループの稼働を前提とします。** `cpu.continue_sync` 以外のメソッドはすべて `DebugServer.drain()` 用のキューに積まれます（ホストは1フレームに1回、一時停止中は継続的に呼びます）。エミュレータが止まっていて 30 秒以内にキューを処理しないときは、リクエストが `"dispatch timeout"` の内部エラー（コード `3`）で失敗します。クライアントが固まることはありません。

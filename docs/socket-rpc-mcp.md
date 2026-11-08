@@ -162,7 +162,7 @@ All input methods work in the paused state and in the running state. The effect 
 
 ### State save / load
 
-- **`state.save`**: params `{ path? }` → `{ path }`. Saves the CPU, RAM, VDP, PSG, and mapper bank state. It always writes a new timestamped file in `saves/states/`. An optional `path` gives only its filename stem, as the snapshot title. The method does not use it as the output location.
+- **`state.save`**: params `{ path? }` → `{ path }`. Saves a snapshot of the whole machine. It always writes a new timestamped file in `saves/states/`. An optional `path` gives only its filename stem, as the snapshot title. The method does not use it as the output location.
 - **`state.load`**: params `{ path }` (required) → `{ path, loaded: true }`.
 
 ### Floppy disk
@@ -173,7 +173,7 @@ All input methods work in the paused state and in the running state. The effect 
 
 None of these methods needs a pause. Each error (no cassette port, no tape, a bad file or position) returns code `-32602` and does not change the tape.
 
-- **`tape.insert`**: params `{ path }` (required) → `{ mounted: true, blocks }`. Converts a `.cas` file and mounts it at position 0. Only CAS is supported: a WAV file returns an error that tells you to convert it with an external tool.
+- **`tape.insert`**: params `{ path }` (required) → `{ mounted: true, blocks }`. Converts a `.cas` file and mounts it at position 0. Only CAS is supported: a WAV file returns an error. Convert a WAV recording with [`tools/wav2cas.py`](../tools/README_tools.md#wav2caspy) first.
 - **`tape.eject`** → `{ mounted: false }`.
 - **`tape.rewind`** → the `tape.status` result. Sets the position to 0.
 - **`tape.seek`**: params `{ seconds }` or `{ block }`, exactly one → the `tape.status` result. `seconds` is a number of 0 or more. `block` is a block number from `tape.blocks`.
@@ -206,7 +206,7 @@ Give params as `key=value` pairs or as a single JSON object. The client converts
 
 ### Tool set
 
-Each tool wraps the RPC method with the same name, with `_` in place of `.`. [Method reference](#method-reference) describes these methods. The two raw keyboard-matrix methods (`input.press_key` / `input.release_key`, addressed by row and bit) have no tool. The tool `input_press_key` is the named-key variant:
+Most tools wrap the RPC method with the same name, with `_` in place of `.`. [Method reference](#method-reference) describes these methods. Four tools have other names: `emulator_status` and `emulator_pause` wrap `debugger.status` and `debugger.pause`, `cpu_continue_until_pause` wraps `cpu.continue_sync`, and `input_press_key` wraps `input.press_key_named`. The two raw keyboard-matrix methods (`input.press_key` / `input.release_key`, addressed by row and bit) have no tool:
 
 - `emulator_status`, `emulator_pause`
 - `cpu_get_registers`, `cpu_step` (paused), `cpu_continue` (paused, non-blocking), `cpu_continue_until_pause(timeout_seconds=30)` (paused, blocks)
@@ -285,8 +285,8 @@ A typical debugging session has these steps:
 
 ## Security notes
 
-- Only the local user can reach the socket (Unix domain socket, no network exposure). The socket has no authentication of its own. The filesystem permissions on the socket file control access.
-- `memory.write` and `cpu.step` change the state and need precise timing. Thus they need the emulator to be paused first.
+- The socket is a Unix domain socket, so only local processes can reach it. It has no authentication of its own. The permissions of the socket file control access. On a shared host, restrict the file with `chmod 600`.
+- `memory.write` and `cpu.step` change the state at an exact instruction boundary, so they work only while the emulator is paused.
 - RPC is strictly opt-in (`--rpc`). A normal run has no socket, no background thread, and no additional attack surface.
 
 ---
@@ -294,6 +294,6 @@ A typical debugging session has these steps:
 ## Known limitations
 
 - **Single active client.** The accept loop is single-threaded, so the server serves only one client at a time. If two MCP sessions (or an MCP session and `tools/rpc_client.py`) use the same socket at the same time, the second one blocks until the first one disconnects.
-- **No emulator autostart.** The MCP server does not start the emulator. Start the emulator separately with `--rpc` first. If you do not, the first tool call fails with a clear "cannot connect" error.
+- **No emulator autostart.** The MCP server does not start the emulator. Start the emulator separately with `--rpc` first. If you do not, the first tool call fails with the connection error that [Tool set](#tool-set) describes.
 - **`cpu.continue_sync` timeout is per-call.** If nothing pauses the emulator before `timeout_ms` elapses, the call returns `{ paused: false, reason: "timeout" }` and does not block indefinitely. The emulator continues to run.
 - **Requests need a running host loop.** The server queues every method except `cpu.continue_sync` for `DebugServer.drain()`. The host calls this function once per frame, and continuously while paused. If the emulator is stuck and does not drain the queue within 30 seconds, the request fails with a `"dispatch timeout"` internal error (code `3`). The client thus does not hang.
