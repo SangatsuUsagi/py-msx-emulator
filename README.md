@@ -2,7 +2,7 @@
 
 A functionally accurate MSX1/MSX2 emulator, written in pure Python 3.10+ and driven by machine-readable component specifications.
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-4550%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-4681%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -71,7 +71,7 @@ The CPU has the full register file (AF, BC, DE, HL, IX, IY, SP, PC, I, R, and th
 - Implementation: `msx/cpu/z80.py`, `msx/cpu/opcodes_main.py`, `msx/cpu/registers.py`
 - Known limitations:
   - OTIR/INIR and similar block I/O instructions are not cycle-exact across page boundaries.
-  - The undocumented flag bits Y (bit 5) and X (bit 3) follow the Zilog NMOS rules, including `BIT n,(HL)` (from the internal MEMPTR register), a repeating `LDIR`/`LDDR`/`CPIR`/`CPDR` (from its own address) and `SCF`/`CCF` (from whether the previous instruction changed the flags). The repeating `INIR`/`INDR`/`OTIR`/`OTDR` keep simpler per-iteration flags.
+  - The undocumented flag bits Y (bit 5) and X (bit 3) follow the Zilog NMOS rules, including `BIT n,(HL)` (from the internal MEMPTR register), a repeating block instruction (`LDIR`/`LDDR`/`CPIR`/`CPDR`/`INIR`/`INDR`/`OTIR`/`OTDR`, from its own address) and `SCF`/`CCF` (from whether the previous instruction changed the flags).
   - The emulator targets a Zilog-compatible Z80. The NEC and Sharp Z80-compatible CPUs in some MSX machines can differ in these flags; that is not modelled.
 
 ### VDP (Video Display Processor): TMS9918A (MSX1)
@@ -406,7 +406,7 @@ Each scenario maps directly to a unit test. For a new feature or a change to an 
 
 The `--benchmark` CLI flag gives these measurements. It does a headless, unthrottled run (no `FrameTimer` pacing) from a cold boot through the full frame count. The measurement thus includes the BIOS boot time. As in interactive play, every frame runs full CPU emulation and mixes the frame's audio. It also renders the VDP output to an offscreen buffer and converts it to RGB. But `--benchmark` never opens an SDL window, queues audio, or uploads and blits textures. Real interactive sessions thus run somewhat slower than the numbers below.
 
-Since v2.8.0 the core and the frontend are separate, and the core synthesizes the sound chips every frame, also in headless runs. `--benchmark` also converts every frame to RGB, as the frontend does for a shown frame. The `--benchmark` numbers thus include the cost of sound synthesis and of the RGB conversion, and are closer to the real speed of interactive play. Up to v2.7.8, `--benchmark` did neither. Do not compare the numbers below with numbers from v2.7.8 or earlier. The RGB conversion reuses each row that it already converted for an earlier frame. On most frames it thus costs little, under PyPy as well as under CPython.
+Since v2.8.0, the core synthesizes the sound chips every frame, also in headless runs, and `--benchmark` converts every frame to RGB. Up to v2.7.8, `--benchmark` did neither. Do not compare the numbers below with numbers from v2.7.8 or earlier. The RGB conversion reuses each row that it already converted for an earlier frame. On most frames it thus costs little, under PyPy as well as under CPython.
 
 For each (runtime, game) pair, the author measured 10 runs of 10000 frames each. The score is the average of the remaining 8 runs, after the removal of the fastest and the slowest run.
 
@@ -507,14 +507,15 @@ python . path/to/game.rom --extension1 fmpac --extension2 hbi_j1
 # Attach an MSX mouse to Joy2 (default port), driven by the host mouse
 python . path/to/game.rom --mouse
 
-# Mount a CAS tape, then load it in BASIC with CLOAD or BLOAD"CAS:",R
+# Attach an MSX mouse to Joy1 instead
+python . path/to/game.rom --mouse=1
+
+# Mount a CAS tape, then load it in BASIC with CLOAD, BLOAD"CAS:",R, or
+# RUN"CAS:" (an ASCII file)
 python . --machine hb_10 --tape path/to/game.cas
 
 # Write what a program prints to a file (a machine with a printer port)
 python . --machine hb_f1xd --printer-log out.prn
-
-# Attach an MSX mouse to Joy1 instead
-python . path/to/game.rom --mouse=1
 
 # Resume from the most recent save state
 python . path/to/game.rom --resume
@@ -821,7 +822,7 @@ To use a custom machine definition, add a new YAML file to `config/machines/` an
 
 ## Running tests
 
-The test suite has 4550 tests and covers all major components. It includes unit tests for individual opcodes and hardware registers, and integration tests that connect multiple components. It also includes scenario-level tests, with conditions that come directly from the component specs.
+The test suite has 4681 tests and covers all major components. It includes unit tests for individual opcodes and hardware registers, and integration tests that connect multiple components. It also includes scenario-level tests, with conditions that come directly from the component specs.
 
 ```bash
 # Install the development dependencies (pytest, ruff, mypy)
@@ -917,7 +918,7 @@ py-msx-emulator/
 ├── allium/                # Allium behaviour specs, verifying spec/implementation alignment (not published yet)
 ├── openspec/
 │   └── specs/             # Component specifications (not published yet)
-├── tests/                 # Test suite (4550 tests)
+├── tests/                 # Test suite (4681 tests)
 ├── py_emulator.example.yaml # Annotated example of the optional config file
 ├── QUICK_START.md         # Requirements, installation, BIOS setup
 ├── CHANGELOG.md           # Version history
@@ -930,7 +931,7 @@ py-msx-emulator/
 
 ## Contributing
 
-Issues and pull requests are welcome. The specs (`openspec/`, `allium/`) are not published yet, and development is currently AI-assisted ("vibe coding"). So contributors do not need to write specs. The author reviews each issue or pull request and then updates the OpenSpec specification and the Allium contracts to match.
+Issues and pull requests are welcome. The specs (`openspec/`, `allium/`) are not published yet, and development is currently AI-assisted. So contributors do not need to write specs. The author reviews each issue or pull request and then updates the OpenSpec specification and the Allium contracts to match.
 
 ### Coding conventions
 
