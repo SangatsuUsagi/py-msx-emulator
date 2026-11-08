@@ -414,32 +414,32 @@ The VDP SHALL maintain 16 KB of video RAM as a `bytearray` of length 0x4000. All
 
 v2.8.0 から、ヘッドレスの実行でもコアが毎フレーム音源を合成し、`--benchmark` は毎フレームを RGB に変換します。v2.7.8 までの `--benchmark` はどちらも行っていなかったので、下の数値は v2.7.8 以前の数値と比べられません。RGB 変換は、前のフレームまでに変換した行を使い回すので、ほとんどのフレームでは CPython でも PyPy でも負荷が小さくなります。
 
-ランタイムとゲームの組み合わせごとに、10000 フレームの計測を 10 回行い、最速と最遅を除いた 8 回の平均をスコアにしました。
+ランタイムとゲームの組み合わせごとに、10000 フレームの計測を 10 回行い、最速と最遅を除いた 8 回の平均をスコアにしました。計測中、カセットテープは入れていません（デッキは空です）。
 
 | プラットフォーム | ランタイム | ゲーム | 平均 FPS（`--benchmark`） | 60 fps 目標との比 |
 | --- | --- | --- | --- | --- |
-| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 313.21 | 約 5.2 倍 |
-| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤーIV（CPU+V9938+PSG） | 588.45 | 約 9.8 倍 |
-| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 103.20 | 約 1.7 倍 |
-| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 1010.60 | 約 16.8 倍 |
-| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤーIV（CPU+V9938+PSG） | 1415.97 | 約 23.6 倍 |
-| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 710.43 | 約 11.8 倍 |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 79.70 | 約 1.3 倍 |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤーIV（CPU+V9938+PSG） | 157.39 | 約 2.6 倍 |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 28.03 | 約 0.47 倍 |
-| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 200.75 | 約 3.3 倍 |
-| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤーIV（CPU+V9938+PSG） | 297.58 | 約 5.0 倍 |
-| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 154.20 | 約 2.6 倍 |
+| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 307.66 | 約 5.1 倍 |
+| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤーIV（CPU+V9938+PSG） | 582.56 | 約 9.7 倍 |
+| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 102.50 | 約 1.7 倍 |
+| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 985.60 | 約 16.4 倍 |
+| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤーIV（CPU+V9938+PSG） | 1366.11 | 約 22.8 倍 |
+| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 718.51 | 約 12.0 倍 |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 79.88 | 約 1.3 倍 |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤーIV（CPU+V9938+PSG） | 155.55 | 約 2.6 倍 |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 27.97 | 約 0.47 倍 |
+| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 222.86 | 約 3.7 倍 |
+| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤーIV（CPU+V9938+PSG） | 285.31 | 約 4.8 倍 |
+| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 152.18 | 約 2.5 倍 |
 
-計測した組み合わせのすべてが 60 fps に届くわけではありません。余裕が最も小さいのは Raspberry Pi 5 の CPython でドラゴンスレイヤー英雄伝説を動かした場合で、約 0.47 倍と目標を下回ります。対象タイトルの中では、FM-PAC（YM2413）の合成が 1 フレームあたりの負荷として最も重くなります。PyPy にすると、同じ組み合わせで約 2.6 倍になります。Raspberry Pi 5 と CPython のほかの組み合わせは目標に届き、沙羅曼蛇は約 1.3 倍、ドラゴンスレイヤーIV は約 2.6 倍です。
+計測した組み合わせのすべてが 60 fps に届くわけではありません。余裕が最も小さいのは Raspberry Pi 5 の CPython でドラゴンスレイヤー英雄伝説を動かした場合で、約 0.47 倍と目標を下回ります。対象タイトルの中では、FM-PAC（YM2413）の合成が 1 フレームあたりの負荷として最も重くなります。PyPy にすると、同じ組み合わせで約 2.5 倍になります。Raspberry Pi 5 と CPython のほかの組み合わせは目標に届き、沙羅曼蛇は約 1.3 倍、ドラゴンスレイヤーIV は約 2.6 倍です。
 
-Raspberry Pi 5 の CPython で FM-PAC を使うタイトルを動かすと、60 fps を下回ります。Raspberry Pi 5 より遅いハードウェアや、もっと重いタイトルでも同じです。そのときゲームは、実際のフレームレートに比例してスローモーションになります。音声も劣化します（クリックや無音）。原因は、音声のサンプルをフレームごとに作るのに、音声デバイスは常に 44100 Hz で消費することにあります。PyPy3 はそのまま置き換えて使えます。Raspberry Pi 5 では、CPython の約 2〜5.5 倍の処理速度が出ます（上の表を参照）。Raspberry Pi のような非力な環境で余裕を持たせたいなら PyPy を勧めます。
+Raspberry Pi 5 の CPython で FM-PAC を使うタイトルを動かすと、60 fps を下回ります。Raspberry Pi 5 より遅いハードウェアや、もっと重いタイトルでも同じです。そのときゲームは、実際のフレームレートに比例してスローモーションになります。音声も劣化します（クリックや無音）。原因は、音声のサンプルをフレームごとに作るのに、音声デバイスは常に 44100 Hz で消費することにあります。PyPy3 はそのまま置き換えて使えます。Raspberry Pi 5 では、CPython の約 1.8〜5.4 倍の処理速度が出ます（上の表を参照）。Raspberry Pi のような非力な環境で余裕を持たせたいなら PyPy を勧めます。
 
 PyPy の数値は、OS のスケジューリングなどのためか、CPython より実行ごとのばらつきが大きくなります。目安として見てください。
 
 ### ベンチマーク推移
 
-v0.1.0 から v2.9.0 までの平均 FPS（`--benchmark`）の推移を、プラットフォームごとに示します。実線が CPython、破線が PyPy です。v2.7.5 までは、上と同じコールドブートの方法から音声合成を除いた方法（v2.7.8 までの方法）で計測しました。v2.8.1 からは上の方法で計測しました。2 つの方法の数値は比べられないので、方法が変わるところで線を切っています。
+v0.1.0 から v2.10.0 までの平均 FPS（`--benchmark`）の推移を、プラットフォームごとに示します。実線が CPython、破線が PyPy です。v2.7.5 までは、上と同じコールドブートの方法から音声合成を除いた方法（v2.7.8 までの方法）で計測しました。v2.8.1 からは上の方法で計測しました。2 つの方法の数値は比べられないので、方法が変わるところで線を切っています。
 
 ![Apple MacBook Pro（M5 Pro）でのベンチマーク推移](assets/bench-history-m5pro.png)
 
