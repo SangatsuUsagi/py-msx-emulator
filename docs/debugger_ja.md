@@ -300,6 +300,34 @@ fdd1: ejected
 
 ---
 
+### カセットテープ
+
+**`tape [blocks|load FILE|eject|rewind|seek SECONDS|seek #N]`** — カセットテープを表示、変更します。カセットポートを持つマシン（例：`hb_10`、`hb_f1xd`）で使えます。
+
+- 引数なしでは、ファイル、秒で表した位置とその位置のブロック、テープの長さ、モーターの状態（テープがなければ `empty`）を表示します。
+- `blocks` はファイルのブロックを一覧にします。番号、タイプ（ファイルヘッダは `binary`、`basic`、`ascii`、ほかのブロックは `data`）、ファイル名、秒で表した開始位置、バイト数を表示します。
+- `load FILE` は `.cas` ファイルを変換して位置 0 でマウントし、変換の警告を表示します。対応するのは CAS だけです。WAV ファイルは、外部ツールで変換するよう伝えるメッセージとともに拒否します。
+- `eject` でテープを取り出し、`rewind` で位置を 0 に戻します。
+- `seek SECONDS` で位置を秒で指定し、`seek #N` でブロック N の先頭に移ります。
+
+モーターを動かすコマンドはありません。モーターを回したり止めたりするのはゲストだけです（例：`CLOAD`、`BLOAD"CAS:"`）。失敗したとき（ファイルがない、または不正、テープの外の位置、テープがない、カセットポートがない）は、エラーを表示し、テープは変えません。カセットポートのないマシンでは、`tape load` は `this machine has no cassette port` と表示します。
+
+```
+(msx-dbg cyc=720000 frm=12) tape load game.cas
+tape: mounted game.cas (2 blocks)
+(msx-dbg cyc=720000 frm=12) tape
+tape: game.cas  0.00 s (block 0) / 48.15 s  motor off
+(msx-dbg cyc=720000 frm=12) tape blocks
+  #0   binary  GAME        0.00 s  16 bytes
+  #1   data                8.81 s  4000 bytes
+(msx-dbg cyc=720000 frm=12) tape seek #1
+tape: game.cas  8.81 s (block 1) / 48.15 s  motor off
+(msx-dbg cyc=720000 frm=12) tape seek 99
+tape: tape position 354374955 is outside 0-172343159
+```
+
+---
+
 ### スクリーンショット
 
 **`ss`** — 現在の VDP の状態を描画し、`saves/screenshots/screenshot_YYYYMMDD_HHMMSS.png` に保存します。F10 のホットキーと同じ保存先です。
@@ -323,6 +351,7 @@ screenshot saved: saves/screenshots/screenshot_20260101_120000.png
 - スナップショットの `format_version` に互換性がありません。
 - スナップショットが、違うマシン構成（マシン、拡張、カートリッジ ROM）のも
 - ドライブに、保存したときと同じディスクが入っていません。`ld` はディスクを入れ替えないので、先に `fdd1`/`fdd2` で入れ替えます。
+- デッキに、保存したときと同じテープが入っていません。`ld` はテープを変えないので、先に `tape load` でマウントします。
 
 ```
 (msx-dbg cyc=720000 frm=1999) sv before-glitch

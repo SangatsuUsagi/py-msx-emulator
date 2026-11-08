@@ -169,6 +169,19 @@ RPC のメソッドは、`--break-point`、`--watch-point` オプションや `b
 
 - **`fdd.swap`** — params: `{ drive (1|2), path? }`。`path` を指定するとその `.dsk` イメージがマウントされ、省略または null にするとイジェクトされます → `{ drive, path, mounted }`。マシンにフロッピーインターフェースがない場合はエラーになります。
 
+### カセットテープ
+
+どのメソッドも一時停止を必要としません。失敗したとき（カセットポートがない、テープがない、ファイルや位置が不正）はコード `-32602` を返し、テープは変えません。
+
+- **`tape.insert`** — params: `{ path }`（必須）→ `{ mounted: true, blocks }`。`.cas` ファイルを変換し、位置 0 でマウントします。対応するのは CAS だけです。WAV ファイルは、外部ツールで変換するよう伝えるエラーになります。
+- **`tape.eject`** → `{ mounted: false }`。
+- **`tape.rewind`** → `tape.status` と同じ結果。位置を 0 に戻します。
+- **`tape.seek`** — params: `{ seconds }` か `{ block }` のどちらか 1 つ → `tape.status` と同じ結果。`seconds` は 0 以上の数、`block` は `tape.blocks` のブロック番号です。
+- **`tape.status`** → `{ mounted, path, motor, position, length, position_seconds, length_seconds, block }`。`position` と `length` は 3.579545 MHz のクロックで数えた T ステートです。`block` は、位置かそれより前で始まる最後のブロックです。テープがないときは `path` と `block` が null、数値は 0 です。
+- **`tape.blocks`** → `{ blocks: [{ number, type, name, start, start_seconds, length }] }`。`type` はファイルヘッダなら `binary`、`basic`、`ascii`、ほかのブロックなら `data` です。`name` はヘッダのファイル名で、データのブロックでは null です。`length` はバイト数です。テープがないときは空の一覧を返します。
+
+モーターを動かすメソッドはありません。モーターを回したり止めたりするのはゲストだけです（例：`BLOAD"CAS:",R`）。
+
 ---
 
 ## 手動テスト：`tools/rpc_client.py`
@@ -204,6 +217,7 @@ params は `key=value` の組（int/bool/文字列に変換されます）また
 - `screen_capture(scale=1)` — テキストだけでなく実際の画像を返します
 - `state_save(path="")`、`state_load(path)`
 - `fdd_swap(drive, path="")`
+- `tape_insert(path)`、`tape_eject`、`tape_rewind`、`tape_seek(seconds=None, block=None)`、`tape_status`、`tape_blocks`
 
 「一時停止が必要」は、あらかじめエミュレータが一時停止していることを要求するツールを示します。アドレス引数は `0x` プレフィックスの有無を問わず16進表記を受け付け、サーバーが RPC メソッド呼び出し前に正規化します。ソケットに到達できない場合、すべてのツールはソケットパスを明示し、`--rpc` 付きでエミュレータが動いているか確認するよう促すエラーを送出します。
 

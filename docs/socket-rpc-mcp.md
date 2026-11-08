@@ -169,6 +169,19 @@ All input methods work in the paused state and in the running state. The effect 
 
 - **`fdd.swap`**: params `{ drive (1|2), path? }` → `{ drive, path, mounted }`. A `path` mounts that `.dsk` image. An absent or null `path` ejects the disk. Returns an error if the machine has no floppy interface.
 
+### Cassette tape
+
+None of these methods needs a pause. Each error (no cassette port, no tape, a bad file or position) returns code `-32602` and does not change the tape.
+
+- **`tape.insert`**: params `{ path }` (required) → `{ mounted: true, blocks }`. Converts a `.cas` file and mounts it at position 0. Only CAS is supported: a WAV file returns an error that tells you to convert it with an external tool.
+- **`tape.eject`** → `{ mounted: false }`.
+- **`tape.rewind`** → the `tape.status` result. Sets the position to 0.
+- **`tape.seek`**: params `{ seconds }` or `{ block }`, exactly one → the `tape.status` result. `seconds` is a number of 0 or more. `block` is a block number from `tape.blocks`.
+- **`tape.status`** → `{ mounted, path, motor, position, length, position_seconds, length_seconds, block }`. `position` and `length` are T-states of the 3.579545 MHz clock. `block` is the last block that starts at or before the position. With no tape, `path` and `block` are null and the numbers are 0.
+- **`tape.blocks`** → `{ blocks: [{ number, type, name, start, start_seconds, length }] }`. `type` is `binary`, `basic` or `ascii` for a file header and `data` for the other blocks. `name` is the file name of a header, null for a data block. `length` is in bytes. The list is empty with no tape.
+
+The motor has no method: only the guest starts and stops it (for example with `BLOAD"CAS:",R`).
+
 ---
 
 ## Manual testing: `tools/rpc_client.py`
@@ -204,6 +217,7 @@ Each tool wraps the RPC method with the same name, with `_` in place of `.`. [Me
 - `screen_capture(scale=1)`: returns an image as well as text
 - `state_save(path="")`, `state_load(path)`
 - `fdd_swap(drive, path="")`
+- `tape_insert(path)`, `tape_eject`, `tape_rewind`, `tape_seek(seconds=None, block=None)`, `tape_status`, `tape_blocks`
 
 `(paused)` marks the tools that need the emulator to be paused already. Address arguments accept hex with or without a `0x` prefix. The server normalizes them before it calls the RPC method. If the socket is unreachable, every tool raises an error. The error gives the socket path and asks whether the emulator runs with `--rpc`.
 

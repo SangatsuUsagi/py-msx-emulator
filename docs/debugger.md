@@ -300,6 +300,34 @@ fdd1: ejected
 
 ---
 
+### Cassette tape
+
+**`tape [blocks|load FILE|eject|rewind|seek SECONDS|seek #N]`**: show or change the cassette tape. These commands work on machines with a cassette port, e.g. `hb_10` and `hb_f1xd`.
+
+- With no argument, the command prints the file, the position in seconds with the block at the position, the tape length and the motor state (or `empty`).
+- `blocks` lists the blocks of the file: the number, the type (`binary`, `basic`, `ascii` for a file header, `data` for the other blocks), the file name, the start in seconds and the length in bytes.
+- `load FILE` converts and mounts a `.cas` file at position 0, and prints the conversion warnings. Only CAS is supported. A WAV file is refused with a message to convert it with an external tool.
+- `eject` removes the tape. `rewind` sets the position to 0.
+- `seek SECONDS` sets the position in seconds. `seek #N` sets it to the start of block N.
+
+The motor is not a command: only the guest starts and stops it (for example `CLOAD` or `BLOAD"CAS:"`). For errors (missing or invalid file, a position outside the tape, no tape, no cassette port), the command reports the error and does not change the tape. On a machine with no cassette port, `tape load` prints `this machine has no cassette port`.
+
+```
+(msx-dbg cyc=720000 frm=12) tape load game.cas
+tape: mounted game.cas (2 blocks)
+(msx-dbg cyc=720000 frm=12) tape
+tape: game.cas  0.00 s (block 0) / 48.15 s  motor off
+(msx-dbg cyc=720000 frm=12) tape blocks
+  #0   binary  GAME        0.00 s  16 bytes
+  #1   data                8.81 s  4000 bytes
+(msx-dbg cyc=720000 frm=12) tape seek #1
+tape: game.cas  8.81 s (block 1) / 48.15 s  motor off
+(msx-dbg cyc=720000 frm=12) tape seek 99
+tape: tape position 354374955 is outside 0-172343159
+```
+
+---
+
 ### Screenshot
 
 **`ss`**: render the current VDP state and save it as `saves/screenshots/screenshot_YYYYMMDD_HHMMSS.png`. The F10 hotkey uses the same location:
@@ -323,6 +351,7 @@ screenshot saved: saves/screenshots/screenshot_20260101_120000.png
 - The snapshot has an incompatible `format_version`.
 - The snapshot comes from a different machine configuration (machine, extensions, cartridge ROMs).
 - A drive does not hold the disk that it held at the save. `ld` does not swap disks, so swap them with `fdd1`/`fdd2` first.
+- The deck does not hold the tape that it held at the save. `ld` does not change the tape, so mount it with `tape load` first.
 
 ```
 (msx-dbg cyc=720000 frm=1999) sv before-glitch

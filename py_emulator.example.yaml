@@ -38,6 +38,11 @@ scale: 3
 # --fdd1 on the command line replaces the whole list.
 # fdd1: [disks/a.dsk, disks/b.dsk]
 
+# CAS tape image mounted at startup (relative to the repository root). Only
+# CAS is supported: convert a WAV recording to CAS with an external tool. A
+# --tape on the command line overrides it.
+# tape: tapes/game.cas
+
 # Overlay a slot 1/slot 2 extension device: "fmpac" (MSX-MUSIC + 8 KB SRAM)
 # or "scc_plus" (an SCC-I / SCC+ cartridge: 64 KB bank-switched RAM, blank --
 # no ROM/data file is ever loaded -- plus the SCC sound chip), among others
