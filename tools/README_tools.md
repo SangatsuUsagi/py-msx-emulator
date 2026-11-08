@@ -1,8 +1,8 @@
 # Tools
 
 Standalone command-line utilities for use with the emulator: disk image
-management, CPU instruction test runners, and the agent-facing RPC/MCP
-layer. None of these tools run in the
+management, tape WAV converters, CPU instruction test runners, and the
+agent-facing RPC/MCP layer. None of these tools run in the
 emulator process. Each one is a separate `python tools/<script>.py` command.
 
 | Script / section | Purpose |
@@ -10,6 +10,8 @@ emulator process. Each one is a separate `python tools/<script>.py` command.
 | [`dskftp.py`](#dskftppy) | Interactive ftp-style shell to edit the files in a `.dsk` image |
 | [`dskblank.py`](#dskblankpy) | Create a blank, unformatted `.dsk` image |
 | [`dskdd.py`](#dskddpy) | Copy raw sectors between a `.dsk` image and a physical USB floppy drive (Linux only) |
+| [`bas2wav.py`](#bas2wavpy) | Convert an ASCII BASIC program to a tape WAV that a real MSX loads with `LOAD"CAS:"` |
+| [`wav2cas.py`](#wav2caspy) | Convert a WAV of an MSX tape to a `.cas` file for the emulator's `--tape` |
 | [`run_z80_exercisers.py`](#run_z80_exerciserspy) | Run Z80 instruction exercisers (zexdoc, zexall, z80test) on the bare CPU core |
 | [`run_singlestep_tests.py`](#run_singlestep_testspy) | Run the SingleStepTests/z80 single-instruction cases on the bare CPU core |
 | [`golden_state.py`](#golden_statepy) | Run the golden cases of the whole core, and write or check their hashes |
@@ -69,8 +71,8 @@ it as a plain FAT12 volume.
 
 Creates a blank `*.dsk` image for use with `--fdd1` / `--fdd2`. The script
 fills the file with `0xE5`, the standard floppy fill byte. The file thus looks
-like media that is formatted but empty. The script writes no boot sector, BPB,
-or FAT. Format the image after you create it, with MSX BASIC `CALL FORMAT` in
+like a disk with formatted tracks but no file system. The script writes no boot
+sector, BPB, or FAT. Format the image after you create it, with MSX BASIC `CALL FORMAT` in
 the emulator or with `dskftp.py format`.
 
 ```bash
@@ -82,9 +84,8 @@ python tools/dskblank.py blank.dsk --force       # overwrite an existing file
 ## `dskdd.py`
 
 Copies raw sectors between a `.dsk` image and a USB-connected 3-mode floppy
-drive. **Linux only.** It implements both directions of "plain USB FDD + dd"
-from
-[`extras/msx_2dd_disk_imaging_linux.md`](../extras/msx_2dd_disk_imaging_linux.md):
+drive. **Linux only.** It reads and writes the disk with plain block-device
+I/O, as `dd` does:
 
 ```bash
 sudo python3 tools/dskdd.py read /dev/sdb msxdisk.dsk            # disk -> image
@@ -118,12 +119,63 @@ image unless you give `--overwrite`.
 Exit status: `0` success, `1` error, `2` the script imaged the disk, but some
 sectors stayed unreadable (zero-filled in the image, listed on stdout).
 
+## `bas2wav.py`
+
+Converts an ASCII BASIC program (a `.BAS` text file) to a WAV file of an MSX
+tape. Play the WAV into a real MSX to load the program, instead of typing it
+in. The WAV holds an MSX ASCII tape file at 1200 baud, the same format that
+`SAVE"CAS:NAME"` writes.
+
+```bash
+python tools/bas2wav.py PROGRAM.BAS program.wav
+python tools/bas2wav.py PROGRAM.BAS program.wav --invert   # inverted signal
+```
+
+To load the program:
+
+1. Connect the computer's headphone output to the **EAR** plug of the MSX
+   cassette cable. Do not connect the MIC and REMOTE plugs.
+2. On the MSX, type `LOAD"CAS:"` (or `RUN"CAS:"` to start the program after
+   it loads).
+3. Play the WAV. The MSX shows `Found:` and the file name when it finds the
+   file.
+
+If the MSX does not find the file or shows an error, try a higher volume, then
+`--invert`.
+
+| Option | Meaning |
+| --- | --- |
+| `--name NAME` | Tape file name, up to 6 characters (default: the file name of the source, in upper case) |
+| `--invert` | Invert the signal |
+| `--volume V` | Peak level, more than 0 and at most 1 (default: 0.8) |
+| `--gap S` | Seconds of silence before each 256-byte block, so BASIC has time to process the block (default: 1.0) |
+
+The script changes the line ends to CRLF. The output is 48 kHz, 16-bit mono.
+A WAV from this script, converted with [`wav2cas.py`](#wav2caspy), loads in
+the emulator. Loading on real hardware has not been tested yet.
+
+## `wav2cas.py`
+
+Converts a WAV file of an MSX tape to a `.cas` file, for the emulator's
+`--tape` option. It reads the standard 1200-baud format, the format that
+`SAVE"CAS:"` writes and that `bas2wav.py` makes.
+
+```bash
+python tools/wav2cas.py tape.wav tape.cas
+python . --tape tape.cas    # then type RUN"CAS:" (or LOAD"CAS:") on the MSX
+```
+
+The script prints the length and the first bytes of each block that it
+finds. It reads 8-bit and 16-bit WAV files. It averages stereo to mono. It
+reads the normal and the inverted signal without an option. If the script
+finds no block, it writes no file and exits with status `1`.
+
 ## `run_z80_exercisers.py`
 
 Runs Z80 instruction exercisers on the bare `Z80` core, with no MSX machine
 around it: CP/M `.com` programs (zexdoc, zexall) and the `.tap` images of
 [z80test](https://github.com/raxoft/z80test). The test programs are not in
-this repository; pass their paths. The exit status is 1 if any program
+this repository. Pass their paths. The exit status is 1 if any program
 reports a failure, else 0.
 
 ```bash
@@ -143,17 +195,18 @@ on the bare `Z80` core. Each file holds 1000 cases for one opcode: the CPU
 state before and after one instruction. The tool runs one instruction per
 case and compares every register, MEMPTR (WZ), Q, IFF1/IFF2, IM, the RAM, the
 port transactions and the T-state count. It does not compare the bus state of
-each cycle. The test files are not in this repository; pass their paths.
+each cycle. The test files are not in this repository. Pass their paths.
 
 ```bash
 venvs/pypy-msx-emulator/bin/python tools/run_singlestep_tests.py \
     path/to/SingleStepTests/z80/v1/*.json
 ```
 
-Use PyPy for the full set (all 1604 files take about 3 minutes); on CPython,
+Use PyPy for the full set (all 1604 files take about 3 minutes). On CPython,
 `--limit N` runs only the first N cases of each file. Cases where the core
 deliberately gives another result are listed, with their sources, in
-`tools/singlestep_known_divergences.json`. They are counted separately and do
+`tools/singlestep_known_divergences.json` (`--divergences <file>` uses another
+list). They are counted separately and do
 not fail the run. An entry that no longer matches any case is reported as
 stale. The exit status is 1 on any other failure or on a stale entry, else 0.
 
@@ -168,17 +221,26 @@ list.
 Runs fixed cases of the whole core and compares hashes of the result with
 `tests/vectors/golden_state.json`. A case gives a machine, an optional slot 1
 cartridge, an input script and checkpoint frames. At each checkpoint the file
-records the SHA-256 of each section of the saved state (`cpu`, `memory`,
+can record the SHA-256 of each section of the saved state (`cpu`, `memory`,
 `vdp`, `psg` and the others), of the audio up to that frame, and of the video
 of that frame. A mismatch names the case, the frame and the section.
+
+The file in the repository holds the cases and their checkpoint frames, with
+no hashes yet. The save-state layout still changes (cassette, disk and other
+devices), so the hashes are recorded before the port of the core starts,
+after a review of the core and of the cases. The check reports a case with no
+recorded hashes and does not fail on it.
 
 ```bash
 venvs/py-msx-emulator/bin/python tools/golden_state.py           # check
 venvs/py-msx-emulator/bin/python tools/golden_state.py --write   # record
 ```
 
-After an intended change of behavior, run `--write` and commit the new file.
-`tests/test_golden_state.py` runs the same check in the test suite.
+To check that a change keeps the behavior, record a copy of the file before
+the change and check against it after the change with `--vectors <copy>`.
+After the hashes are in the repository, run `--write` after an intended change
+of behavior and commit the new file. `tests/test_golden_state.py` runs the
+same check in the test suite.
 
 The ROMs are not in this repository. A case whose ROM is absent, or has
 another SHA-256, is skipped, with the path in the reason. Put these files in
@@ -190,7 +252,7 @@ place:
 | `roms/homebrew/noborunoca.rom` | `noborunoca.rom` of [NOBORUNOCA v1.0.2](https://github.com/h1romas4/noborunoca/releases/tag/v1.0.2) (MIT) | `57a3be2fe5c3190daa3e69cf23cd262cdc8af98c60993ea941d43c815cbb25f6` |
 | `roms/homebrew/uno-msx2.rom` | `uno-msx2.rom` of [commodore-uno v1.0.5](https://github.com/jhonnaker1/commodore-uno/releases/tag/v1.0.5) (MIT), or a build of v1.0.5 (below) | `74d74d8720e623a7b8aadce8e0b0c9094f8a2162339a8e7c677c7732f673ddb8` |
 
-The hashes were recorded with a build of commodore-uno v1.0.5. Another version
+The SHA-256 in the table comes from a build of commodore-uno v1.0.5. Another version
 can give another ROM, so use v1.0.5. The `uno-msx2.rom` files of the v1.0.5 and
 v1.0.10 releases have the same SHA-256 as that build. To build the ROM, use
 [SDCC](https://sdcc.sourceforge.net/) and GNU make:
@@ -249,6 +311,7 @@ The RPC methods cover these functions:
 - screenshot capture
 - state save/load
 - disk swap
+- tape insert/eject/rewind/seek
 
 [`../docs/socket-rpc-mcp.md`](../docs/socket-rpc-mcp.md) documents the wire
 protocol and the full method reference.

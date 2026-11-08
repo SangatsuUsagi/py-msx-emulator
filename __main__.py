@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from host.media import DiskFiles
     from host.printer_output import PrinterOutput
     from host.rpc_server import DebugServer
+    from host.tape import TapeDeck
     from host.trace import TraceOutput
     from msx.boundary import RtcTime
     from msx.core_api import CoreApi
@@ -176,6 +177,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                              "mouse (default port 2 if bare). Overrides py_emulator.yaml's "
                              "mouse.enabled/mouse.port. Ignored in headless "
                              "(--count-frame/--benchmark) runs — no SDL window/event loop.")
+    parser.add_argument("--tape", metavar="CAS", default=None,
+                        help="Mount a CAS tape image at startup (WAV is not supported: "
+                             "convert it to CAS with an external tool)")
+    parser.add_argument("--tape-fast", action=argparse.BooleanOptionalAction,
+                        default=True, dest="tape_fast",
+                        help="Run as fast-forward while the tape motor is on "
+                             "(default: on; --no-tape-fast loads at normal speed)")
     parser.add_argument("--printer-log", metavar="FILE", dest="printer_log", default=None,
                         help="Attach a printer to the printer port and write the raw bytes "
                              "it receives to FILE")
@@ -323,7 +331,7 @@ def _print_startup_summary(
     spec: "MachineSpec", display_mapper: str, fdd1_paths: list[Path], fdd2_path: Path | None,
     extension_overlay1: "AnyExtensionOverlay | None",
     extension_overlay2: "AnyExtensionOverlay | None",
-    mouse_port: int | None, args: argparse.Namespace,
+    mouse_port: int | None, args: argparse.Namespace, tape: str | None = None,
 ) -> None:
     print(f"machine : {spec.name}")
     print(f"rom_base: {spec.rom_base_dir}")
@@ -341,6 +349,8 @@ def _print_startup_summary(
     print(f"mapper  : {display_mapper}")
     if args.printer_log is not None:
         print(f"printer : {args.printer_log}")
+    if tape is not None:
+        print(f"tape    : {tape}")
     if args.vdp_trace:
         print(f"vdp-trace: {'stdout' if args.vdp_trace_out is None else args.vdp_trace_out}")
     if args.mapper_trace:
@@ -460,6 +470,7 @@ class _EffectiveOptions(NamedTuple):
     mapper2: str
     extension2: str | None
     frame_skip: str
+    tape: str | None
 
 
 def _resolve_extension(cli_value: str | None, config_value: str | None) -> str | None:
@@ -509,6 +520,7 @@ def _resolve_effective_options(
         mapper2=_first_set(args.mapper2, default="auto"),
         extension2=_resolve_extension(args.extension2, app_cfg.extension2),
         frame_skip=_first_set(args.frame_skip, frame_skip_cfg, default="auto"),
+        tape=_first_set(args.tape, app_cfg.tape, default=None),
     )
 
 
@@ -666,6 +678,19 @@ def _open_printer_output(machine: "CoreApi", path: str) -> "PrinterOutput":
         _fail(f"--printer-log: {exc}")
 
 
+def _mount_tape(deck: "TapeDeck", path: str) -> None:
+    """Convert and mount --tape's CAS file; stops with an error that names
+    --tape when the file or the machine cannot take it."""
+    from host.tape import TapeError
+
+    try:
+        warnings = deck.load(Path(path))
+    except TapeError as exc:
+        _fail(f"--tape: {exc}")
+    for warning in warnings:
+        print(f"warning: --tape: {warning}", file=sys.stderr)
+
+
 def _start_traces(
     machine: "CoreApi", args: argparse.Namespace, trace_output: "TraceOutput"
 ) -> TextIO | None:
@@ -735,7 +760,7 @@ def main() -> None:
 
     _print_startup_summary(
         spec, display_mapper, fdd1_paths, fdd2_path, extension_overlay1, extension_overlay2,
-        opts.mouse_port, args,
+        opts.mouse_port, args, opts.tape,
     )
 
     # --- Trace outputs (the kinds are turned on after the build) ---
@@ -773,6 +798,11 @@ def main() -> None:
         if result.machine is None:
             _fail(result.error_text.decode("utf-8"))
         machine = result.machine
+        from host.tape import TapeDeck
+        # The mounted tape file and its blocks, shared like disk_files.
+        tape_deck = TapeDeck(machine)
+        if opts.tape is not None:
+            _mount_tape(tape_deck, opts.tape)
         if args.printer_log is not None:
             printer_output =_open_printer_output(machine, args.printer_log)
 
@@ -780,7 +810,9 @@ def main() -> None:
         # REPL on MSX1 too (the slot/mapper tools are most useful there). The
         # host opens it when step_frame stops (host/debugger/stop.py).
         from host.debugger.prompt import Debugger
-        debugger = Debugger(machine, disk_files, trace_output, _rom_names(spec), printer_output)
+        debugger = Debugger(
+            machine, disk_files, trace_output, _rom_names(spec), printer_output, tape_deck,
+        )
 
         _set_break_points(machine, breakpoint_addrs, watchpoint_entries)
 
@@ -801,7 +833,9 @@ def main() -> None:
             if opts.rpc_enabled:
                 from host.rpc_server import DEFAULT_SOCKET_PATH, DebugServer
                 sock_path = args.rpc_socket or app_cfg.rpc_socket or DEFAULT_SOCKET_PATH
-                rpc_server = DebugServer(machine, sock_path=sock_path, disk_files=disk_files)
+                rpc_server = DebugServer(
+                    machine, sock_path=sock_path, disk_files=disk_files, tape_deck=tape_deck,
+                )
                 rpc_server.start()
                 print(f"rpc     : {sock_path}")
             from frontend.sdl2_frontend import run
@@ -814,7 +848,7 @@ def main() -> None:
                 mouse_port=opts.mouse_port, fdd1_images=fdd1_paths,
                 hotkey_bindings=resolve_hotkeys(app_cfg.hotkey_bindings()),
                 keyboard_joystick=app_cfg.keyboard_joystick_buttons,
-                debugger=debugger, disk_files=disk_files)
+                debugger=debugger, disk_files=disk_files, tape_fast=args.tape_fast)
     finally:
         _cleanup(
             machine, rpc_server, log_file, trace_file, mapper_trace_file, sram_files, disk_files,

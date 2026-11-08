@@ -1,4 +1,4 @@
-version 1.1
+version 1.2
 const msx_trace_event *msx_core_drain_trace(msx_core *core, size_t *count);
 int32_t msx_core_abi_version(void);
 int32_t msx_core_apply_input(msx_core *core, const msx_input_frame *frame_input);
@@ -11,13 +11,16 @@ int32_t msx_core_dirty_media(msx_core *core, int32_t out_ids[MSX_MEDIA_COUNT]);
 int32_t msx_core_disk_mounted(msx_core *core, int32_t drive);
 int32_t msx_core_drive_count(msx_core *core);
 int32_t msx_core_eject_disk(msx_core *core, int32_t drive);
+int32_t msx_core_eject_tape(msx_core *core);
 int32_t msx_core_keyboard_layout(msx_core *core);
 int32_t msx_core_load_state(msx_core *core, const uint8_t *data, size_t len);
 int32_t msx_core_mark_persisted(msx_core *core, int32_t media_id);
 int32_t msx_core_mount_disk(msx_core *core, int32_t drive, const uint8_t *data, size_t len, int32_t write_protected);
+int32_t msx_core_mount_tape(msx_core *core, const uint8_t *edges, size_t len);
 int32_t msx_core_request_break(msx_core *core);
 int32_t msx_core_reset(msx_core *core);
 int32_t msx_core_samples_per_frame(msx_core *core);
+int32_t msx_core_seek_tape(msx_core *core, int64_t position);
 int32_t msx_core_set_break_halt_di(msx_core *core, int32_t enabled);
 int32_t msx_core_set_breakpoints(msx_core *core, const int32_t *addrs, size_t count);
 int32_t msx_core_set_frame_breakpoint(msx_core *core, int64_t frame);
@@ -109,6 +112,7 @@ macro STATUS_BAD_IMAGE 3
 macro STATUS_NO_DRIVE 2
 macro STATUS_NO_MEDIUM 5
 macro STATUS_NO_PRINTER_PORT 7
+macro STATUS_NO_TAPE_PORT 8
 macro STATUS_OK 0
 macro STATUS_STATE_REJECTED 1
 macro STOP_BREAKPOINT 1
@@ -124,6 +128,7 @@ macro TRACE_EVENT_IO_READ 5
 macro TRACE_EVENT_IO_WRITE 6
 macro TRACE_EVENT_LOST 4
 macro TRACE_EVENT_MAP_BANK 3
+macro TRACE_EVENT_TAPE_MOTOR 12
 macro TRACE_EVENT_UNDEFINED_OP 8
 macro TRACE_EVENT_VDP_MODE_REG 7
 macro TRACE_EVENT_VDP_PORT99 1
@@ -162,6 +167,7 @@ typedef struct msx_rtc_time { int32_t year; int32_t month; int32_t day; int32_t 
 typedef struct msx_slot_info { int32_t content; int32_t mapper; int32_t size_kb; int32_t bank; int32_t window_kind[2]; int32_t window_value[2]; int32_t sub_bank_count; int32_t sub_bank[2]; int32_t sub_offset[2]; } msx_slot_info;
 typedef struct msx_slot_layout { int32_t primary; int32_t expanded; uint8_t secondary[4]; } msx_slot_layout;
 typedef struct msx_stop_info { int32_t reason; int32_t pc; int32_t watch_addr; int32_t watch_value; int32_t watch_access; } msx_stop_info;
+typedef struct msx_tape_info { int32_t mounted; int32_t motor; int64_t position; int64_t length; } msx_tape_info;
 typedef struct msx_trace_event { int32_t kind; int64_t cycle; int64_t frame; int32_t pc; int32_t a, b, c, d; } msx_trace_event;
 typedef struct msx_vdp_info { int32_t kind; uint8_t regs[28]; int32_t regs_len; uint8_t cmd_regs[15]; int32_t cmd_regs_len; uint8_t status[10]; int32_t status_len; uint16_t palette[16]; int32_t palette_len; int32_t cmd_x, cmd_y, cmd_nx, cmd_ny, cmd_remaining; } msx_vdp_info;
 typedef struct msx_watchpoint { int32_t address; int32_t kind; } msx_watchpoint;
@@ -173,4 +179,5 @@ void msx_core_render_preview(msx_core *core, msx_rgb_frame *out);
 void msx_core_slot_info(msx_core *core, int32_t primary, int32_t secondary, int32_t page, msx_slot_info *out);
 void msx_core_slot_layout(msx_core *core, msx_slot_layout *out);
 void msx_core_step_frame(msx_core *core, const msx_input_frame *frame_input, int32_t render_video, msx_frame_output *out);
+void msx_core_tape_info(msx_core *core, msx_tape_info *out);
 void msx_core_vdp_info(msx_core *core, msx_vdp_info *out);

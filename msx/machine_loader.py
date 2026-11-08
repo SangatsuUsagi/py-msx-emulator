@@ -33,6 +33,7 @@ from msx.boundary import (
     slot_sram_id,
     subslot_sram_id,
 )
+from msx.cassette import CassettePort
 from msx.cpu.z80 import Z80
 from msx.fmpac import FMPAC_ROM_SIZE, FmPac
 from msx.input import InputLines
@@ -948,6 +949,13 @@ def _build(machine_config: MachineConfig) -> "Machine":
 
     _wire_post_construction_attrs(machine, dac, wiring)
     machine.printer = printer
+    if spec.cassette_port:
+        cassette = CassettePort(machine.clock)
+        cassette._trace = machine._trace
+        machine.cassette = cassette
+        machine.psg.attach_cassette(cassette)
+        if machine.ppi is not None:
+            machine.ppi.cassette = cassette
     machine._sram_table = _sram_table(machine)
     machine.machine_config_sha256 = config.config_sha256
     return machine

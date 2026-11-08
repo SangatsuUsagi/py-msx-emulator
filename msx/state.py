@@ -36,6 +36,7 @@ from msx.vdp.v9938 import V9938, V9938State, parse_v9938_state
 from msx.vdp.vdp import VDP
 
 if TYPE_CHECKING:
+    from msx.cassette import TapeIdentity
     from msx.fdc.interface import FloppyDiskParsed
     from msx.machine import Machine
     from msx.mapper import Mapper
@@ -129,9 +130,15 @@ if TYPE_CHECKING:
 #   openspec/changes/archive/2026-10-31-fix-review-bugs.
 # Version 22: printer added -- the printer port's data latch and STROBE, None
 #   when the machine has no port.
-CURRENT_FORMAT_VERSION: int = 22
+# Version 23: tape added -- the mounted tape's identity, the position and the
+#   motor, None when the machine has no cassette port
+#   (openspec/changes/add-cassette-playback).
+CURRENT_FORMAT_VERSION: int = 23
 
 _SHA256_HEX_LEN = 64
+_SHA1_HEX_LEN = 40
+# The smallest edge list: one u32 interval (io-cassette).
+_MIN_EDGE_LIST_BYTES = 4
 
 
 class StateLoadError(SnapshotError):
@@ -293,6 +300,21 @@ class PrinterSnapshot:
 
 
 @dataclass
+class TapeIdentitySnapshot:
+    size: int
+    sha1: str
+
+
+@dataclass
+class TapeSnapshot:
+    # None when no tape is mounted.
+    identity: TapeIdentitySnapshot | None
+    # The position at the save; it counts from the saved cycle count.
+    position: int
+    motor: int
+
+
+@dataclass
 class MachineSnapshot:
     format_version: int
     machine_type: str  # "msx1" or "msx2"
@@ -315,6 +337,8 @@ class MachineSnapshot:
     mouse: dict[str, object] | None
     # None when the machine has no printer port.
     printer: PrinterSnapshot | None
+    # None when the machine has no cassette port.
+    tape: TapeSnapshot | None
 
 
 # --- internal helpers ---------------------------------------------------------
@@ -383,6 +407,48 @@ def _printer_snapshot(machine: "Machine") -> PrinterSnapshot | None:
         return None
     state = machine.printer.snapshot_state()
     return PrinterSnapshot(data=state["data"], strobe=state["strobe"])
+
+
+def _identity_snapshot(identity: TapeIdentity | None) -> TapeIdentitySnapshot | None:
+    if identity is None:
+        return None
+    return TapeIdentitySnapshot(size=identity["size"], sha1=identity["sha1"])
+
+
+def _tape_snapshot(machine: "Machine") -> TapeSnapshot | None:
+    if machine.cassette is None:
+        return None
+    state = machine.cassette.snapshot_state()
+    return TapeSnapshot(
+        identity=_identity_snapshot(state["identity"]),
+        position=state["position"],
+        motor=state["motor"],
+    )
+
+
+def _tape_text(identity: TapeIdentitySnapshot | None) -> str:
+    if identity is None:
+        return "no tape"
+    return f"a tape of {identity.size} bytes, sha1 {identity.sha1}"
+
+
+def _check_tape(machine: "Machine", saved: TapeSnapshot | None) -> None:
+    """The saved tape must be the mounted one (io-cassette "A load checks
+    the tape identity"), and its position must be on that tape."""
+    _check_optional_wiring("cassette port", machine.cassette is not None, saved)
+    if machine.cassette is None or saved is None:
+        return
+    running = _identity_snapshot(machine.cassette.identity)
+    if running != saved.identity:
+        raise SnapshotMismatchError(
+            f"tape mismatch: running has {_tape_text(running)}, "
+            f"saved state has {_tape_text(saved.identity)}"
+        )
+    if saved.position > machine.cassette.length:
+        raise SnapshotMismatchError(
+            f"tape.position {saved.position} is beyond the tape length "
+            f"{machine.cassette.length}"
+        )
 
 
 def _check_optional_wiring(
@@ -555,6 +621,7 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
         rtc=_rtc_to_dict(machine),
         mouse=_mouse_to_dict(machine),
         printer=_printer_snapshot(machine),
+        tape=_tape_snapshot(machine),
     )
 
 
@@ -579,6 +646,8 @@ _VDP_KEYS = _keys_of(VdpSnapshot)
 _PSG_KEYS = _keys_of(PsgSnapshot)
 _PPI_KEYS = _keys_of(PpiSnapshot)
 _PRINTER_KEYS = _keys_of(PrinterSnapshot)
+_TAPE_KEYS = _keys_of(TapeSnapshot)
+_TAPE_IDENTITY_KEYS = _keys_of(TapeIdentitySnapshot)
 
 _TMS_VRAM_SIZE = 0x4000
 _V9938_VRAM_SIZE = 0x20000
@@ -762,6 +831,25 @@ def _parse_printer(value: object) -> PrinterSnapshot | None:
     )
 
 
+def _parse_tape(value: object) -> TapeSnapshot | None:
+    if value is None:
+        return None
+    obj = check_object(value, "tape", _TAPE_KEYS)
+    identity: TapeIdentitySnapshot | None = None
+    if obj["identity"] is not None:
+        ident = check_object(obj["identity"], "tape.identity", _TAPE_IDENTITY_KEYS)
+        identity = TapeIdentitySnapshot(
+            size=check_int(ident["size"], "tape.identity.size", _MIN_EDGE_LIST_BYTES,
+                           SAFE_INT_MAX),
+            sha1=check_lower_hex(ident["sha1"], "tape.identity.sha1", _SHA1_HEX_LEN),
+        )
+    return TapeSnapshot(
+        identity=identity,
+        position=check_int(obj["position"], "tape.position", 0, SAFE_INT_MAX),
+        motor=check_int(obj["motor"], "tape.motor", 0, 1),
+    )
+
+
 def _check_top_level_keys(data: dict[str, object]) -> None:
     """Refuse a file whose top-level keys are not the layout's: an unknown
     or a missing key."""
@@ -834,6 +922,8 @@ def parse_snapshot(decoded: object) -> MachineSnapshot:
         mouse = check_optional_object(data["mouse"], "mouse")
         field_name = "printer"
         printer = _parse_printer(data["printer"])
+        field_name = "tape"
+        tape = _parse_tape(data["tape"])
     except SchemaError as exc:
         raise StateLoadError(field_name, exc) from exc
     return MachineSnapshot(
@@ -851,6 +941,7 @@ def parse_snapshot(decoded: object) -> MachineSnapshot:
         rtc=rtc,
         mouse=mouse,
         printer=printer,
+        tape=tape,
     )
 
 
@@ -908,6 +999,7 @@ def _validate_snapshot(machine: "Machine", snap: MachineSnapshot) -> _ParsedProd
     _check_optional_wiring("mouse", machine.psg.mouse is not None, snap.mouse)
     _check_optional_wiring("PPI", machine.ppi is not None, snap.ppi)
     _check_optional_wiring("printer port", machine.printer is not None, snap.printer)
+    _check_tape(machine, snap.tape)
     parsed = _parse_producer_objects(machine, snap)
     # Last of the identity checks: the specific ones above and in the
     # producers (FDC kind, mounted disks) name what differs; this one catches
@@ -1089,6 +1181,9 @@ def _apply_sound_and_io(
         mouse.apply_state(parsed.mouse, machine.cycle_count)
     if machine.printer is not None and snap.printer is not None:
         machine.printer.apply_state({"data": snap.printer.data, "strobe": snap.printer.strobe})
+    if machine.cassette is not None and snap.tape is not None:
+        # After the clock: the position counts from the restored cycle.
+        machine.cassette.apply_state(snap.tape.position, snap.tape.motor)
 
 
 def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:

@@ -572,6 +572,18 @@ class Memory:
             return SLOT_CONTENT_CARTRIDGE_EMPTY, -1
         return SLOT_CONTENT_CARTRIDGE, int(mapper_id(mapper.kind))
 
+    def _describe_plain_slot3(self, page: int) -> int:
+        """A non-expanded slot 3 (secondary -1), as a read of it resolves:
+        the RAM mapper, else the flat RAM at the top of the address space
+        (page -1, the `st` view, describes the whole slot)."""
+        if self.ram_mapper is not None:
+            return SLOT_CONTENT_RAM_MAPPER
+        if self._ram_len == 0:
+            return SLOT_CONTENT_EMPTY
+        if page != -1 and ((page + 1) << 14) <= self._msx1_ram_base:
+            return SLOT_CONTENT_EMPTY  # the page lies below the flat RAM
+        return SLOT_CONTENT_RAM
+
     def _describe_slot3(self, secondary: int, page: int) -> int:
         # The legacy branch below reports each sub-slot's nominal role (0 SUB
         # ROM, 1 empty, 2-3 RAM). _resolve_slot3_read_leaf_legacy decides what a
@@ -601,6 +613,8 @@ class Memory:
             if secondary == flat_sub:
                 return SLOT_CONTENT_RAM
             return SLOT_CONTENT_EMPTY
+        if secondary == -1:
+            return self._describe_plain_slot3(page)
         if secondary == 0:
             return SLOT_CONTENT_SUB_ROM
         if secondary == 1:
@@ -658,7 +672,11 @@ class Memory:
             sub = self.sub0_rom
             return len(sub) // 1024 if sub is not None else 0
         flat_sub = self.flat_ram_subslot
-        is_ram_subslot = secondary == flat_sub if flat_sub is not None else secondary in (2, 3)
+        if flat_sub is not None:
+            is_ram_subslot = secondary == flat_sub
+        else:
+            # A non-expanded slot 3 (secondary -1) is its RAM, as in sub-slots 2-3.
+            is_ram_subslot = secondary in (-1, 2, 3)
         if primary == 3 and is_ram_subslot:
             rm = self.ram_mapper
             if rm is not None:

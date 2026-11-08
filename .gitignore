@@ -4,6 +4,7 @@
 .claude/
 .serena/
 disks/**/*.dsk
+cas/**/*cas
 extras/MSX-DOS/
 extras/MSX-DOS2/
 references/MSX2-Technical-Handbook/

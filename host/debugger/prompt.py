@@ -16,6 +16,7 @@ from host.debugger.slots import slot_bank_text, slot_content_text
 from host.debugger.stop import sigint_interrupts, watch_hit_line
 from host.debugger.vdp_view import print_vdp_tms, print_vdp_v9938
 from host.media import DiskFiles, swap_disk
+from host.tape import TapeDeck, TapeError, seconds
 from host.trace import TraceOutput
 from host.watch import watch_kind, watch_text
 from msx.boundary import (
@@ -52,11 +53,16 @@ def _format_disasm(read: Callable[[int], int], addr: int) -> tuple[str, int]:
     return f"{raw_bytes:<12}  {mnem}", size
 
 
+_TAPE_USAGE = "tape [blocks|load FILE|eject|rewind|seek SECONDS|seek #N]"
+# The `tape` subcommands and how many arguments each takes.
+_TAPE_ARGUMENTS = {"": 0, "blocks": 0, "load": 1, "eject": 0, "rewind": 0, "seek": 1}
+
 _HELP = (
     "Commands: h/? | rc | rv | rp | v | dm ADDR [SIZE] | dv VADDR [SIZE] | dvf FILE | "
     "ba/br/bl ADDR | bh | bs [LOW HIGH|off] | wa/wd/wl ADDR | da [ADDR] | s [N] | "
     "g ADDR | gf N | so | te | td | ce | cd | ds | sl | st | ss | "
-    "sv [TITLE] | ld FILE | fdd1/fdd2 [FILE|-] | reset | c | q"
+    "sv [TITLE] | ld FILE | fdd1/fdd2 [FILE|-] | "
+    f"{_TAPE_USAGE} | reset | c | q"
 )
 
 # `da` disassembles a fixed window of instructions from the given address.
@@ -116,9 +122,12 @@ class Debugger:
     def __init__(
         self, machine: CoreApi, disk_files: DiskFiles | None = None,
         trace: TraceOutput | None = None, rom_names: tuple[str, str] = ("", ""),
-        printer: PrinterOutput | None = None,
+        printer: PrinterOutput | None = None, tape: TapeDeck | None = None,
     ) -> None:
         self._machine = machine
+        # The mounted tape file and its blocks, shared with the RPC server of
+        # the same run (host/tape.py).
+        self._tape = tape if tape is not None else TapeDeck(machine)
         # The main and sub ROM file names `sl`/`st` print ("" for none): the
         # host loaded them, and the core keeps no name.
         self._rom_names = rom_names
@@ -719,6 +728,71 @@ class Debugger:
             return
         print(f"{label}: mounted {path}")
 
+    def _cmd_tape(self, args: list[str]) -> None:
+        """`tape [blocks|load FILE|eject|rewind|seek SECONDS|seek #N]`: show
+        or change the cassette. An error is printed and changes nothing."""
+        sub = args[0] if args else ""
+        if _TAPE_ARGUMENTS.get(sub) != len(args[1:]):
+            print(f"tape: usage: {_TAPE_USAGE}")
+            return
+        try:
+            if sub == "":
+                self._tape_status()
+            elif sub == "blocks":
+                self._tape_blocks()
+            elif sub == "load":
+                self._tape_load(args[1])
+            elif sub == "eject":
+                self._tape.eject()
+                print("tape: ejected")
+            elif sub == "rewind":
+                self._tape.rewind()
+                self._tape_status()
+            else:
+                self._tape_seek(args[1])
+                self._tape_status()
+        except TapeError as exc:
+            print(f"tape: {exc}")
+
+    def _tape_load(self, path_text: str) -> None:
+        path = Path(path_text).expanduser()
+        warnings = self._tape.load(path)
+        print(f"tape: mounted {path} ({len(self._tape.blocks)} blocks)")
+        for warning in warnings:
+            print(f"tape: warning: {warning}")
+
+    def _tape_seek(self, target: str) -> None:
+        if target.startswith("#"):
+            try:
+                number = int(target[1:])
+            except ValueError:
+                raise TapeError(f"invalid block number {target!r}") from None
+            self._tape.seek_block(number)
+            return
+        try:
+            value = float(target)
+        except ValueError:
+            raise TapeError(f"invalid position {target!r}: give seconds or #N") from None
+        self._tape.seek_seconds(value)
+
+    def _tape_status(self) -> None:
+        status = self._tape.status()
+        if not status.mounted:
+            print("tape: empty")
+            return
+        motor = "on" if status.motor else "off"
+        print(f"tape: {status.path}  {status.position_seconds:.2f} s (block {status.block})"
+              f" / {status.length_seconds:.2f} s  motor {motor}")
+
+    def _tape_blocks(self) -> None:
+        if not self._tape.status().mounted:
+            print("tape: empty")
+            return
+        for block in self._tape.blocks:
+            name = block.name if block.name is not None else ""
+            print(f"  #{block.number:<3} {block.type:<7} {name:<6}  "
+                  f"{seconds(block.start):8.2f} s  {block.length} bytes")
+
 
 def _hex_ascii_row(row_bytes: bytes) -> str:
     """One dump row: the bytes in hex, then as ASCII (. for a non-printable)."""
@@ -789,6 +863,7 @@ _COMMANDS: dict[str, Callable[["Debugger", list[str]], None]] = {
     "ld": lambda d, a: d._cmd_state_load(a),
     "fdd1": lambda d, a: d._cmd_fdd(a, 0),
     "fdd2": lambda d, a: d._cmd_fdd(a, 1),
+    "tape": lambda d, a: d._cmd_tape(a),
 }
 
 # Full REPL command-name set for Tab completion (_complete_command, above):

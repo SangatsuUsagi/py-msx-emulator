@@ -2,7 +2,7 @@
 
 純粋な Python 3.10+ で書いた、機能的に正確な MSX1/MSX2 エミュレータです。機械可読なコンポーネント仕様に基づいて実装しています。
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-4550%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-4684%20passing-brightgreen)
 
 [English README is here](README.md)
 
@@ -10,7 +10,7 @@
 
 ハードウェアコンポーネントはすべて純粋な Python で書いています。各コンポーネントは実装の前に機械可読な仕様として定義し、その仕様がテストを決めます（[仕様駆動アーキテクチャ](#仕様駆動アーキテクチャ)を参照）。コンポーネントの配線は `build_machine()` に手で書いてあり、リフレクションや依存性注入は使いません。プラットフォーム固有の依存は、画面と音声のフロントエンドに使う pysdl2 だけです。内部構造は [`docs/technical-implementation_ja.md`](docs/technical-implementation_ja.md) で説明しています。
 
-コア（`msx/`）はファイルもホストの時計も読みません。コアの外のコードは、コア API（`msx/core_api.py`）だけを通してマシンを使います。`include/msx_core.h` は、この API を C で表したヘッダで、ABI バージョンは 1.1 です。このヘッダがあれば、Python のコアを、ほかの言語で書いたコアと置き換えられます。[コアの移植](docs/technical-implementation_ja.md#コアの移植)を参照してください。
+コア（`msx/`）はファイルもホストの時計も読みません。コアの外のコードは、コア API（`msx/core_api.py`）だけを通してマシンを使います。`include/msx_core.h` は、この API を C で表したヘッダで、ABI バージョンは 1.2 です。このヘッダがあれば、Python のコアを、ほかの言語で書いたコアと置き換えられます。[コアの移植](docs/technical-implementation_ja.md#コアの移植)を参照してください。
 
 動かすには BIOS ROM が必要で、リポジトリには含まれません。汎用マシンには無償の [C-BIOS](https://cbios.sourceforge.net/) が使えます。手順は [QUICK_START_ja.md](QUICK_START_ja.md) を参照してください。
 
@@ -71,12 +71,12 @@
 - 実装：`msx/cpu/z80.py`、`msx/cpu/opcodes_main.py`、`msx/cpu/registers.py`
 - 既知の制限：
   - OTIR/INIR などのブロック I/O 命令は、ページ境界をまたぐとサイクル単位では正確ではありません。
-  - 非公式のフラグビット Y（ビット5）と X（ビット3）は Zilog NMOS の規則に従います。次の命令もこの規則に従います：`BIT n,(HL)`（内部レジスタ MEMPTR から取る）、繰り返し中の `LDIR`/`LDDR`/`CPIR`/`CPDR`（自身のアドレスから取る）、`SCF`/`CCF`（直前の命令がフラグを変えたかどうかで決まる）。繰り返し中の `INIR`/`INDR`/`OTIR`/`OTDR` は、1 回ごとの単純なフラグのままです。
+  - 非公式のフラグビット Y（ビット5）と X（ビット3）は Zilog NMOS の規則に従います。`BIT n,(HL)`（内部レジスタ MEMPTR から取る）、繰り返し中のブロック命令（`LDIR`/`LDDR`/`CPIR`/`CPDR`/`INIR`/`INDR`/`OTIR`/`OTDR`、自身のアドレスから取る）、`SCF`/`CCF`（直前の命令がフラグを変えたかどうかで決まる）も、この規則に従います。
   - エミュレータは Zilog 互換の Z80 を対象にしています。一部の MSX が使う NEC 製や Sharp 製の Z80 互換 CPU では、これらのフラグが異なることがあります。その違いは再現していません。
 
 ### VDP（Video Display Processor）：TMS9918A（MSX1）
 
-16 KB の VRAM と 8 個のコントロールレジスタを持ちます。実装している機能は次のとおりです：スクリーンモード 0〜3（テキスト 40 桁、グラフィック 1、グラフィック 2、マルチカラー）、サイズと拡大のあるスプライト描画、5 番目のスプライトとスプライト衝突のフラグ、VBlank 割り込み。
+16 KB の VRAM と 8 個のコントロールレジスタを持ちます。スクリーンモード 0〜3（テキスト 40 桁、グラフィック 1、グラフィック 2、マルチカラー）を実装しています。サイズと拡大のあるスプライト描画、5 番目のスプライトとスプライト衝突のフラグ、VBlank 割り込みも実装しています。
 
 - 実装：`msx/vdp/vdp.py`、`msx/vdp/renderer.py`
 - 既知の制限：
@@ -84,7 +84,7 @@
 
 ### VDP：Yamaha V9938（MSX2）
 
-128 KB の VRAM、28 個のコントロールレジスタ、16 色のプログラマブルパレット（9 ビット GRB333）を持ちます。スクリーンモード 0〜8（SCREEN 0〜SCREEN 8）と水平ライン割り込み（R#19/R#23、IE1）を実装しています。ハードウェアコマンドは次のものを実装しています：HMMV、HMMM、HMMC、LMMV、LMMM、LMCM、LMMC、YMMM、LINE、PSET、POINT、SRCH。フレーム途中のレジスタとパレットの変更は、バンド単位のレンダラで処理します。
+128 KB の VRAM、28 個のコントロールレジスタ、16 色のプログラマブルパレット（9 ビット GRB333）を持ちます。スクリーンモード 0〜8（SCREEN 0〜SCREEN 8）と水平ライン割り込み（R#19/R#23、IE1）を実装しています。ハードウェアコマンドは HMMV、HMMM、HMMC、LMMV、LMMM、LMCM、LMMC、YMMM、LINE、PSET、POINT、SRCH を実装しています。フレーム途中のレジスタとパレットの変更は、バンド単位のレンダラで処理します。
 
 - 実装：`msx/vdp/v9938.py`、`msx/vdp/v9938_renderer.py`
 - 既知の制限：
@@ -190,7 +190,7 @@ PPI ポートC の bit 7（I/O ポート 0xAA）は 1 ビット DAC を駆動し
 - `bus_latch`：最後の PPI アクセスでラッチしたバイト。`hb_10` と `hb_10_64k` の S3527 と同じです。実機 HB-10 で確認しました。
 
 - 実装：`msx/ppi.py`
-- 既知の制限：カセットインターフェース（ポート 0xAA のビット 4〜5）と CAPS LED（ビット 6）は実装していません。ビット 7 はキークリックを駆動します（「キークリック：PPI ポートC bit 7」を参照）。
+- 既知の制限：カセットの出力（ポート 0xAA のビット 5）と CAPS LED（ビット 6）は実装していません。ビット 4 はカセットのモーターを駆動します（「カセットテープ」を参照）。ビット 7 はキークリックを駆動します（「キークリック：PPI ポートC bit 7」を参照）。
 
 ### メモリバス / スロットシステム
 
@@ -227,7 +227,7 @@ MSX1 では、アドレス空間を 4 ページ × 4 スロットで振り分け
 
 ### カートリッジマッパー
 
-対応するマッパーは次のとおりです：フラット（バンク切り替えなし）、ASCII8、ASCII16、Konami、KonamiSCC、Majutsushi（DAC）、ASCII8SRAM2/8、ASCII16SRAM2/8、R-Type、固定配置マッパー（Page2/0x4000/0x8000）、KoeiSRAM32、GameMaster2。マッパーは SHA1 ベースの ROM データベースで自動的に選びます。上書きするには `--mapper`/`--mapper1`（スロット 1）か `--mapper2`（スロット 2）を使います。どちらも同じタイプ一覧を受け付けます。
+対応するマッパーは、フラット（バンク切り替えなし）、ASCII8、ASCII16、Konami、KonamiSCC、Majutsushi（DAC）、ASCII8SRAM2/8、ASCII16SRAM2/8、R-Type、固定配置マッパー（Page2/0x4000/0x8000）、KoeiSRAM32、GameMaster2 です。マッパーは SHA1 ベースの ROM データベースで自動的に選びます。上書きするには `--mapper`/`--mapper1`（スロット 1）か `--mapper2`（スロット 2）を使います。どちらも同じタイプ一覧を受け付けます。
 
 | マッパー | 説明 |
 | --- | --- |
@@ -255,21 +255,21 @@ MSX1 では、アドレス空間を 4 ページ × 4 スロットで振り分け
 
 汎用の FDC（フロッピーディスクコントローラ）層は、ディスクイメージ、ドライブ、コントローラ、接続方式の 4 つの部分からなります。この層の上に、Sony HB-F1XD と同じ WD2793 コントローラと Sony/Philips 接続方式を実装しています。レジスタはスロット 3 のサブスロット 0 にメモリマップされます。`--fdd1` で `*.dsk` イメージをマウントします。
 
-Disk BASIC の起動、`CALL FORMAT`、ファイルの読み書きに対応します。変更したセクタは、次のときに `.dsk` ファイルへ書き戻します：終了時、ステートセーブの前、ディスクをドライブから外すとき。実行中のディスク交換は、F6/Shift+F6（[エミュレータ内のキー操作](#エミュレータ内のキー操作)参照）かデバッガ REPL（`fdd1`/`fdd2`）でできます。
+Disk BASIC の起動、`CALL FORMAT`、ファイルの読み書きに対応します。変更したセクタは、終了時、ステートセーブの前、ディスクをドライブから外すときに、`.dsk` ファイルへ書き戻します。実行中のディスク交換は、F6/Shift+F6（[エミュレータ内のキー操作](#エミュレータ内のキー操作)参照）かデバッガ REPL（`fdd1`/`fdd2`）でできます。
 
 ステートセーブの読み込みでは、ディスクは入れ替えません。各ドライブには、保存したときと同じディスク（同じ `.dsk` ファイルで、中身も同じもの）が入っている必要があります。違う場合は読み込みを拒否し、何も変えません。複数ディスクのゲームでは、先に F6 で保存時のディスクに入れ替えるか、`--resume` のときに `--fdd1` の先頭にそのディスクを置きます。
 
 - 実装：`msx/fdc/wd2793.py`、`msx/fdc/interface.py`
 - 既知の制限：
   - タイミングのモデルがなく、コマンドは即座に終わります。シーク/ステップの速度、回転に基づく ID の検索、ヘッドロードやシーク後ベリファイの待ちはありません。
-  - READ TRACK は中身のないスタブ
+  - READ TRACK は中身のないスタブです。
   - WRITE TRACK は送られたデータを捨て、バイト数だけでフォーマットします。ギャップバイトやアドレスマークは解釈しません。
 
 ### フロッピーディスクドライブ（TC8566AF）
 
 Panasonic FS-A1F（`--machine fs_a1f`）が使うコントローラと接続方式の組み合わせで、同じ汎用 FDC 層の上にある 2 つ目の組み合わせです。レジスタは、実機の FS-A1F の配置に合わせてスロット 3 のサブスロット 2 にメモリマップされます（RAM はサブスロット 0、SUB ROM はサブスロット 1）。持つレジスタは、Main Status Register、Data Register、2 つのコントロールレジスタです。WD2793 と違い、TRACK/SECTOR レジスタを直接読み書きできません。`*.dsk` イメージは同じく `--fdd1` でマウントします。
 
-次のコマンドを実装しています：SPECIFY、SENSE INTERRUPT STATUS、SENSE DEVICE STATUS、RECALIBRATE、SEEK、READ DATA、WRITE DATA、FORMAT。MSX の DISK ROM の起動とセクタ入出力、`CALL FORMAT` にはこれで足ります。
+実装しているコマンドは SPECIFY、SENSE INTERRUPT STATUS、SENSE DEVICE STATUS、RECALIBRATE、SEEK、READ DATA、WRITE DATA、FORMAT です。MSX の DISK ROM の起動とセクタ入出力、`CALL FORMAT` にはこれで足ります。
 
 - 実装：`msx/fdc/tc8566af.py`、`msx/fdc/interface.py`
 - 既知の制限：
@@ -277,7 +277,7 @@ Panasonic FS-A1F（`--machine fs_a1f`）が使うコントローラと接続方�
   - 非 DMA モードだけに対応します。DRQ2/-DACK2/DMATC ピンはモデル化していません。
   - READ DELETED DATA、WRITE DELETED DATA、READ DIAGNOSTIC、READ ID、SCAN は実装していません。これらのコマンドは、Disk BASIC の起動とセクタ入出力には使いません。
   - WD2793 の WRITE TRACK と同じく、FORMAT は送られたディスクリプタのバイトを捨てます。現在のトラックとサイドの全セクタを空にするだけで、ギャップ、同期、ID、CRC のバイトは書きません。
-  - 同梱のマシン設定はどれもドライブ 1 台なので、複数ドライブでの動作は確認していません。実行中にディスクを交換して転送を中断する処理が正しく動くのは、ドライブ 0 だけです。対象ドライブは、Control Register 0 の選択状態ではなく、各コマンドのパラメータバイトから決めます。この 2 つの動作は、どちらも、実際の DISK ROM の通信で見られる 1 ドライブの動作とは一致します。
+  - 同梱のマシン設定はどれもドライブ 1 台なので、複数ドライブでの動作は確認していません。実行中にディスクを交換して転送を中断する処理が正しく動くのは、ドライブ 0 だけです。対象ドライブは、Control Register 0 の選択状態ではなく、各コマンドのパラメータバイトから決めます。この 2 つの動作は、どちらも実際の DISK ROM の通信で見られる 1 ドライブの動作と一致します。
 
 ### ROM データベース
 
@@ -309,6 +309,15 @@ MSX のパラレルプリンタポートです。ゲストがデータポート�
 ステータスの値とミラーは openMSX のマシン定義によるもので、実機ではまだ確認していません。プリンタをつながないと、ポートは BUSY を返します。
 
 - 実装：`msx/printer.py`、`host/printer_output.py`
+
+### カセットテープ
+
+カセットポートで CAS 形式のテープイメージを再生します。起動時のマウントは `--tape FILE.cas`（または `py_emulator.yaml` の `tape` キー）で指定します。実行中は、デバッガ、ソケット RPC、MCP サーバーからテープの挿入、取り出し、巻き戻し、頭出しができます。ホストは CAS ファイルを、MSX の BIOS の既定値である 1200 ボーのテープ信号に変換します。無音とシンクの長さは openMSX の CAS プレーヤーと同じです。この信号は、ゲストの BIOS が自分のルーチンで読みます（`CLOAD`、`BLOAD"CAS:",R`、`RUN"CAS:"`）。モーターの始動と停止は PPI ポートC のビット 4 が、テープの入力は PSG レジスタ 14 のビット 7 が受け持ちます。同梱のマシンはすべてこのポートを持ちます。
+
+テープをマウントしてモーターが回っている間は、フロントエンドが早送りで動き、ウィンドウタイトルに `[TAPE]` を表示します。通常の速度で読み込むには `--no-tape-fast` を指定します。速度によって読み込みの結果は変わりません。ステートには、テープ信号の識別情報（サイズと SHA1）、位置、モーターの状態を記録します。そのステートを読み込めるのは、同じテープをマウントしているときだけです。
+
+- 既知の制限：対応するのは CAS ファイルだけです。WAV の録音は、`tools/wav2cas.py` で CAS に変換してください。TSX ファイルには対応していません。録音（カセットの出力、ポートC のビット 5）は実装していません。高速ローダーもないので、読み込みには実際のテープと同じ時間がかかります（tape-fast を使えば短くなります）。テープの読み込みは、まだ実機で確認していません。テープをマウントしている間は、CPU のループが命令ごとにクロックを数えるため、CPython では少し遅くなります（ベンチマークの MSX2 カートリッジのゲームで、モーター停止のまま 2.7%）。PyPy では測れるほどの差はありません。元の速度に戻すには、テープを取り出してください。
+- 実装：`msx/cassette.py`（コアが信号を再生）、`host/cas_image.py`（CAS の変換）、`host/tape.py`（マウント中のファイルとブロック）
 
 ### キーボード / ジョイスティック入力
 
@@ -343,23 +352,23 @@ MSX のパラレルプリンタポートです。ゲストがデータポート�
 
 ウィンドウの大きさは、256×212 ベース解像度を整数の `--scale` 倍したもの（デフォルトのスケール 3 なら 768×636）で、全マシン・全モードで共通です。描画するフレームは常に 212 ラインです。192 ラインの SCREEN モードは上下にボーダーを足して中央に置くので、R#9 の LN に関係なく 4:3 の CRT の比率が保たれます。SCREEN 6/7（横 512 ドット）は同じウィンドウ幅に縮小してドットの比率を保ちます。
 
-ほかに、次の機能があります：ハードウェアパレット、アナログ風ローパスを通した 44100 Hz モノラル音声、フルスクリーン切り替え、スクリーンショット、ステートセーブ/ロード、一時停止、早送り、ミュート、リセット。ウィンドウタイトルには fps、`[PAUSED]`/`[FF]`/`[MUTE]`、ドライブ A のディスクを表示します。早送り中は音声を再生しません。自動フレームスキップは[パフォーマンス](#パフォーマンス)を参照してください。
+ほかに、ハードウェアパレット、フルスクリーン切り替え、スクリーンショット、ステートセーブ/ロード、一時停止、早送り、ミュート、リセットの機能があります。音声は 44100 Hz のモノラルで、アナログ風のローパスフィルタを通して出します。ウィンドウタイトルには fps、`[PAUSED]`/`[FF]`/`[TAPE]`/`[MUTE]`、ドライブ A のディスクを表示します。早送り中は音声を再生しません。自動フレームスキップは[パフォーマンス](#パフォーマンス)を参照してください。
 
 - 実装：`frontend/sdl2_frontend.py`。音声のミックスはコアが毎フレーム行います（`msx/audio_mixer.py`）。ヘッドレスの実行でも同じです。フロントエンドはそれをキューに積むだけです。
 
 ### ステートセーブ/ロード
 
-ハードウェアの状態をまるごと標準ライブラリの JSON に保存します。保存する状態は次のとおりです：CPU、RAM、VDP、PSG、PPI のラッチ、SCC、FM-PAC/OPLL、マッパーのバンク、FDC のレジスタと処理段階、RTC、マウス、プリンタポートの信号線、マウント中のディスクの識別情報。
+ハードウェアの状態をまるごと標準ライブラリの JSON に保存します。保存するのは CPU、RAM、VDP、PSG、SCC、FM-PAC/OPLL、RTC、マウスの状態です。PPI のラッチ、マッパーのバンク、FDC のレジスタと処理段階、プリンタポートの信号線、カセットの位置とモーターの状態も保存します。マウント中のディスクとテープは、識別情報を記録します。
 
-ファイルは正規化した JSON（RFC 8785）で、同じマシンの状態からは、ほかの実装が書いても常に同じバイト列になります。数値は整数だけで、RAM や VRAM などのバイト列は base64 の文字列で持ちます。構成は [`msx/snapshot.schema.json`](msx/snapshot.schema.json)（JSON Schema）が定めます。形式のバージョンは 22 で、それより前のバージョンのステートは読み込めません。ステートには、保存したときのマシン構成も記録します（[マシン設定](#マシン設定)を参照）。ステートを読み込めるのは、マシン、拡張、カートリッジ ROM が同じときだけです。
+ファイルは正規化した JSON（RFC 8785）で、同じマシンの状態からは、ほかの実装が書いても常に同じバイト列になります。数値は整数だけで、RAM や VRAM などのバイト列は base64 の文字列で持ちます。構成は [`msx/snapshot.schema.json`](msx/snapshot.schema.json)（JSON Schema）が定めます。形式のバージョンは 23 で、それより前のバージョンのステートは読み込めません。ステートには、保存したときのマシン構成も記録します（[マシン設定](#マシン設定)を参照）。ステートを読み込めるのは、マシン、拡張、カートリッジ ROM が同じときだけです。
 
-セーブのたびに PNG のスクリーンショットも保存し、すぐ再開できるよう `saves/states/latest.*` のシンボリックリンクを更新します。マウント中の `.dsk` はパス、サイズ、SHA1 で記録します。ロード時にディスクが一致しなければ、そのまま続けずにエラーにします。
+セーブのたびに PNG のスクリーンショットも保存し、すぐ再開できるよう `saves/states/latest.*` のシンボリックリンクを更新します。マウント中の `.dsk` はパス、サイズ、SHA1 で記録します。ロード時にディスクが一致しなければ、そのまま続けずにエラーにします。マウント中のテープも同じです。
 
 - 実装：`msx/state.py`（スナップショットのエンコード）、`msx/snapshot.schema.json`（構成）、`host/state_files.py`（ファイル）
 
 ### インタラクティブデバッガ
 
-Ctrl+C かブレークポイントで開く REPL です。主な機能は次のとおりです：ブレークポイントとウォッチポイント、ステップ実行、レジスタと VRAM のダンプ、逆アセンブル、VDP トレース、マッパートレース、スロットの表示、フロッピーの交換（`fdd1`/`fdd2 [FILE|-]`）。全コマンドは [`docs/debugger_ja.md`](docs/debugger_ja.md) を参照してください。
+Ctrl+C かブレークポイントで開く REPL です。ブレークポイントとウォッチポイント、ステップ実行、レジスタと VRAM のダンプ、逆アセンブルができます。VDP とマッパーのトレース、スロットの表示、フロッピーの交換（`fdd1`/`fdd2 [FILE|-]`）、カセットテープの操作（`tape`）もできます。全コマンドは [`docs/debugger_ja.md`](docs/debugger_ja.md) を参照してください。
 
 - 実装：`host/debugger/`
 
@@ -403,34 +412,34 @@ The VDP SHALL maintain 16 KB of video RAM as a `bytearray` of length 0x4000. All
 
 数値は `--benchmark` オプションで計測しました。計測はヘッドレスかつ速度制限なし（`FrameTimer` の調整なし）で、コールドブートから指定フレーム数まで動かします。そのため、数値には BIOS の起動時間も含まれます。CPU のエミュレーション、オフスクリーンバッファへの VDP 描画と RGB への変換、そのフレームの音声のミックスは、通常のプレイと同じく毎フレーム行います。ただし `--benchmark` は SDL ウィンドウを開かず、音声をキューに積まず、テクスチャの転送もしません。実際のプレイは、下の数値より少し遅くなります。
 
-v2.8.0 からコアとフロントエンドを分け、ヘッドレスの実行でもコアが毎フレーム音源を合成するようになりました。`--benchmark` は、フロントエンドが表示するフレームと同じく、毎フレームを RGB にも変換します。このため `--benchmark` の数値には音声合成と RGB 変換のコストが含まれ、実際のプレイの速さに近くなりました。v2.7.8 までの `--benchmark` はどちらも行っていなかったので、下の数値は v2.7.8 以前の数値と比べられません。RGB 変換は、前のフレームまでに変換した行を使い回すので、ほとんどのフレームでは CPython でも PyPy でも負荷が小さくなります。
+v2.8.0 から、ヘッドレスの実行でもコアが毎フレーム音源を合成し、`--benchmark` は毎フレームを RGB に変換します。v2.7.8 までの `--benchmark` はどちらも行っていなかったので、下の数値は v2.7.8 以前の数値と比べられません。RGB 変換は、前のフレームまでに変換した行を使い回すので、ほとんどのフレームでは CPython でも PyPy でも負荷が小さくなります。
 
-ランタイムとゲームの組み合わせごとに、10000 フレームの計測を 10 回行い、最速と最遅を除いた 8 回の平均をスコアにしました。
+ランタイムとゲームの組み合わせごとに、10000 フレームの計測を 10 回行い、最速と最遅を除いた 8 回の平均をスコアにしました。計測中、カセットテープは入れていません（デッキは空です）。
 
 | プラットフォーム | ランタイム | ゲーム | 平均 FPS（`--benchmark`） | 60 fps 目標との比 |
 | --- | --- | --- | --- | --- |
-| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 313.21 | 約 5.2 倍 |
-| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤーIV（CPU+V9938+PSG） | 588.45 | 約 9.8 倍 |
-| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 103.20 | 約 1.7 倍 |
-| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 1010.60 | 約 16.8 倍 |
-| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤーIV（CPU+V9938+PSG） | 1415.97 | 約 23.6 倍 |
-| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 710.43 | 約 11.8 倍 |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 79.70 | 約 1.3 倍 |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤーIV（CPU+V9938+PSG） | 157.39 | 約 2.6 倍 |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 28.03 | 約 0.47 倍 |
-| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 200.75 | 約 3.3 倍 |
-| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤーIV（CPU+V9938+PSG） | 297.58 | 約 5.0 倍 |
-| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 154.20 | 約 2.6 倍 |
+| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 307.66 | 約 5.1 倍 |
+| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤーIV（CPU+V9938+PSG） | 582.56 | 約 9.7 倍 |
+| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 102.50 | 約 1.7 倍 |
+| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 985.60 | 約 16.4 倍 |
+| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤーIV（CPU+V9938+PSG） | 1366.11 | 約 22.8 倍 |
+| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 718.51 | 約 12.0 倍 |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 79.88 | 約 1.3 倍 |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤーIV（CPU+V9938+PSG） | 155.55 | 約 2.6 倍 |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 27.97 | 約 0.47 倍 |
+| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 222.86 | 約 3.7 倍 |
+| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤーIV（CPU+V9938+PSG） | 285.31 | 約 4.8 倍 |
+| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 152.18 | 約 2.5 倍 |
 
-計測した組み合わせのすべてが 60 fps に届くわけではありません。余裕が最も小さいのは Raspberry Pi 5 の CPython でドラゴンスレイヤー英雄伝説を動かした場合で、約 0.47 倍と目標を下回ります。対象タイトルの中では、FM-PAC（YM2413）の合成が 1 フレームあたりの負荷として最も重くなります。PyPy にすると、同じ組み合わせで約 2.6 倍になります。Raspberry Pi 5 と CPython のほかの組み合わせは目標に届き、沙羅曼蛇は約 1.3 倍、ドラゴンスレイヤーIV は約 2.6 倍です。
+計測した組み合わせのすべてが 60 fps に届くわけではありません。余裕が最も小さいのは Raspberry Pi 5 の CPython でドラゴンスレイヤー英雄伝説を動かした場合で、約 0.47 倍と目標を下回ります。対象タイトルの中では、FM-PAC（YM2413）の合成が 1 フレームあたりの負荷として最も重くなります。PyPy にすると、同じ組み合わせで約 2.5 倍になります。Raspberry Pi 5 と CPython のほかの組み合わせは目標に届き、沙羅曼蛇は約 1.3 倍、ドラゴンスレイヤーIV は約 2.6 倍です。
 
-60 fps を下回るのは、Raspberry Pi 5 の CPython で FM-PAC を使うタイトルを動かすとき、Raspberry Pi 5 より遅いハードウェアで動かすとき、もっと重いタイトルを動かすときの 3 つです。そのときゲームは、実際のフレームレートに比例してスローモーションになります。音声も劣化します（クリックや無音）。原因は、音声のサンプルをフレームごとに作るのに、音声デバイスは常に 44100 Hz で消費することにあります。PyPy3 はそのまま置き換えて使えます。Raspberry Pi 5 では、CPython の約 2〜5.5 倍の処理速度が出ます（上の表を参照）。Raspberry Pi のような非力な環境で余裕を持たせたいなら PyPy を勧めます。
+Raspberry Pi 5 の CPython で FM-PAC を使うタイトルを動かすと、60 fps を下回ります。Raspberry Pi 5 より遅いハードウェアや、もっと重いタイトルでも同じです。そのときゲームは、実際のフレームレートに比例してスローモーションになります。音声も劣化します（クリックや無音）。原因は、音声のサンプルをフレームごとに作るのに、音声デバイスは常に 44100 Hz で消費することにあります。PyPy3 はそのまま置き換えて使えます。Raspberry Pi 5 では、CPython の約 1.8〜5.4 倍の処理速度が出ます（上の表を参照）。Raspberry Pi のような非力な環境で余裕を持たせたいなら PyPy を勧めます。
 
 PyPy の数値は、OS のスケジューリングなどのためか、CPython より実行ごとのばらつきが大きくなります。目安として見てください。
 
 ### ベンチマーク推移
 
-v0.1.0 から v2.9.0 までの平均 FPS（`--benchmark`）の推移を、プラットフォームごとに示します。実線が CPython、破線が PyPy です。v2.7.5 までは、上と同じコールドブートの方法から音声合成を除いた方法（v2.7.8 までの方法）で計測しました。v2.8.1 からは上の方法で計測しました。2 つの方法の数値は比べられないので、方法が変わるところで線を切っています。
+v0.1.0 から v2.10.0 までの平均 FPS（`--benchmark`）の推移を、プラットフォームごとに示します。実線が CPython、破線が PyPy です。v2.7.5 までは、上と同じコールドブートの方法から音声合成を除いた方法（v2.7.8 までの方法）で計測しました。v2.8.1 からは上の方法で計測しました。2 つの方法の数値は比べられないので、方法が変わるところで線を切っています。
 
 ![Apple MacBook Pro（M5 Pro）でのベンチマーク推移](assets/bench-history-m5pro.png)
 
@@ -503,11 +512,15 @@ python . path/to/game.rom --extension1 fmpac --extension2 hbi_j1
 # ホストのマウスで駆動する MSX マウスを Joy2（デフォルトポート）に接続
 python . path/to/game.rom --mouse
 
-# プログラムが印字する内容をファイルに書き出す（プリンタポートのあるマシン）
-python . --machine hb_f1xd --printer-log out.prn
-
 # MSX マウスを Joy1 に接続
 python . path/to/game.rom --mouse=1
+
+# CAS のテープをマウントし、BASIC の CLOAD、BLOAD"CAS:",R、
+# RUN"CAS:"（ASCII 形式のファイル）で読み込む
+python . --machine hb_10 --tape path/to/game.cas
+
+# プログラムが印字する内容をファイルに書き出す（プリンタポートのあるマシン）
+python . --machine hb_f1xd --printer-log out.prn
 
 # 最新のステートセーブから復帰
 python . path/to/game.rom --resume
@@ -548,6 +561,8 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--fdd2 DSK` | _（なし）_ | ドライブが 2 台あるマシンで、ドライブ B にマウントするフロッピーの `*.dsk` イメージ。同梱のマシンはどれもドライブが 1 台なので、エミュレータは警告を出して `--fdd2` を無視します |
 | `--resume [FILE]` | _（なし）_ | `saves/states/latest.state`（引数なし）か、指定した `.state` ファイルから再開します。保存時と同じディスクをマウントしておきます（`--fdd1` の先頭は、保存時にドライブ A に入っていたイメージにする） |
 | `--mouse [1\|2]` | _（なし）_ | MSX マウスをジョイスティックポートにつなぎます（引数なしは Joy2）。`py_emulator.yaml` の `mouse` 設定より優先します。ヘッドレス実行（`--count-frame`、`--benchmark`）でもつなぐので、マウス付きで保存したステートをそこで再開できます |
+| `--tape CAS` | _（なし）_ | 起動時に CAS のテープイメージをマウントします。対応するのは CAS だけです。WAV の録音は `tools/wav2cas.py` で CAS に変換してください。ファイルがないときや不正なときは、エラーで止まります。`--resume` を使うときは、ステートを保存したときのテープを指定します |
+| `--tape-fast`、`--no-tape-fast` | オン | テープをマウントしてモーターが回っている間、早送りで動かします。`--no-tape-fast` を指定すると通常の速度で読み込みます |
 | `--printer-log FILE` | _（なし）_ | プリンタポートにプリンタをつなぎ、受け取った生のバイトを FILE に書きます（作成するか切り詰めます）。ポートのないマシンではエラーで止まります。`--benchmark` とは同時に使えません |
 | `--frame-skip MODE` | `auto` | フレームスキップ。`auto` は遅れたフレームの VDP 描画を省きます。`none` は無効にします |
 | `--debug` | オフ | 構造化診断ログを stderr に出力 |
@@ -583,6 +598,7 @@ scale: 3 # 256x212 ベースに対するウィンドウ整数拡大率
 # extension1: fmpac        # スロット 1 の拡張を重ねる -- 詳細は docs/README_extension_ja.md
 # extension2: hbi_j1       # スロット 2 の拡張を重ねる（'extension' も extension2 のレガシー別名として使える）
 # fdd1: [disks/a.dsk, disks/b.dsk]  # ドライブ A のディスク一覧（1 つのパスまたはリスト）；F6 で順に切り替え
+# tape: tapes/game.cas     # 起動時にマウントする CAS テープ（--tape が優先）
 frame_skip: true # true = auto（デフォルト）、false = none（無効化）
 
 rpc:
@@ -625,13 +641,13 @@ hotkeys: {} # フロントエンドのホットキーの上書き（例：{ paus
   # reset: shift+f12
 ```
 
-設定できるのは `machine`、`speed`、`scale`、`slot1`、`slot2`、`extension1`、`extension2`、`fdd1`、`frame_skip`、`mouse`、`hotkeys` と、RPC、ゲームパッド、キーボードジョイスティックの設定です。`extension` も `extension2` の古い別名として使えます。`mapper1`/`mapper2` は CLI だけで使えます（上の `--mapper`/`--mapper1`/`--mapper2` を参照）。次の点にも注意してください。
+設定できるのは `machine`、`speed`、`scale`、`slot1`、`slot2`、`extension1`、`extension2`、`fdd1`、`tape`、`frame_skip`、`mouse`、`hotkeys` と、RPC、ゲームパッド、キーボードジョイスティックの設定です。`extension` も `extension2` の古い別名として使えます。`mapper1`/`mapper2` は CLI だけで使えます（上の `--mapper`/`--mapper1`/`--mapper2` を参照）。次の点にも注意してください。
 
-- ゲームパッドのボタン割り当ては SDL GameController の経路に効き、両ポートで共通
+- ゲームパッドのボタン割り当ては SDL GameController の経路に効きます。両ポートで共通です。
 - `keyboard_joystick.buttons` は Joy1 のキーボードエミュレーションだけに効きます。
 - コマンドラインの `--mouse` は常に `mouse.enabled`/`mouse.port` より優先します。
 - `fdd1` には 1 つのパスかパスのリストを書けます。コマンドラインの `--fdd1` は一覧全体を置き換えます。
-- `hotkeys` でフロントエンドのホットキーを別のファンクションキーに移せます。次の場合は起動時にエラーになります：2 つの動作が同じキーを使う、MSX のキー（F1〜F5、Shift+F1〜F5）を使う、固定のホットキー（F8〜F10）を使う。
+- `hotkeys` でフロントエンドのホットキーを別のファンクションキーに移せます。2 つの動作に同じキーを割り当てたとき、MSX のキー（F1〜F5、Shift+F1〜F5）や固定のホットキー（F8〜F10）を割り当てたときは、起動時にエラーになります。
 
 全項目と、使えるボタン名・キー名は `py_emulator.example.yaml` を参照してください。
 
@@ -685,7 +701,7 @@ F6、F7、F11、F12 とその Shift 付きは組み込みのデフォルトで�
 
 ## ツール
 
-`tools/` には、単独で動くコマンドラインツールを置いています。ディスクイメージ用のツール（ftp 風の対話シェル、空イメージの作成、USB フロッピードライブからの生セクタのコピー）と、[リモート制御](#リモート制御socket-rpc--mcp)で使う RPC/MCP のクライアントツールがあります。Z80 コアだけを外部の命令テストで確かめるツールも 2 つあります。`run_z80_exercisers.py`（zexdoc、zexall、z80test）と `run_singlestep_tests.py`（SingleStepTests/z80）です。詳しくは技術資料の[命令テスト](docs/technical-implementation_ja.md#命令テスト)を参照してください。
+`tools/` には、単独で動くコマンドラインツールを置いています。ディスクイメージ用には、ftp 風の対話シェル、空イメージの作成ツール、USB フロッピードライブとの間で生セクタをコピーするツールがあります。[リモート制御](#リモート制御socket-rpc--mcp)で使う RPC/MCP のクライアントツールもあります。WAV と MSX のテープ形式を変換するツールも 2 つあります。`bas2wav.py` は ASCII 形式の BASIC プログラムからテープ用 WAV を作り、`wav2cas.py` はテープの WAV を `--tape` で使う CAS ファイルに変換します。Z80 コアだけを外部の命令テストで確かめるツールも 2 つあります。`run_z80_exercisers.py`（zexdoc、zexall、z80test）と `run_singlestep_tests.py`（SingleStepTests/z80）です。詳しくは技術資料の[命令テスト](docs/technical-implementation_ja.md#命令テスト)を参照してください。
 
 各スクリプトの使い方、オプション、実行例は [`tools/README_tools.md`](tools/README_tools.md) / [`tools/README_tools_ja.md`](tools/README_tools_ja.md) を参照してください。
 
@@ -811,7 +827,7 @@ builtin_devices:
 
 ## テストの実行
 
-テストスイートは 4550 個のテストで、主なコンポーネントをすべて扱います。個々のオペコードやハードウェアレジスタのユニットテスト、複数のコンポーネントをつないだ統合テスト、仕様のシナリオをそのまま条件にしたテストがあります。
+テストスイートは 4684 個のテストで、主なコンポーネントをすべて扱います。個々のオペコードやハードウェアレジスタのユニットテスト、複数のコンポーネントをつないだ統合テスト、仕様のシナリオをそのまま条件にしたテストがあります。
 
 ```bash
 # 開発用依存関係（pytest、ruff、mypy）をインストール
@@ -845,6 +861,8 @@ py-msx-emulator/
 │   ├── romdb.py           # SHA1 ベースの ROM タイトル/マッパーデータベース
 │   ├── app_config.py      # py_emulator.yaml の起動時デフォルト値
 │   ├── media.py           # SRAM とディスクイメージのファイル（変更の保存、ディスク交換）
+│   ├── cas_image.py       # CAS テープファイル → 1200 ボーのテープ信号（エッジ列）とブロック一覧
+│   ├── tape.py            # マウント中のテープファイルとブロック（CLI、デバッガ、RPC）
 │   ├── input_state.py     # 入力の組み立て：キーボード/ゲームパッド/マウス/RPC → フレームごとの InputFrame
 │   ├── printer_output.py  # --printer-log：印字するバイトをファイルに書く
 │   ├── state_files.py     # ステートセーブのファイル（ファイル名、PNG、latest.* リンク）
@@ -884,6 +902,7 @@ py-msx-emulator/
 │   ├── opll.py            # YM2413（OPLL）FM 音源チップ
 │   ├── ppi.py             # i8255 PPI（スロットレジスタ、キーボード、キークリック）
 │   ├── printer.py         # パラレルプリンタポート
+│   ├── cassette.py        # カセットポート：テープ信号の再生、モーター、位置
 │   ├── io.py              # I/O バス（ポートディスパッチ）
 │   ├── input.py           # フレームごとの入力値（InputFrame）+ PPI/PSG が読む入力線
 │   ├── mouse.py           # MSX マウスプロトコル状態機械（pin-8 クロックのニブル転送）
@@ -895,7 +914,7 @@ py-msx-emulator/
 ├── config/
 │   ├── devices/           # デバイス YAML 定義（VDP、PSG、PPI、RTC...）
 │   └── machines/          # マシン YAML 定義（cbios_msx1_jp、cbios_msx2_jp...）
-├── tools/                 # ディスクイメージツール（dskftp、dskblank、dskdd）、RPC クライアント、MCP サーバ、Z80 のテスト実行ツール（詳細は tools/README_tools_ja.md）
+├── tools/                 # ディスクイメージツール（dskftp、dskblank、dskdd）、テープ用 WAV ツール（bas2wav、wav2cas）、RPC クライアント、MCP サーバ、Z80 のテスト実行ツール（詳細は tools/README_tools_ja.md）
 ├── docs/                  # 内部構造と移植ガイド、拡張、デバッガ、ソケット RPC / MCP
 ├── assets/                # この README が参照するベンチマーク履歴グラフ
 ├── roms/
@@ -904,7 +923,7 @@ py-msx-emulator/
 ├── allium/                # Allium の振る舞い仕様。仕様と実装のずれを確かめる（未公開）
 ├── openspec/
 │   └── specs/             # コンポーネントの仕様（未公開）
-├── tests/                 # テストスイート（4550 テスト）
+├── tests/                 # テストスイート（4684 テスト）
 ├── py_emulator.example.yaml # 設定ファイルの記述例（注釈付き）
 ├── QUICK_START_ja.md      # 必要なもの、インストール、BIOS の準備
 ├── CHANGELOG_ja.md        # 更新履歴
@@ -917,7 +936,7 @@ py-msx-emulator/
 
 ## コントリビューション
 
-Issue とプルリクエストは歓迎します。仕様（`openspec/`、`allium/`）はまだ公開しておらず、開発は今のところ AI を使った「Vibe coding」で進めています。そのため、コントリビュータが仕様を書く必要はありません。作者が Issue やプルリクエストの内容を確認したうえで、OpenSpec の仕様と Allium の契約（contract）を修正します。
+Issue とプルリクエストは歓迎します。仕様（`openspec/`、`allium/`）はまだ公開しておらず、開発は今のところ AI を使って進めています。そのため、コントリビュータが仕様を書く必要はありません。作者が Issue やプルリクエストの内容を確認したうえで、OpenSpec の仕様と Allium の契約（contract）を修正します。
 
 ### コーディング規約
 

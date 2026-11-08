@@ -2,7 +2,7 @@
 
 A functionally accurate MSX1/MSX2 emulator, written in pure Python 3.10+ and driven by machine-readable component specifications.
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-4550%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-4684%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -10,7 +10,7 @@ A functionally accurate MSX1/MSX2 emulator, written in pure Python 3.10+ and dri
 
 Every hardware component is pure Python. A machine-readable specification defines each component before its implementation, and these specs drive the test suite. See [Spec-driven architecture](#spec-driven-architecture) for details. The component wiring is explicit: `build_machine()` connects the components by hand, with no reflection or dependency injection. The only platform-specific dependency is pysdl2, for the display and audio frontend. [`docs/technical-implementation.md`](docs/technical-implementation.md) describes the internals.
 
-The core (`msx/`) reads no file and no host clock. Code outside it uses the machine only through the core API (`msx/core_api.py`). `include/msx_core.h` is the C form of that API, at ABI version 1.1, so that a core in another language can replace the Python core. See [Porting the core](docs/technical-implementation.md#porting-the-core).
+The core (`msx/`) reads no file and no host clock. Code outside it uses the machine only through the core API (`msx/core_api.py`). `include/msx_core.h` is the C form of that API, at ABI version 1.2, so that a core in another language can replace the Python core. See [Porting the core](docs/technical-implementation.md#porting-the-core).
 
 The emulator needs BIOS ROMs, which the repository does not include. The free [C-BIOS](https://cbios.sourceforge.net/) works for the generic machines. [QUICK_START.md](QUICK_START.md) explains the setup.
 
@@ -71,7 +71,7 @@ The CPU has the full register file (AF, BC, DE, HL, IX, IY, SP, PC, I, R, and th
 - Implementation: `msx/cpu/z80.py`, `msx/cpu/opcodes_main.py`, `msx/cpu/registers.py`
 - Known limitations:
   - OTIR/INIR and similar block I/O instructions are not cycle-exact across page boundaries.
-  - The undocumented flag bits Y (bit 5) and X (bit 3) follow the Zilog NMOS rules, including `BIT n,(HL)` (from the internal MEMPTR register), a repeating `LDIR`/`LDDR`/`CPIR`/`CPDR` (from its own address) and `SCF`/`CCF` (from whether the previous instruction changed the flags). The repeating `INIR`/`INDR`/`OTIR`/`OTDR` keep simpler per-iteration flags.
+  - The undocumented flag bits Y (bit 5) and X (bit 3) follow the Zilog NMOS rules, including `BIT n,(HL)` (from the internal MEMPTR register), a repeating block instruction (`LDIR`/`LDDR`/`CPIR`/`CPDR`/`INIR`/`INDR`/`OTIR`/`OTDR`, from its own address) and `SCF`/`CCF` (from whether the previous instruction changed the flags).
   - The emulator targets a Zilog-compatible Z80. The NEC and Sharp Z80-compatible CPUs in some MSX machines can differ in these flags; that is not modelled.
 
 ### VDP (Video Display Processor): TMS9918A (MSX1)
@@ -190,7 +190,7 @@ The PPI has the slot-select register (port 0xA8), the 11-row × 8-bit MSX keyboa
 - `bus_latch`: a byte latched from the last PPI access, as on the S3527 in `hb_10` and `hb_10_64k`. Checked on a real HB-10.
 
 - Implementation: `msx/ppi.py`
-- Known limitations: the emulator does not implement the cassette interface (port 0xAA bits 4-5) or the CAPS LED (bit 6). Bit 7 drives the key click (see "Key click: PPI Port C bit 7").
+- Known limitations: the emulator does not implement the cassette output (port 0xAA bit 5) or the CAPS LED (bit 6). Bit 4 drives the cassette motor (see "Cassette tape"). Bit 7 drives the key click (see "Key click: PPI Port C bit 7").
 
 ### Memory bus / slot system
 
@@ -308,6 +308,15 @@ The status values and the mirrors come from the openMSX machine files. They are 
 
 - Implementation: `msx/printer.py`, `host/printer_output.py`
 
+### Cassette tape
+
+The cassette port plays a CAS tape image. `--tape FILE.cas` (or the `tape` key of `py_emulator.yaml`) mounts it at startup. The debugger, the socket RPC and the MCP server can insert, eject, rewind and seek the tape at run time. The host converts the CAS file into the tape signal at 1200 baud, the MSX BIOS default, with the silence and sync lengths of the openMSX CAS player. The guest BIOS reads the signal with its own routines (`CLOAD`, `BLOAD"CAS:",R`, `RUN"CAS:"`). PPI Port C bit 4 starts and stops the motor, and the tape input is PSG register 14 bit 7. Every shipped machine has the port.
+
+While a tape is mounted and the motor runs, the frontend runs as fast-forward and the window title shows `[TAPE]`. `--no-tape-fast` loads at normal speed. The speed does not change the result of a load. A save state records the identity of the tape signal (its size and SHA1), the position and the motor. It loads only with the same tape mounted.
+
+- Known limitations: CAS files only. Convert a WAV recording to CAS with `tools/wav2cas.py`. TSX files are not supported. There is no recording (the cassette output, Port C bit 5, is not implemented) and no fast loader: a load takes the time of the real tape, or less with tape-fast. Tape loads are not yet checked on real hardware. While a tape is mounted, the CPU loop counts the clock at each instruction, so CPython runs slightly slower: 2.7% on an MSX2 cartridge game in the benchmark, with the motor off. PyPy shows no measurable difference. Eject the tape to get the full speed back.
+- Implementation: `msx/cassette.py` (the core plays the signal), `host/cas_image.py` (CAS conversion), `host/tape.py` (the mounted file and its blocks)
+
 ### Keyboard / joystick input
 
 | Item | Detail |
@@ -341,19 +350,19 @@ An optional MSX mouse that follows the host mouse. It connects to a joystick por
 
 The window is the 256×212 base resolution times the integer `--scale` factor (768×636 at the default scale 3), for every machine and mode. The rendered frame is always 212 lines. The renderer centers 192-line SCREEN modes with border rows, so the 4:3 CRT aspect stays the same for all values of R#9 LN. SCREEN 6/7 (512 pixels wide) scale down to the same window width to keep the pixel aspect.
 
-The frontend also gives the hardware palette, mono audio at 44100 Hz through the analog-style low-pass filter, a fullscreen toggle, screenshots, state save/load, pause, fast-forward, mute, and reset. The window title shows the fps, `[PAUSED]`/`[FF]`/`[MUTE]` and the drive A disk. Fast-forward does not play audio. For automatic frame skip, see [Performance](#performance).
+The frontend also gives the hardware palette, mono audio at 44100 Hz through the analog-style low-pass filter, a fullscreen toggle, screenshots, state save/load, pause, fast-forward, mute, and reset. The window title shows the fps, `[PAUSED]`/`[FF]`/`[TAPE]`/`[MUTE]` and the drive A disk. Fast-forward does not play audio. For automatic frame skip, see [Performance](#performance).
 
 - Implementation: `frontend/sdl2_frontend.py`. The core mixes the audio every frame (`msx/audio_mixer.py`), also in headless runs. The frontend only queues it.
 
 ### State save/load
 
-A complete hardware snapshot in a stdlib JSON container. It includes the CPU, RAM, VDP, PSG, the PPI latches, SCC, FM-PAC/OPLL, mapper banks, FDC register and phase state, the RTC, the mouse, the printer port lines, and the identity of the mounted disk. The file is canonical JSON (RFC 8785): the same machine state always gives the same bytes, also from another implementation. It holds integers only, and byte blobs such as RAM and VRAM as base64 strings. [`msx/snapshot.schema.json`](msx/snapshot.schema.json) (JSON Schema) defines its layout. The format version is 22. Save states from earlier versions do not load. A save state also records the machine configuration that it comes from (see [Machine configuration](#machine-configuration)). It loads only into the same machine, extensions and cartridge ROM. Each save also writes a PNG screenshot and updates the `saves/states/latest.*` symlinks for quick resume. A save records the mounted `.dsk` by path, size, and SHA1. If the current disk does not match at load time, the load fails with an error and does not continue silently.
+A complete hardware snapshot in a stdlib JSON container. It includes the CPU, RAM, VDP, PSG, the PPI latches, SCC, FM-PAC/OPLL, mapper banks, FDC register and phase state, the RTC, the mouse, the printer port lines, the cassette position and motor, and the identity of the mounted disk and tape. The file is canonical JSON (RFC 8785): the same machine state always gives the same bytes, also from another implementation. It holds integers only, and byte blobs such as RAM and VRAM as base64 strings. [`msx/snapshot.schema.json`](msx/snapshot.schema.json) (JSON Schema) defines its layout. The format version is 23. Save states from earlier versions do not load. A save state also records the machine configuration that it comes from (see [Machine configuration](#machine-configuration)). It loads only into the same machine, extensions and cartridge ROM. Each save also writes a PNG screenshot and updates the `saves/states/latest.*` symlinks for quick resume. A save records the mounted `.dsk` by path, size, and SHA1. If the current disk does not match at load time, the load fails with an error and does not continue silently. The same applies to the mounted tape.
 
 - Implementation: `msx/state.py` (snapshot encoding), `msx/snapshot.schema.json` (layout), `host/state_files.py` (files)
 
 ### Interactive debugger
 
-A REPL that opens on Ctrl+C or on a breakpoint hit. It has breakpoints and watchpoints, step execution, register and VRAM dumps, disassembly, VDP trace, mapper trace, a slot inspector, and floppy disk swap (`fdd1`/`fdd2 [FILE|-]`). For the full command reference, see [`docs/debugger.md`](docs/debugger.md).
+A REPL that opens on Ctrl+C or on a breakpoint hit. It has breakpoints and watchpoints, step execution, register and VRAM dumps, disassembly, VDP trace, mapper trace, a slot inspector, floppy disk swap (`fdd1`/`fdd2 [FILE|-]`), and the cassette tape (`tape`). For the full command reference, see [`docs/debugger.md`](docs/debugger.md).
 
 - Implementation: `host/debugger/`
 
@@ -397,34 +406,34 @@ Each scenario maps directly to a unit test. For a new feature or a change to an 
 
 The `--benchmark` CLI flag gives these measurements. It does a headless, unthrottled run (no `FrameTimer` pacing) from a cold boot through the full frame count. The measurement thus includes the BIOS boot time. As in interactive play, every frame runs full CPU emulation and mixes the frame's audio. It also renders the VDP output to an offscreen buffer and converts it to RGB. But `--benchmark` never opens an SDL window, queues audio, or uploads and blits textures. Real interactive sessions thus run somewhat slower than the numbers below.
 
-Since v2.8.0 the core and the frontend are separate, and the core synthesizes the sound chips every frame, also in headless runs. `--benchmark` also converts every frame to RGB, as the frontend does for a shown frame. The `--benchmark` numbers thus include the cost of sound synthesis and of the RGB conversion, and are closer to the real speed of interactive play. Up to v2.7.8, `--benchmark` did neither. Do not compare the numbers below with numbers from v2.7.8 or earlier. The RGB conversion reuses each row that it already converted for an earlier frame. On most frames it thus costs little, under PyPy as well as under CPython.
+Since v2.8.0, the core synthesizes the sound chips every frame, also in headless runs, and `--benchmark` converts every frame to RGB. Up to v2.7.8, `--benchmark` did neither. Do not compare the numbers below with numbers from v2.7.8 or earlier. The RGB conversion reuses each row that it already converted for an earlier frame. On most frames it thus costs little, under PyPy as well as under CPython.
 
-For each (runtime, game) pair, the author measured 10 runs of 10000 frames each. The score is the average of the remaining 8 runs, after the removal of the fastest and the slowest run.
+For each (runtime, game) pair, the author measured 10 runs of 10000 frames each. The score is the average of the remaining 8 runs, after the removal of the fastest and the slowest run. No cassette tape is mounted (the deck is empty) during the runs.
 
 | Platform | Runtime | Game | Avg FPS (`--benchmark`) | vs. 60 fps target |
 | --- | --- | --- | --- | --- |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 313.21 | ~5.2× |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer IV (CPU+V9938+PSG) | 588.45 | ~9.8× |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 103.20 | ~1.7× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 1010.60 | ~16.8× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer IV (CPU+V9938+PSG) | 1415.97 | ~23.6× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 710.43 | ~11.8× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 79.70 | ~1.3× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer IV (CPU+V9938+PSG) | 157.39 | ~2.6× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 28.03 | ~0.47× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 200.75 | ~3.3× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer IV (CPU+V9938+PSG) | 297.58 | ~5.0× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 154.20 | ~2.6× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 307.66 | ~5.1× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer IV (CPU+V9938+PSG) | 582.56 | ~9.7× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 102.50 | ~1.7× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 985.60 | ~16.4× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer IV (CPU+V9938+PSG) | 1366.11 | ~22.8× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 718.51 | ~12.0× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 79.88 | ~1.3× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer IV (CPU+V9938+PSG) | 155.55 | ~2.6× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 27.97 | ~0.47× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 222.86 | ~3.7× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer IV (CPU+V9938+PSG) | 285.31 | ~4.8× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 152.18 | ~2.5× |
 
-Not every tested combination reaches the raw 60 fps target. The smallest margin is ~0.47×, below the target, on Raspberry Pi 5 with CPython and Dragon Slayer VI. The FM-PAC (YM2413) synthesis is the heaviest per-frame load of the target titles. PyPy increases the same case to ~2.6×. The other Raspberry Pi 5 and CPython combinations reach the target: Salamander at ~1.3× and Dragon Slayer IV at ~2.6×.
+Not every tested combination reaches the raw 60 fps target. The smallest margin is ~0.47×, below the target, on Raspberry Pi 5 with CPython and Dragon Slayer VI. The FM-PAC (YM2413) synthesis is the heaviest per-frame load of the target titles. PyPy increases the same case to ~2.5×. The other Raspberry Pi 5 and CPython combinations reach the target: Salamander at ~1.3× and Dragon Slayer IV at ~2.6×.
 
-A run goes below 60 fps in these cases: CPython on a Raspberry Pi 5 with an FM-PAC title, hardware slower than a Raspberry Pi 5, or a heavier title. The game then runs in slow motion, at a rate proportional to the achieved frame rate. Audio also degrades (clicks or silence). The cause is that the emulator generates samples per frame, but the audio device always consumes them at 44100 Hz. PyPy3 is a drop-in alternative. On the Raspberry Pi 5 it gives about 2 to 5.5 times the CPython throughput (see the table above). It is the recommended way to keep headroom on constrained hosts such as a Raspberry Pi.
+A run goes below 60 fps in these cases: CPython on a Raspberry Pi 5 with an FM-PAC title, hardware slower than a Raspberry Pi 5, or a heavier title. The game then runs in slow motion, at a rate proportional to the achieved frame rate. Audio also degrades (clicks or silence). The cause is that the emulator generates samples per frame, but the audio device always consumes them at 44100 Hz. PyPy3 is a drop-in alternative. On the Raspberry Pi 5 it gives about 1.8 to 5.4 times the CPython throughput (see the table above). It is the recommended way to keep headroom on constrained hosts such as a Raspberry Pi.
 
 The PyPy numbers vary more from run to run than the CPython numbers, probably because of OS scheduling and thermal throttling. Treat them as approximate.
 
 ### Benchmark history
 
-Avg FPS (`--benchmark`) from v0.1.0 through v2.9.0, one chart per platform. Solid lines are CPython and dashed lines are PyPy. Up to v2.7.5 the author measured with the same cold-boot method as above, but without sound synthesis (the method up to v2.7.8). From v2.8.1 the author measured with the method above. You cannot compare the numbers of the two methods, so the lines break where the method changes.
+Avg FPS (`--benchmark`) from v0.1.0 through v2.10.0, one chart per platform. Solid lines are CPython and dashed lines are PyPy. Up to v2.7.5 the author measured with the same cold-boot method as above, but without sound synthesis (the method up to v2.7.8). From v2.8.1 the author measured with the method above. You cannot compare the numbers of the two methods, so the lines break where the method changes.
 
 ![Benchmark history on Apple MacBook Pro (M5 Pro)](assets/bench-history-m5pro.png)
 
@@ -498,11 +507,15 @@ python . path/to/game.rom --extension1 fmpac --extension2 hbi_j1
 # Attach an MSX mouse to Joy2 (default port), driven by the host mouse
 python . path/to/game.rom --mouse
 
-# Write what a program prints to a file (a machine with a printer port)
-python . --machine hb_f1xd --printer-log out.prn
-
 # Attach an MSX mouse to Joy1 instead
 python . path/to/game.rom --mouse=1
+
+# Mount a CAS tape, then load it in BASIC with CLOAD, BLOAD"CAS:",R, or
+# RUN"CAS:" (an ASCII file)
+python . --machine hb_10 --tape path/to/game.cas
+
+# Write what a program prints to a file (a machine with a printer port)
+python . --machine hb_f1xd --printer-log out.prn
 
 # Resume from the most recent save state
 python . path/to/game.rom --resume
@@ -543,6 +556,8 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--fdd2 DSK` | _(none)_ | Floppy `*.dsk` image mounted in drive B, on a machine with two drives. Every shipped machine has one drive, so the emulator ignores `--fdd2` with a warning |
 | `--resume [FILE]` | _(none)_ | Resume from `saves/states/latest.state`, or a specific `.state` file. Mount the disks the state was saved with: the first `--fdd1` image must be the one that was in drive A |
 | `--mouse [1\|2]` | _(none)_ | Attach an MSX mouse to a joystick port (bare = Joy2). Overrides the `mouse` settings in `py_emulator.yaml`. Headless runs (`--count-frame`, `--benchmark`) attach it too, so a state saved with a mouse resumes there |
+| `--tape CAS` | _(none)_ | Mount a CAS tape image at startup. Only CAS is supported: convert a WAV recording to CAS with `tools/wav2cas.py`. A missing or invalid file stops with an error. With `--resume`, give the tape that the state was saved with |
+| `--tape-fast`, `--no-tape-fast` | on | Run as fast-forward while a tape is mounted and its motor runs. `--no-tape-fast` loads at normal speed |
 | `--printer-log FILE` | _(none)_ | Attach a printer to the printer port and write the raw bytes it receives to FILE (created or truncated). A machine with no port stops with an error. Cannot be used with `--benchmark` |
 | `--frame-skip MODE` | `auto` | Frame skip: `auto` skips VDP rendering on late frames. `none` disables frame skip |
 | `--debug` | off | Enable structured diagnostic logging to stderr |
@@ -578,6 +593,7 @@ scale: 3 # integer window scale over the 256x212 base
 # extension1: fmpac        # overlay a slot 1 extension -- see docs/README_extension.md
 # extension2: hbi_j1       # overlay a slot 2 extension ('extension' also still works, as a legacy alias for extension2)
 # fdd1: [disks/a.dsk, disks/b.dsk]  # drive A disk list (one path or a list); F6 steps through it
+# tape: tapes/game.cas     # CAS tape mounted at startup (--tape overrides it)
 frame_skip: true # true = auto (default), false = none (disable)
 
 rpc:
@@ -620,7 +636,7 @@ hotkeys: {} # frontend hotkey overrides, e.g. { pause: f6, disk_next: f11 }
   # reset: shift+f12
 ```
 
-These settings are configurable: `machine`, `speed`, `scale`, `slot1`, `slot2`, `extension1`, `extension2`, `fdd1`, `frame_skip`, `mouse`, `hotkeys`, and the RPC, gamepad, and keyboard-joystick settings. `extension` also still works, as a legacy alias for `extension2`. `mapper1`/`mapper2` are CLI-only (see `--mapper`/`--mapper1`/`--mapper2` above). Also note these points:
+These settings are configurable: `machine`, `speed`, `scale`, `slot1`, `slot2`, `extension1`, `extension2`, `fdd1`, `tape`, `frame_skip`, `mouse`, `hotkeys`, and the RPC, gamepad, and keyboard-joystick settings. `extension` also still works, as a legacy alias for `extension2`. `mapper1`/`mapper2` are CLI-only (see `--mapper`/`--mapper1`/`--mapper2` above). Also note these points:
 
 - The gamepad button map applies to the SDL GameController path. Both ports share one map.
 - `keyboard_joystick.buttons` applies only to the Joy1 keyboard emulation.
@@ -680,7 +696,7 @@ F6, F7, F11, F12 and their Shift combinations are the built-in defaults. To assi
 
 ## Tools
 
-Standalone command-line utilities in `tools/`. They include disk image tools: an interactive ftp-style shell, a blank-image creator, and a raw-sector copier for a physical USB floppy drive. They also include the RPC/MCP client tools for [Remote control](#remote-control-socket-rpc--mcp) below. Two runners check the Z80 core alone against external instruction tests: `run_z80_exercisers.py` (zexdoc, zexall, z80test) and `run_singlestep_tests.py` (SingleStepTests/z80). See [Instruction exercisers](docs/technical-implementation.md#instruction-exercisers) in the technical docs.
+Standalone command-line utilities in `tools/`. They include disk image tools: an interactive ftp-style shell, a blank-image creator, and a raw-sector copier for a physical USB floppy drive. They also include the RPC/MCP client tools for [Remote control](#remote-control-socket-rpc--mcp) below. Two tape tools convert between a WAV and the MSX tape format: `bas2wav.py` makes a tape WAV from an ASCII BASIC program, and `wav2cas.py` converts a tape WAV to a CAS file for `--tape`. Two runners check the Z80 core alone against external instruction tests: `run_z80_exercisers.py` (zexdoc, zexall, z80test) and `run_singlestep_tests.py` (SingleStepTests/z80). See [Instruction exercisers](docs/technical-implementation.md#instruction-exercisers) in the technical docs.
 
 For full usage, options, and examples for every script, see [`tools/README_tools.md`](tools/README_tools.md) / [`tools/README_tools_ja.md`](tools/README_tools_ja.md).
 
@@ -806,7 +822,7 @@ To use a custom machine definition, add a new YAML file to `config/machines/` an
 
 ## Running tests
 
-The test suite has 4550 tests and covers all major components. It includes unit tests for individual opcodes and hardware registers, and integration tests that connect multiple components. It also includes scenario-level tests, with conditions that come directly from the component specs.
+The test suite has 4684 tests and covers all major components. It includes unit tests for individual opcodes and hardware registers, and integration tests that connect multiple components. It also includes scenario-level tests, with conditions that come directly from the component specs.
 
 ```bash
 # Install the development dependencies (pytest, ruff, mypy)
@@ -840,6 +856,8 @@ py-msx-emulator/
 │   ├── romdb.py           # SHA1-based ROM title/mapper database
 │   ├── app_config.py      # py_emulator.yaml startup defaults
 │   ├── media.py           # SRAM and disk image files (save changed media, disk swap)
+│   ├── cas_image.py       # CAS tape file -> 1200-baud tape signal (edge list) and block list
+│   ├── tape.py            # The mounted tape file and its blocks (CLI, debugger, RPC)
 │   ├── input_state.py     # Input builder: keyboard/gamepad/mouse/RPC input -> per-frame InputFrame
 │   ├── printer_output.py  # --printer-log: writes the printed bytes to a file
 │   ├── state_files.py     # Save-state files (names, PNG, latest.* links)
@@ -879,6 +897,7 @@ py-msx-emulator/
 │   ├── opll.py            # YM2413 (OPLL) FM sound chip
 │   ├── ppi.py             # i8255 PPI (slot register, keyboard, key click)
 │   ├── printer.py         # Parallel printer port
+│   ├── cassette.py        # Cassette port: plays the tape signal, motor, position
 │   ├── io.py              # I/O bus (port dispatch)
 │   ├── input.py           # Per-frame input value (InputFrame) + the lines the PPI/PSG read
 │   ├── mouse.py           # MSX mouse protocol state machine (pin-8-clocked nibbles)
@@ -890,7 +909,7 @@ py-msx-emulator/
 ├── config/
 │   ├── devices/           # Device YAML definitions (VDP, PSG, PPI, RTC, ...)
 │   └── machines/          # Machine YAML definitions (cbios_msx1_jp, cbios_msx2_jp, ...)
-├── tools/                 # Disk image tools (dskftp, dskblank, dskdd), RPC client, MCP server, Z80 test runners (see tools/README_tools.md)
+├── tools/                 # Disk image tools (dskftp, dskblank, dskdd), tape WAV tools (bas2wav, wav2cas), RPC client, MCP server, Z80 test runners (see tools/README_tools.md)
 ├── docs/                  # Internals and porting guide, extensions, debugger, socket RPC / MCP
 ├── assets/                # Benchmark history charts used by this README
 ├── roms/
@@ -899,7 +918,7 @@ py-msx-emulator/
 ├── allium/                # Allium behaviour specs, verifying spec/implementation alignment (not published yet)
 ├── openspec/
 │   └── specs/             # Component specifications (not published yet)
-├── tests/                 # Test suite (4550 tests)
+├── tests/                 # Test suite (4684 tests)
 ├── py_emulator.example.yaml # Annotated example of the optional config file
 ├── QUICK_START.md         # Requirements, installation, BIOS setup
 ├── CHANGELOG.md           # Version history
@@ -912,7 +931,7 @@ py-msx-emulator/
 
 ## Contributing
 
-Issues and pull requests are welcome. The specs (`openspec/`, `allium/`) are not published yet, and development is currently AI-assisted ("vibe coding"). So contributors do not need to write specs. The author reviews each issue or pull request and then updates the OpenSpec specification and the Allium contracts to match.
+Issues and pull requests are welcome. The specs (`openspec/`, `allium/`) are not published yet, and development is currently AI-assisted. So contributors do not need to write specs. The author reviews each issue or pull request and then updates the OpenSpec specification and the Allium contracts to match.
 
 ### Coding conventions
 

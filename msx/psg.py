@@ -5,6 +5,7 @@ from enum import IntEnum
 from typing import NamedTuple, TypedDict
 
 from msx.boundary import AUDIO_SAMPLE_RATE
+from msx.cassette import CassettePort
 from msx.clock import CoreClock
 from msx.input import InputLines
 from msx.mouse import MouseDevice
@@ -17,6 +18,10 @@ from msx.snapshot_schema import (
 )
 
 _REG_IO_PORT_A = 14
+# Register 14 bit 6: the keyboard-layout line (not modeled, reads 1).
+_PORT_A_LAYOUT_BIT = 0x40
+# Register 14 bit 7: the cassette input.
+_PORT_A_TAPE_SHIFT = 7
 
 PSG_CLOCK: int = 223_722      # AY-3-8910: 3,579,545 Hz / 16
 # Upper bound on recorded register writes per audio buffer. Far above any real
@@ -91,6 +96,8 @@ class PSG:
     latch: int = 0
     _input: InputLines | None = field(default=None, repr=False)
     _mouse: MouseSlot | None = field(default=None, repr=False)
+    # The machine's cassette port (attach_cassette), or None with no port.
+    _cassette: CassettePort | None = field(default=None, repr=False)
 
     # Sub-frame audio: register writes are timestamped (cycle, reg, value)
     # with the clock record's cycle count (msx/clock.py; build_machine gives
@@ -130,6 +137,11 @@ class PSG:
     _env_hold_flag: bool = field(default=False, init=False, repr=False)
     _env_holding: bool = field(default=False, init=False, repr=False)
     _clk_frac: int = field(default=0, init=False, repr=False)
+
+    def attach_cassette(self, cassette: CassettePort) -> None:
+        """Connect the machine's cassette port: register 14 bit 7 then reads
+        the tape input. With no port bit 7 reads 0."""
+        self._cassette = cassette
 
     def attach_mouse(self, device: MouseDevice, port: JoystickPort) -> None:
         """Attach an MSX mouse to the given joystick port.
@@ -173,13 +185,16 @@ class PSG:
             if self.latch == _REG_IO_PORT_A and self._input is not None:
                 # PORT A returns the *selected* joystick port's 6 signals on
                 # bits 0-5 (dir 0-3, triggers 4-5). JOY_SELECT is PSG register
-                # 15 bit 6: 0→Joy1, 1→Joy2. Bits 6-7 are not joystick lines
-                # (pulled high here).
+                # 15 bit 6: 0→Joy1, 1→Joy2. Bit 6 is the keyboard-layout
+                # line (not modeled, reads 1) and bit 7 the cassette input.
+                high = _PORT_A_LAYOUT_BIT
+                if self._cassette is not None:
+                    high |= self._cassette.read_level() << _PORT_A_TAPE_SHIFT
                 joy_select = JoystickPort((self.regs[15] >> 6) & 1)
                 if self._mouse is not None and joy_select == self._mouse.port:
-                    return (self._mouse.device.read() & 0x3F) | 0xC0
+                    return (self._mouse.device.read() & 0x3F) | high
                 sel = self._input.joy1 if joy_select == JoystickPort.JOY1 else self._input.joy2
-                return (sel & 0x3F) | 0xC0
+                return (sel & 0x3F) | high
             return self.regs[self.latch]
         return 0xFF
 

@@ -17,6 +17,7 @@ from msx.boundary import (
     STATUS_NO_DRIVE,
     STATUS_NO_MEDIUM,
     STATUS_NO_PRINTER_PORT,
+    STATUS_NO_TAPE_PORT,
     STATUS_OK,
     STATUS_STATE_REJECTED,
     STOP_BREAKPOINT,
@@ -40,11 +41,13 @@ from msx.boundary import (
     SlotInfo,
     SlotLayout,
     StopInfo,
+    TapeInfo,
     TraceEvent,
     VdpInfo,
     VideoStandard,
     drive_media_id,
 )
+from msx.cassette import CassettePort
 from msx.clock import CoreClock
 from msx.cpu.z80 import Z80
 from msx.input import InputFrame, InputLines
@@ -100,6 +103,8 @@ class Machine:
     kanji: KanjiRom | None = field(default=None, repr=False)
     ppi: PPI | None = field(default=None, repr=False)
     printer: PrinterPort | None = field(default=None, repr=False)
+    # The cassette port's tape deck, or None when the machine has no port.
+    cassette: CassettePort | None = field(default=None, repr=False)
     rtc: "RTC | None" = field(default=None, repr=False)
     input: InputLines = field(default_factory=InputLines)
     # Per-frame audio mix, produced by run_frame() and read with take_audio().
@@ -412,6 +417,53 @@ class Machine:
         if self.printer is None:
             return b""
         return self.printer.drain()
+
+    def mount_tape(self, edges: bytes) -> int:
+        """Mount a copy of the edge list `edges` at position 0. Returns
+        STATUS_BAD_IMAGE, keeping the mounted tape, when the list is not
+        valid, and STATUS_NO_TAPE_PORT on a machine with no cassette port.
+        The motor does not change."""
+        if self.cassette is None:
+            return self._fail(STATUS_NO_TAPE_PORT, "this machine has no cassette port")
+        error = self.cassette.mount(edges)
+        if error is not None:
+            return self._fail(STATUS_BAD_IMAGE, error)
+        self._error_text = b""
+        return STATUS_OK
+
+    def eject_tape(self) -> int:
+        """Empty the deck; STATUS_OK also when it is empty."""
+        if self.cassette is None:
+            return self._fail(STATUS_NO_TAPE_PORT, "this machine has no cassette port")
+        self.cassette.eject()
+        self._error_text = b""
+        return STATUS_OK
+
+    def seek_tape(self, position: int) -> int:
+        """Set the tape position in T-states, 0 to the tape length."""
+        cassette = self.cassette
+        if cassette is None:
+            return self._fail(STATUS_NO_TAPE_PORT, "this machine has no cassette port")
+        if not cassette.mounted:
+            return self._fail(STATUS_NO_MEDIUM, "no tape is mounted")
+        if not cassette.seek(position):
+            return self._fail(
+                STATUS_BAD_ARGUMENT,
+                f"tape position {position} is outside 0-{cassette.length}")
+        self._error_text = b""
+        return STATUS_OK
+
+    def tape_info(self) -> TapeInfo:
+        """The deck state; all 0 on a machine with no cassette port."""
+        cassette = self.cassette
+        if cassette is None:
+            return TapeInfo()
+        return TapeInfo(
+            mounted=1 if cassette.mounted else 0,
+            motor=1 if cassette.motor else 0,
+            position=cassette.position(),
+            length=cassette.length,
+        )
 
     def _enter_break(self, reason: int) -> None:
         """Record a stop (`reason` is a STOP_* value) at the current PC and
@@ -1081,7 +1133,7 @@ class Machine:
         self, vdp9938: V9938 | None, first_line: int, end_line: int, total: int
     ) -> int:
         """Run scanlines [first_line, end_line) with the loop arm this mode
-        needs (break conditions / hot / TRACE_DEBUG); return the running T-state
+        needs (break conditions / hot / tape-exact / TRACE_DEBUG); return the running T-state
         total, measured from the start of the frame.
 
         PORT-NOTE: the arms take `self` and `vdp9938` -- which aliases
@@ -1103,8 +1155,18 @@ class Machine:
         if self._break_conditions_active():
             return self._run_lines_debug(vdp9938, first_line, end_line, total)
         if not self._trace.kinds & TRACE_DEBUG:
+            if self._needs_exact_clock():
+                return self._run_lines_exact(vdp9938, first_line, end_line, total)
             return self._run_lines_fast(vdp9938, first_line, end_line, total)
         return self._run_lines_traced(vdp9938, first_line, end_line, total)
+
+    def _needs_exact_clock(self) -> bool:
+        """Whether the clock must count per instruction. True while a tape is
+        mounted, so a read of the tape input sees the T-state of its instruction
+        (io-cassette). Chosen by "mounted", not "motor on": a mount happens
+        only between frames, so the arm cannot change inside a call however
+        the host breaks the frame (add-cassette-playback design D4)."""
+        return self.cassette is not None and self.cassette.mounted
 
     def _run_lines_debug(
         self, vdp9938: V9938 | None, first_line: int, end_line: int, total: int
@@ -1121,6 +1183,9 @@ class Machine:
         # cycle_count aggregation into a per-line local flushed once a scanline.
         post_checks = self._post_step_checks_armed()
         step_one = self._step_one
+        # While a tape is mounted the clock counts per instruction, as in
+        # _run_lines_exact, so a break does not change what a read sees.
+        exact = self._needs_exact_clock()
         # Either chip; hot-loop local for the per-instruction .irq read. When
         # vdp9938 is not None it is this same object, passed only to gate the
         # V9938 per-scanline hooks.
@@ -1144,7 +1209,10 @@ class Machine:
                 cpu.int_pending = vdp.irq
                 n = cpu_step()
                 total += n
-                line_cycles += n
+                if exact:
+                    clock.cycle += n
+                else:
+                    line_cycles += n
                 if vdp9938 is not None:
                     # Full tick() (command-timer decrement + _line_cycle) only
                     # while a command is actually running -- see _run_lines_fast's
@@ -1226,7 +1294,8 @@ class Machine:
                     # (openspec cpu-z80 "Batched JR-to-self execution is
                     # externally transparent").
                     # PORT-NOTE: this condition is written out here, in the
-                    #   TMS9918A branch below and (negated) in Z80.step().
+                    #   TMS9918A branch below, in _run_lines_exact and
+                    #   (negated) in Z80.step().
                     # Rust equivalent: one #[inline] fn can_batch_idle(&self)
                     #   on Z80 (idle_hint && !nmi_pending && !(int_pending &&
                     #   iff1 && !ei_pending)), plus `&& !cmd_active` here.
@@ -1289,6 +1358,49 @@ class Machine:
                     total += n
                     line_cycles += n
                 clock.cycle += line_cycles
+        return total
+
+    def _run_lines_exact(
+        self, vdp9938: V9938 | None, first_line: int, end_line: int, total: int
+    ) -> int:
+        """Scanline loop while a tape is mounted (no break conditions,
+        TRACE_DEBUG off): as _run_lines_fast, but the clock counts each
+        instruction before the next one starts, so a device reads the T-state
+        of the instruction that accesses it. The HALT and JR $ batching of
+        _run_lines_fast stays: a batched idle instruction does no port I/O."""
+        cpu = self.cpu
+        cpu_step = cpu.step
+        cpf = self.cycles_per_frame
+        lpf = self.lines_per_frame
+        clock = self.clock
+        vdp = self.vdp
+        for line in range(first_line, end_line):
+            line_end = (line + 1) * cpf // lpf
+            while total < line_end:
+                cpu.int_pending = vdp.irq
+                # The batching condition of _run_lines_fast's V9938 and
+                # TMS9918A branches and (negated) of Z80.step() (KEEP IN SYNC).
+                would_accept_interrupt = (
+                    cpu.int_pending and cpu.iff1 and not cpu.ei_pending
+                )
+                if (
+                    cpu.idle_hint
+                    and not cpu.nmi_pending
+                    and not would_accept_interrupt
+                    and not (vdp9938 is not None and vdp9938._cmd_active)
+                ):
+                    n = cpu.step_idle_batch(line_end - total)
+                else:
+                    n = cpu_step()
+                total += n
+                clock.cycle += n
+                if vdp9938 is not None:
+                    if vdp9938._cmd_active:
+                        vdp9938.tick(n)
+                    else:
+                        vdp9938._line_cycle += n
+            if vdp9938 is not None:
+                vdp9938.begin_scanline(line)
         return total
 
     def _run_lines_traced(

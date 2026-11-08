@@ -396,22 +396,22 @@ def test_msx2_v9938_state_is_one_object(saves_dir):
         assert key not in data["vdp"]
 
 
-def test_new_save_uses_format_version_22(saves_dir):
+def test_new_save_uses_format_version_23(saves_dir):
     # machine-state "New save uses the current format version".
     machine = make_machine_msx2(_ROM, _EXTROM)
     state_path = save_state(machine, _RGB_MSX2, "test")
 
-    assert _load_state_json(state_path)["format_version"] == 22
+    assert _load_state_json(state_path)["format_version"] == 23
 
 
-def test_format_version_21_rejected(saves_dir):
+def test_format_version_22_rejected(saves_dir):
     # machine-state "An earlier format version is rejected".
     machine = make_machine_msx2(_ROM, _EXTROM)
     state_path = save_state(machine, _RGB_MSX2, "test")
 
-    _rewrite_state_version(state_path, 21)
+    _rewrite_state_version(state_path, 22)
 
-    with pytest.raises(ValueError, match="version 21"):
+    with pytest.raises(ValueError, match="version 22"):
         load_state_file(machine, state_path)
 
 

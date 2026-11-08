@@ -4,10 +4,13 @@
 ``tests/vectors/golden_state.json`` lists fixed runs ("cases"): a machine, an
 optional slot 1 cartridge (a path and its SHA-256), the cartridge mapper, an
 input script of key matrix cells held from a first to a last frame (frames
-count from 1), and checkpoint frames. For each checkpoint N the file records
-the SHA-256 of each top-level section of ``save_state()`` after frame N, as
-RFC 8785 canonical JSON, the SHA-256 of the audio of frames 1 to N, and the
-SHA-256 of the video pixels of frame N. Only checkpoint frames are rendered.
+count from 1), and checkpoint frames. For each checkpoint N the file can
+record the SHA-256 of each top-level section of ``save_state()`` after frame
+N, as RFC 8785 canonical JSON, the SHA-256 of the audio of frames 1 to N, and
+the SHA-256 of the video pixels of frame N. Only checkpoint frames are
+rendered. A checkpoint with no hashes gives its frame only, and is not
+compared. The hashes are recorded with ``--write`` before the native core
+port starts, after the save-state layout is settled.
 
 The hashes record what this core does, not what a real MSX does: a mismatch
 is a change in behavior, or a difference between two implementations of the
@@ -23,8 +26,9 @@ Usage:
     venvs/py-msx-emulator/bin/python tools/golden_state.py           # check
     venvs/py-msx-emulator/bin/python tools/golden_state.py --write   # record
 
-The exit status is 1 when a case differs, else 0. A skipped case does not
-fail the check, and ``--write`` keeps its old hashes.
+The exit status is 1 when a case differs, else 0. A skipped case and a case
+with no recorded hashes do not fail the check, and ``--write`` keeps the old
+hashes of a skipped case.
 """
 
 from __future__ import annotations
@@ -179,13 +183,24 @@ def run_case(
     return result
 
 
+def has_recorded_hashes(case: dict[str, Any]) -> bool:
+    """Whether a checkpoint of the case gives its hashes."""
+    for point in case["checkpoints"]:
+        if "state" in point:
+            return True
+    return False
+
+
 def differences(case: dict[str, Any], actual: list[Checkpoint]) -> list[str]:
     """One line for each hash of `actual` that differs from the case's
-    record, naming the case, the frame and the hash."""
+    record, naming the case, the frame and the hash. A checkpoint with no
+    recorded hashes is not compared."""
     lines: list[str] = []
     recorded = {int(point["frame"]): point for point in case["checkpoints"]}
     for point in actual:
         expected = recorded[point.frame]
+        if "state" not in expected:
+            continue
         where = f"{case['id']} frame {point.frame}"
         for name in sorted(set(expected["state"]) | set(point.state)):
             if expected["state"].get(name) != point.state.get(name):
@@ -208,6 +223,9 @@ def main(argv: list[str] | None = None) -> int:
     data = read_vectors(args.vectors)
     failed = False
     for case in data["cases"]:
+        if not args.write and not has_recorded_hashes(case):
+            print(f"{case['id']}: no recorded hashes")
+            continue
         try:
             actual = run_case(case)
         except MissingRom as exc:

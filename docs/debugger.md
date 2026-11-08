@@ -2,7 +2,7 @@
 
 The emulator includes an interactive debug REPL that you can open at any point during a run. It gives Z80 and VDP inspection, breakpoints, watchpoints, step execution, and tracing.
 
-Commands with the **⚙V9938** mark need an MSX2 / V9938 machine. On MSX1 / TMS9918A, they print a clear error message and do not raise an exception.
+Commands with the **⚙V9938** mark need an MSX2 / V9938 machine. On MSX1 / TMS9918A, they print an error message and do not raise an exception.
 
 Source: `host/debugger/prompt.py` (REPL), `msx/vdp/v9938.py` / `msx/vdp/v9938_renderer.py` (VDP), `host/trace.py` (VDP and mapper trace text).
 
@@ -42,7 +42,7 @@ python . path/to/game.rom --machine cbios_msx2_jp --break-point C000,D000
 python . path/to/game.rom --machine cbios_msx1_jp --watch-point ca4a,w,fedc,rw
 ```
 
-At startup, the emulator writes the active breakpoints and watchpoints to stderr.
+At startup, the emulator writes the active breakpoints and watchpoints to stdout, as `break   : C000h, D000h` and `watch   : CA4Ah[w], FEDCh[rw]` lines.
 
 ---
 
@@ -58,7 +58,7 @@ At startup, the emulator writes the active breakpoints and watchpoints to stderr
 
 **`q`**: exit the emulator (the process exits with code 0).
 
-**`reset`**: full power-on reset of the CPU, PSG, VDP, PPI, the primary/secondary slot registers, every cartridge mapper, and, when present, the SCC, FM-PAC, FDC, Kanji ROM, and RAM mapper. The memory and VRAM contents stay the same. Emulation then resumes immediately, as with `c`, because there is nothing to examine at the PC before the reset.
+**`reset`**: full power-on reset of the CPU, PSG, VDP, PPI, the primary/secondary slot registers, every cartridge mapper, and, when present, the SCC, FM-PAC, FDC, Kanji ROM, printer port, and RAM mapper. The memory and VRAM contents stay the same. Emulation then resumes immediately, as with `c`, because there is nothing to examine at the PC before the reset.
 
 **`s [N]`**: step `N` Z80 instructions (decimal, default 1). After the step, the debugger prints a compact register summary and the next instruction:
 
@@ -71,7 +71,7 @@ Each step is one instruction of the stopped frame, so the prompt's `cyc` rises b
 
 **`g ADDR`**: resume emulation and run until PC reaches `ADDR` (hex). This is a one-shot temporary breakpoint. The debugger clears it after the hit. It does not use a `ba` slot and does not change the permanent breakpoints.
 
-**`gf N`**: resume emulation and run until the frame counter (the `frm=` value in the prompt) reaches the decimal frame number `N`. This is a one-shot check. The debugger checks it once per rendered frame, not per instruction. Thus it does not make execution slower, as an active `ba`/`g` breakpoint does. `N` must be greater than the current frame count. If it is not, `gf` prints an error and does not resume.
+**`gf N`**: resume emulation and run until the frame counter (the `frm=` value in the prompt) reaches the decimal frame number `N`. This is a one-shot check. The debugger checks it once per rendered frame, not per instruction. So it does not make execution slower, as an active `ba`/`g` breakpoint does. `N` must be greater than the current frame count. If it is not, `gf` prints an error and does not resume.
 
 **`so`**: step out. Resume until SP goes above its value at the time of the `so` command (i.e. the current routine returns). See _Known limitations_ for edge cases.
 
@@ -91,7 +91,7 @@ Each step is one instruction of the stopped frame, so the prompt's `cyc` rises b
 
 **`bs [LOW HIGH | off]`**: break when SP goes out of valid RAM.
 
-- `bs` (no arguments): enable, with a range that the debugger calculates from the RAM configuration of the machine. MSX1 flat RAM gives a top-of-memory window. MSX2 mapper RAM gives the full address space.
+- `bs` (no arguments): enable, with a range that the debugger calculates from the RAM configuration of the machine. MSX1 flat RAM in slot 3 gives a top-of-memory window. RAM in slot 0 (as on the `hb_10`) gives the page that holds it. MSX2 mapper RAM gives the full address space.
 - `bs LOW HIGH`: enable, with an explicit inclusive hex range.
 - `bs off`: disable.
 
@@ -204,7 +204,7 @@ On TMS9918A: R#0-R#7 in a single row.
   #8=1C9(7,1,1)  #9=1DB(7,3,3)  #A=1B1(6,6,1)  #B=1B4(6,6,4)  ...
 ```
 
-On TMS9918A, which has no programmable palette, it prints a clear error.
+On TMS9918A, which has no programmable palette, it prints an error.
 
 ---
 
@@ -245,16 +245,16 @@ CY=0000025000 FR=000005 PC=5B2A MAP_BANK win=1 03h->05h addr=6001h
 
 ```
   Page  Addr        Prim  Sec  Content                          Bank
-  P0    0000-3FFF   0     -    ROM cbios_main_msx2.rom          -
-  P1    4000-7FFF   1     -    Cartridge (mapped)               w0=b2@04000  w1=b0@00000
-  P2    8000-BFFF   1     -    Cartridge (mapped)               w2=b3@06000  w3=b1@02000
-  P3    C000-FFFF   3     2    RAM (mapper)                     seg=2
+  P0    0000-3FFF   0     -    ROM cbios_main_msx2_jp.rom       -
+  P1    4000-7FFF   1     -    Cartridge Ascii8                 w0=b2@04000  w1=b0@00000
+  P2    8000-BFFF   1     -    Cartridge Ascii8                 w2=b3@06000  w3=b1@02000
+  P3    C000-FFFF   3     2    RAM (mapper:standard)            seg=2
 ```
 
 Values in the Bank column:
 
 - RAM mapper pages: `seg=N`
-- Cartridge mapper pages: what each window of the page maps, worked out as the mapper's reads work it out. A 16 KB window shows `bank N @XXXXX-YYYYY` (ASCII16, R-Type, FM-PAC), and an 8 KB window shows `wW=bN@XXXXX` (ASCII8, Konami, SCC, Game Master 2, Halnote). N is the page the window maps, which can differ from the value the guest wrote when that value is beyond the ROM.
+- Cartridge mapper pages: what each window of the page maps, that is, what a read through the window gets. A 16 KB window shows `bank N @XXXXX-YYYYY` (ASCII16, R-Type, FM-PAC), and an 8 KB window shows `wW=bN@XXXXX` (ASCII8, Konami, SCC, Game Master 2, Halnote). N is the page the window maps, which can differ from the value the guest wrote when that value is beyond the ROM.
 - A window that maps SRAM: `SRAM@XXXX`, the offset in the SRAM, in place of the bank (`bank SRAM@0000`, `w3=SRAM@1000`). Halnote's SRAM at page 0 shows `SRAM@0000-3FFF`, and its sub-mapper adds `sub=…` to page 1.
 - A window past the end of the ROM, which reads 0xFF: `open`.
 - Flat ROM, BIOS, plain RAM: `-`
@@ -262,18 +262,18 @@ Values in the Bank column:
 **`st`**: slot tree. It goes through primary slots 0-3 and shows the full sub-slot structure of expanded slots:
 
 ```
-  Primary 0  ROM cbios_main_msx2.rom  64 KB
-  Primary 1  [cartridge slot]  Cartridge (mapped)  128 KB
-  Primary 2  [cartridge slot]  (empty)
-  Primary 3 [EXPANDED]  secondary-select(raw)=08h
+  Primary 0  ROM cbios_main_msx2_jp.rom  32KB
+  Primary 1  [cartridge slot]  Cartridge Ascii8
+  Primary 2  [cartridge slot]  Cartridge (empty)
+  Primary 3 [EXPANDED]  secondary-select(raw)=A0h
     page-map: P0->3-0  P1->3-0  P2->3-2  P3->3-2
-    3-0  ROM cbios_sub.rom  32 KB
-    3-1  (empty)
-    3-2  RAM (mapper)  128 KB
-    3-3  (empty)
+    3-0  ROM cbios_sub.rom  16KB
+    3-1  empty
+    3-2  RAM (mapper:standard)  128KB
+    3-3  RAM (mapper:standard)  128KB
 ```
 
-On MSX1 (`sub_slot_enabled = False`), `st` shows slot 3 as a non-expanded primary slot.
+On an MSX1 machine, which has no expanded slot, `st` shows slot 3 as a non-expanded primary slot.
 
 ---
 
@@ -300,6 +300,34 @@ fdd1: ejected
 
 ---
 
+### Cassette tape
+
+**`tape [blocks|load FILE|eject|rewind|seek SECONDS|seek #N]`**: show or change the cassette tape. These commands work on machines with a cassette port, e.g. `hb_10` and `hb_f1xd`.
+
+- With no argument, the command prints the file, the position in seconds with the block at the position, the tape length and the motor state (or `empty`).
+- `blocks` lists the blocks of the file: the number, the type (`binary`, `basic`, `ascii` for a file header, `data` for the other blocks), the file name, the start in seconds and the length in bytes.
+- `load FILE` converts and mounts a `.cas` file at position 0, and prints the conversion warnings. Only CAS is supported. A WAV file is refused with a message to convert it with an external tool. [`tools/wav2cas.py`](../tools/README_tools.md#wav2caspy) does this conversion.
+- `eject` removes the tape. `rewind` sets the position to 0.
+- `seek SECONDS` sets the position in seconds. `seek #N` sets it to the start of block N.
+
+The motor is not a command: only the guest starts and stops it (for example `CLOAD` or `BLOAD"CAS:"`). For errors (missing or invalid file, a position outside the tape, no tape, no cassette port), the command reports the error and does not change the tape. On a machine with no cassette port, `tape load` prints `this machine has no cassette port`.
+
+```
+(msx-dbg cyc=720000 frm=12) tape load game.cas
+tape: mounted game.cas (2 blocks)
+(msx-dbg cyc=720000 frm=12) tape
+tape: game.cas  0.00 s (block 0) / 48.15 s  motor off
+(msx-dbg cyc=720000 frm=12) tape blocks
+  #0   binary  GAME        0.00 s  16 bytes
+  #1   data                8.81 s  4000 bytes
+(msx-dbg cyc=720000 frm=12) tape seek #1
+tape: game.cas  8.81 s (block 1) / 48.15 s  motor off
+(msx-dbg cyc=720000 frm=12) tape seek 99
+tape: tape position 354374955 is outside 0-172343159
+```
+
+---
+
 ### Screenshot
 
 **`ss`**: render the current VDP state and save it as `saves/screenshots/screenshot_YYYYMMDD_HHMMSS.png`. The F10 hotkey uses the same location:
@@ -315,14 +343,17 @@ screenshot saved: saves/screenshots/screenshot_20260101_120000.png
 
 ### State save / load
 
-**`sv [TITLE]`**: save the full machine state (CPU, VDP, mappers, RAM) to `saves/states/<title>_YYYYMMDD_HHMMSS.state`. The socket RPC `state.save` method uses the same format and location (see [`docs/socket-rpc-mcp.md`](socket-rpc-mcp.md)). With no argument, `sv` uses a default title. An argument gives the title, not a file path. The REPL stays open.
+**`sv [TITLE]`**: save the full machine state to `saves/states/<title>_YYYYMMDD_HHMMSS.state`. The socket RPC `state.save` method uses the same format and location (see [`docs/socket-rpc-mcp.md`](socket-rpc-mcp.md)). With no argument, `sv` uses a default title. An argument gives the title, not a file path. The REPL stays open.
 
-**`ld FILE`**: restore the machine state from a `.state` file that you saved before. The REPL stays open and does not resume automatically. You can thus examine the loaded state, or advance it precisely with `s` or `gf`. In these cases, `ld` prints an error, does not raise an exception, and changes nothing:
+`sv` also writes a PNG thumbnail with the same name, and points `saves/states/latest.state` and `latest.png` at the new files. Before it saves, `sv` writes the changes on a mounted disk back to its `.dsk` file, so the state and the disk file match.
+
+**`ld FILE`**: restore the machine state from a `.state` file that you saved before. The REPL stays open and does not resume automatically. So you can examine the loaded state, or advance it precisely with `s` or `gf`. In these cases, `ld` prints an error, does not raise an exception, and changes nothing:
 
 - The file is missing.
 - The snapshot has an incompatible `format_version`.
 - The snapshot comes from a different machine configuration (machine, extensions, cartridge ROMs).
 - A drive does not hold the disk that it held at the save. `ld` does not swap disks, so swap them with `fdd1`/`fdd2` first.
+- The deck does not hold the tape that it held at the save. `ld` does not change the tape, so mount it with `tape load` first.
 
 ```
 (msx-dbg cyc=720000 frm=1999) sv before-glitch
@@ -332,6 +363,7 @@ state saved: saves/states/before-glitch_20260101_120000.state
 
 ... (reopens once frame 2080 is reached) ...
 (msx-dbg cyc=... frm=2080) ld saves/states/before-glitch_20260101_120000.state
+state loaded: saves/states/before-glitch_20260101_120000.state
   Loaded state from saves/states/before-glitch_20260101_120000.state
 (msx-dbg cyc=720000 frm=1999) gf 2001
   Running to frame 2001 ...
@@ -375,7 +407,7 @@ python . path/to/game.rom --machine cbios_msx2_jp --debug
 python . path/to/game.rom --machine cbios_msx2_jp --debug --log debug.log
 ```
 
-`--debug` writes a diagnostic log to stderr. With `--log FILE`, the emulator also appends the same lines to `FILE`. `--log` needs `--debug`. Each line starts with a category:
+`--debug` writes a diagnostic log to stderr. With `--log FILE`, the emulator also appends the same lines to `FILE`. `--log` needs `--debug`: without `--debug`, the emulator ignores `--log` and writes no file. Each line starts with a category:
 
 | Category | Line |
 | --- | --- |
@@ -436,7 +468,7 @@ AF=0100  BC=0010  DE=0000  HL=C100  IX=F380  IY=FC40  SP=F3E0  PC=C080
 
 ## Known limitations
 
-**Deferred renderer.** The CPU runs a full frame, and VDP commands write into VRAM instantly. The renderer then runs once per frame, at the start of vertical blanking. On the V9938, it draws mid-frame register and palette changes in bands, at the line where each change took effect (the TMS9918A applies the last register values to the whole frame). VRAM writes have no such record. Thus the emulator does not faithfully reproduce VRAM updates that follow the raster within a frame (beam-raced blits, double-buffered title screens). This limit comes from the basic architecture, and a renderer fix cannot remove it.
+**Deferred renderer.** The CPU runs a full frame, and VDP commands write into VRAM instantly. The renderer then runs once per frame, at the start of vertical blanking. On the V9938, it draws mid-frame register and palette changes in bands, at the line where each change took effect (the TMS9918A applies the last register values to the whole frame). VRAM writes have no such record. So the emulator does not faithfully reproduce VRAM updates that follow the raster within a frame (beam-raced blits, double-buffered title screens). This limit comes from the basic architecture, and a renderer fix cannot remove it.
 
 **Command timing.** An approximate cycle budget controls the completion of VDP commands (S#2 CE bit). There is no cycle-accurate model. Software that busy-waits on CE works, but the exact command durations differ from hardware.
 

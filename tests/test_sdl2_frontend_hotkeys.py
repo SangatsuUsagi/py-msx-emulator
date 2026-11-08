@@ -26,7 +26,7 @@ from frontend.sdl2_keyboard import KEY_MATRIX_INT, SdlKeyboard
 from host.input_state import InputState
 from host.key_names import KEY_NAME_TO_CELL
 from host.media import DiskFiles
-from msx.boundary import FrameOutput, KeyboardLayout
+from msx.boundary import FrameOutput, KeyboardLayout, TapeInfo
 from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.interface import SonyPhilipsInterface
 from msx.fdc.wd2793 import WD2793
@@ -1304,3 +1304,76 @@ def test_built_in_table_with_no_config() -> None:
         (f11, False): "pause", (f11, True): "fullscreen",
         (f12, False): "mute", (f12, True): "reset",
     }
+
+
+# ---------------------------------------------------------------------------
+# Tape-fast (app-sdl2-video "Tape-fast runs as fast-forward")
+# ---------------------------------------------------------------------------
+
+_TAPE_ON = TapeInfo(mounted=1, motor=1, position=0, length=10_000_000)
+_TAPE_STOPPED = TapeInfo(mounted=1, motor=0, position=0, length=10_000_000)
+
+
+class _TapeLoopMachine(_LoopMachine):
+    def __init__(self) -> None:
+        super().__init__()
+        self.tape = _TAPE_STOPPED
+        self.tape_reads = 0
+
+    def tape_info(self) -> TapeInfo:
+        self.tape_reads += 1
+        return self.tape
+
+
+def _tape_loop(monkeypatch: pytest.MonkeyPatch, tape_fast: bool) -> _Loop:
+    loop = _Loop(monkeypatch)
+    loop.machine = _TapeLoopMachine()
+    loop.hotkeys.tape_fast = tape_fast
+    return loop
+
+
+def test_pacing_follows_the_motor(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop = _tape_loop(monkeypatch, tape_fast=True)
+    machine = loop.machine
+    assert isinstance(machine, _TapeLoopMachine)
+    for _ in range(3):
+        loop.step()
+    assert (loop.timer.ticks, loop.timer.unpaced) == (3, 0)
+    machine.tape = _TAPE_ON
+    for _ in range(30):
+        loop.step()
+    assert (loop.timer.ticks, loop.timer.unpaced) == (3, 30)
+    assert loop.hotkeys.tape_running
+    machine.tape = _TAPE_STOPPED
+    for _ in range(2):
+        loop.step()
+    assert (loop.timer.ticks, loop.timer.unpaced) == (5, 30)
+    assert not loop.hotkeys.tape_running
+    assert machine.tape_reads == 35  # once per frame
+    # The fast-forward audio rules: the 30 motor frames queue nothing.
+    assert len(loop.sdl.queued) == 5
+
+
+def test_tape_fast_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop = _tape_loop(monkeypatch, tape_fast=False)
+    machine = loop.machine
+    assert isinstance(machine, _TapeLoopMachine)
+    machine.tape = _TAPE_ON
+    loop.step()
+    assert (loop.timer.ticks, loop.timer.unpaced) == (1, 0)
+    loop.hotkeys.ff_locked = True
+    loop.step()
+    assert (loop.timer.ticks, loop.timer.unpaced) == (1, 1)
+
+
+def test_title_shows_tape_fast() -> None:
+    machine = _TapeLoopMachine()
+    machine.tape = _TAPE_ON
+    hotkeys = _HotkeyState(bindings={}, disks=_DiskList([]), tape_fast=True)
+    hotkeys.update_tape(machine)
+    assert _window_title("Game", 600.0, machine, hotkeys, False) == (
+        "py-msx-emulator — Game [600 fps] [TAPE]"
+    )
+    machine.tape = _TAPE_STOPPED
+    hotkeys.update_tape(machine)
+    assert "[TAPE]" not in _window_title("Game", 60.0, machine, hotkeys, False)

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import ClassVar, TypedDict
 
+from msx.cassette import CassettePort
 from msx.clock import CoreClock
 from msx.dac import EventDac
 from msx.input import InputLines
@@ -14,6 +15,10 @@ from msx.memory import Memory
 # to a DACSound8U (127/128 of full scale), and its machine configs give the PPI
 # sound volume 16000 against the PSG's 21000. 12287 * 127/128 * 16000/21000.
 KEY_CLICK_LEVEL: int = 9288
+# Control word bit 3: 1 sets the Port C upper half (bits 7-4) to input.
+_CTRL_PORT_C_UPPER_INPUT = 0x08
+# Port C bit 4: the tape motor, 0 = on.
+_PORT_C_MOTOR_OFF = 0x10
 
 
 class PpiState(TypedDict):
@@ -52,6 +57,9 @@ class PPI:
     # The emulated time (msx/clock.py) that timestamps the clicks;
     # build_machine gives the machine's record.
     _clock: CoreClock = field(default_factory=CoreClock, repr=False)
+    # The tape deck whose motor Port C bit 4 drives (0 = on), or None when
+    # the machine has no cassette port.
+    cassette: CassettePort | None = field(default=None, repr=False)
 
     @property
     def control(self) -> int:
@@ -75,6 +83,9 @@ class PPI:
             # output latches to 0; this follows openMSX's I8255 core (shared
             # across its MSX/SC-3000/SVI machines) rather than clearing them.
             self._control = value
+            # The mode-set word drives the stored latch again (openMSX
+            # I8255::writeControlPort calls outputPortC).
+            self._drive_motor()
         else:
             # Port C bit set/reset: bits 3-1 select the bit index, bit 0 the value.
             bit = (value >> 1) & 0x07
@@ -88,11 +99,22 @@ class PPI:
         if (self._port_c ^ value) & 0x80:
             self.click.write(self._clock.cycle, KEY_CLICK_LEVEL if value & 0x80 else 0)
         self._port_c = value
+        self._drive_motor()
+
+    def _drive_motor(self) -> None:
+        """Drive the tape motor from Port C bit 4, only while the control
+        word sets the Port C upper half to output (bit 3 = 0), as openMSX's
+        I8255::outputPortC does. In input mode the motor keeps its state.
+        The key click and the row select do not follow this rule (a known
+        difference, add-cassette-playback design Non-Goals)."""
+        if self.cassette is not None and not self._control & _CTRL_PORT_C_UPPER_INPUT:
+            self.cassette.set_motor(not self._port_c & _PORT_C_MOTOR_OFF)
 
     def reset(self) -> None:
         """Restore the Intel 8255 post-reset defaults: control word back to
         _POST_RESET_CONTROL and Port C's output latches cleared, which also
-        silences the key click (openMSX KeyClick::reset)."""
+        silences the key click (openMSX KeyClick::reset). The control word
+        sets Port C to input, so the tape motor keeps its state."""
         self._control = self._POST_RESET_CONTROL
         self._port_c = 0
         self.click.reset(0)

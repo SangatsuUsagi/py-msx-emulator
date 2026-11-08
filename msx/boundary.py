@@ -212,6 +212,8 @@ STATUS_BAD_ARGUMENT = 6     # a break setter: a value outside its range or too
                             # read_memory, read_vram: a length (b"");
                             # slot_info: a slot, sub-slot or page
 STATUS_NO_PRINTER_PORT = 7  # attach_printer: the machine has no printer port
+STATUS_NO_TAPE_PORT = 8     # mount_tape, eject_tape, seek_tape: the machine has
+                            # no cassette port
 
 # The bytes the printer buffer holds between two drain_printer() calls.
 PRINTER_BUFFER_SIZE = 4096
@@ -246,6 +248,10 @@ TRACE_EVENT_CPU_HISTORY = 9   # a = PC, b = opcode: one entry of the last 64 ins
 TRACE_EVENT_HANG_PC_LOOP = 10  # a = PC repeated 1000 times (msx/machine.py
                                # HANG_PC_REPEAT_THRESHOLD)
 TRACE_EVENT_HANG_HALT_DI = 11  # a = PC of a HALT with interrupts off
+TRACE_EVENT_TAPE_MOTOR = 12  # a = new motor state (1 on), b = the low 32 bits
+                             # of the tape position as a signed int32 (two's
+                             # complement), c = the high 32 bits, d = 1 when a
+                             # tape is mounted
 
 # Instructions the TRACE_DEBUG history keeps (TRACE_EVENT_CPU_HISTORY).
 TRACE_HISTORY_SIZE = 64
@@ -275,6 +281,19 @@ class TraceEvent:
     b: int = 0
     c: int = 0
     d: int = 0
+
+
+@dataclass(frozen=True)
+class TapeInfo:
+    """The cassette deck, as the core API's tape query returns it
+    (msx/core_api.py): 0 or 1 for `mounted` and `motor`, and the position
+    and the length in T-states (0 with no tape). All 0 on a machine with no
+    cassette port."""
+
+    mounted: int = 0
+    motor: int = 0
+    position: int = 0
+    length: int = 0
 
 
 @dataclass(frozen=True)

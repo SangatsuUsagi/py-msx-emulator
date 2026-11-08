@@ -432,6 +432,70 @@ The outgoing image is written back to its file first when it holds unsaved write
 
 ---
 
+### `tape.insert`
+
+**Params:** `{ "path": "tapes/game.cas" }`  
+**Result:** `{ "mounted": true, "blocks": 2 }`  
+Converts the CAS file and mounts it at position 0. Only CAS is supported. A WAV
+file, a missing file, a file with no block header and a machine with no
+cassette port return `-32602` and keep the mounted tape. No pause is needed for
+any `tape.*` method.
+
+---
+
+### `tape.eject`
+
+**Params:** none  
+**Result:** `{ "mounted": false }`
+
+---
+
+### `tape.rewind`
+
+**Params:** none  
+**Result:** the `tape.status` result, at position 0
+
+---
+
+### `tape.seek`
+
+**Params:** `{ "seconds": 8.5 }` or `{ "block": 1 }`, exactly one  
+**Result:** the `tape.status` result  
+A position outside the tape, a block that does not exist or both keys return
+`-32602` and keep the position.
+
+---
+
+### `tape.status`
+
+**Params:** none  
+**Result:**
+```json
+{ "mounted": true, "path": "tapes/game.cas", "motor": false,
+  "position": 31547723, "length": 172343159,
+  "position_seconds": 8.81333325883597, "length_seconds": 48.14666640592589,
+  "block": 1 }
+```
+`position` and `length` are T-states of the 3.579545 MHz clock. With no tape,
+`path` and `block` are `null` and the numbers are 0. Only the guest drives the
+motor.
+
+---
+
+### `tape.blocks`
+
+**Params:** none  
+**Result:**
+```json
+{ "blocks": [
+  { "number": 0, "type": "binary", "name": "GAME", "start": 0,
+    "start_seconds": 0.0, "length": 16 },
+  { "number": 1, "type": "data", "name": null, "start": 31547723,
+    "start_seconds": 8.81333325883597, "length": 4000 } ] }
+```
+
+---
+
 ## Server-Push Notifications
 
 The server sends unsolicited frames (no `id` field) when the emulator pauses:
@@ -1062,6 +1126,18 @@ def fdd_swap(drive: int, path: str = "") -> str:
     return f"Drive {drive}: unmounted."
 
 
+# ── Cassette tape ────────────────────────────────────────────────────────────
+
+@mcp.tool()
+def tape_insert(path: str) -> str:
+    """Convert a CAS tape image and mount it at position 0."""
+    r = _rpc("tape.insert", {"path": path})
+    return f"Tape: mounted {path} ({r['blocks']} blocks)"
+
+# tape_eject, tape_rewind, tape_seek(seconds=None, block=None), tape_status and
+# tape_blocks wrap the other tape.* methods the same way.
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -1099,6 +1175,12 @@ if __name__ == "__main__":
 | `state_save` | `state.save` | No |
 | `state_load` | `state.load` | No |
 | `fdd_swap` | `fdd.swap` | No |
+| `tape_insert` | `tape.insert` | No |
+| `tape_eject` | `tape.eject` | No |
+| `tape_rewind` | `tape.rewind` | No |
+| `tape_seek` | `tape.seek` | No |
+| `tape_status` | `tape.status` | No |
+| `tape_blocks` | `tape.blocks` | No |
 
 ---
 

@@ -61,6 +61,7 @@ from host.input_state import InputState
 from host.key_names import JOY_FUNCTION_BITS, KEY_NAME_TO_CELL
 from host.media import DiskFiles
 from host.screenshot import encode_rgb24_png, scale_rgb24
+from host.tape import TapeDeck, TapeError, seconds
 from host.watch import watch_kind_exact
 from msx.boundary import (
     STATUS_OK,
@@ -185,8 +186,12 @@ class DebugServer:
         sock_path: str = DEFAULT_SOCKET_PATH,
         pause_state: PauseState | None = None,
         disk_files: DiskFiles | None = None,
+        tape_deck: TapeDeck | None = None,
     ) -> None:
         self._machine = machine
+        # The mounted tape file and its blocks, shared with the debugger of
+        # the same run (host/tape.py).
+        self._tape_deck = tape_deck if tape_deck is not None else TapeDeck(machine)
         # The file of each drive's disk, shared with the frontend and the
         # debugger of the same run (host/media.py DiskFiles).
         self._disk_files = disk_files if disk_files is not None else DiskFiles()
@@ -237,6 +242,11 @@ class DebugServer:
     def disk_files(self) -> DiskFiles:
         """The file of each drive's disk."""
         return self._disk_files
+
+    @property
+    def tape_deck(self) -> TapeDeck:
+        """The mounted tape file and its blocks."""
+        return self._tape_deck
 
     def apply_injected_input(self) -> None:
         """Hand the builder's current input to the machine at once, so the
@@ -585,6 +595,12 @@ class DebugServer:
             "state.save": _h_state_save,
             "state.load": _h_state_load,
             "fdd.swap": _h_fdd_swap,
+            "tape.insert": _h_tape_insert,
+            "tape.eject": _h_tape_eject,
+            "tape.rewind": _h_tape_rewind,
+            "tape.seek": _h_tape_seek,
+            "tape.status": _h_tape_status,
+            "tape.blocks": _h_tape_blocks,
         })
 
 
@@ -853,6 +869,79 @@ def _h_fdd_swap(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
         return {"drive": drive, "path": str(path), "mounted": True}
     swap_disk(server.machine, server.disk_files, drive_idx, None)
     return {"drive": drive, "path": None, "mounted": False}
+
+
+# ── Tape ─────────────────────────────────────────────────────────────────────
+# None of these needs a pause: the host changes the deck between frames, and
+# a TapeError changes nothing.
+
+def _tape_call(action: Callable[[], object]) -> None:
+    try:
+        action()
+    except TapeError as exc:
+        raise RpcError(ERR_INVALID_PARAMS, str(exc)) from None
+
+
+def _h_tape_insert(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
+    path = params.get("path")
+    if not isinstance(path, str) or not path:
+        raise RpcError(ERR_INVALID_PARAMS, "path is required")
+    deck = server.tape_deck
+    _tape_call(lambda: deck.load(Path(path).expanduser()))
+    return {"mounted": True, "blocks": len(deck.blocks)}
+
+
+def _h_tape_eject(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
+    _tape_call(server.tape_deck.eject)
+    return {"mounted": False}
+
+
+def _h_tape_rewind(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
+    _tape_call(server.tape_deck.rewind)
+    return _h_tape_status(server, params)
+
+
+def _h_tape_seek(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
+    deck = server.tape_deck
+    has_seconds = "seconds" in params
+    has_block = "block" in params
+    if has_seconds == has_block:
+        raise RpcError(ERR_INVALID_PARAMS, "give exactly one of seconds and block")
+    if has_block:
+        block = params["block"]
+        if isinstance(block, bool) or not isinstance(block, int):
+            raise RpcError(ERR_INVALID_PARAMS, "block must be an integer")
+        _tape_call(lambda: deck.seek_block(block))
+    else:
+        value = params["seconds"]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+            raise RpcError(ERR_INVALID_PARAMS, "seconds must be a number of 0 or more")
+        _tape_call(lambda: deck.seek_seconds(value))
+    return _h_tape_status(server, params)
+
+
+def _h_tape_status(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
+    status = server.tape_deck.status()
+    return {
+        "mounted": status.mounted,
+        "path": str(status.path) if status.path is not None else None,
+        "motor": status.motor,
+        "position": status.position,
+        "length": status.length,
+        "position_seconds": status.position_seconds,
+        "length_seconds": status.length_seconds,
+        "block": status.block,
+    }
+
+
+def _h_tape_blocks(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
+    deck = server.tape_deck
+    blocks = deck.blocks if deck.status().mounted else ()
+    return {"blocks": [
+        {"number": b.number, "type": b.type, "name": b.name, "start": b.start,
+         "start_seconds": seconds(b.start), "length": b.length}
+        for b in blocks
+    ]}
 
 
 # ---------------------------------------------------------------------------
