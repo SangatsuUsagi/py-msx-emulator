@@ -1,8 +1,8 @@
 # Tools
 
 Standalone command-line utilities for use with the emulator: disk image
-management, CPU instruction test runners, and the agent-facing RPC/MCP
-layer. None of these tools run in the
+management, tape WAV converters, CPU instruction test runners, and the
+agent-facing RPC/MCP layer. None of these tools run in the
 emulator process. Each one is a separate `python tools/<script>.py` command.
 
 | Script / section | Purpose |
@@ -10,6 +10,8 @@ emulator process. Each one is a separate `python tools/<script>.py` command.
 | [`dskftp.py`](#dskftppy) | Interactive ftp-style shell to edit the files in a `.dsk` image |
 | [`dskblank.py`](#dskblankpy) | Create a blank, unformatted `.dsk` image |
 | [`dskdd.py`](#dskddpy) | Copy raw sectors between a `.dsk` image and a physical USB floppy drive (Linux only) |
+| [`bas2wav.py`](#bas2wavpy) | Convert an ASCII BASIC program to a tape WAV that a real MSX loads with `LOAD"CAS:"` |
+| [`wav2cas.py`](#wav2caspy) | Convert a WAV of an MSX tape to a `.cas` file for the emulator's `--tape` |
 | [`run_z80_exercisers.py`](#run_z80_exerciserspy) | Run Z80 instruction exercisers (zexdoc, zexall, z80test) on the bare CPU core |
 | [`run_singlestep_tests.py`](#run_singlestep_testspy) | Run the SingleStepTests/z80 single-instruction cases on the bare CPU core |
 | [`golden_state.py`](#golden_statepy) | Run the golden cases of the whole core, and write or check their hashes |
@@ -117,6 +119,57 @@ image unless you give `--overwrite`.
 
 Exit status: `0` success, `1` error, `2` the script imaged the disk, but some
 sectors stayed unreadable (zero-filled in the image, listed on stdout).
+
+## `bas2wav.py`
+
+Converts an ASCII BASIC program (a `.BAS` text file) to a WAV file of an MSX
+tape. Play the WAV into a real MSX to load the program, instead of typing it
+in. The WAV holds an MSX ASCII tape file at 1200 baud, the same format that
+`SAVE"CAS:NAME"` writes.
+
+```bash
+python tools/bas2wav.py PROGRAM.BAS program.wav
+python tools/bas2wav.py PROGRAM.BAS program.wav --invert   # inverted signal
+```
+
+To load the program:
+
+1. Connect the computer's headphone output to the **EAR** plug of the MSX
+   cassette cable. Do not connect the MIC and REMOTE plugs.
+2. On the MSX, type `LOAD"CAS:"` (or `RUN"CAS:"` to start the program after
+   it loads).
+3. Play the WAV. The MSX shows `Found:` and the file name when it finds the
+   file.
+
+If the MSX does not find the file or shows an error, try a higher volume, then
+`--invert`.
+
+| Option | Meaning |
+| --- | --- |
+| `--name NAME` | Tape file name, up to 6 characters (default: the file name of the source, in upper case) |
+| `--invert` | Invert the signal |
+| `--volume V` | Peak level, more than 0 and at most 1 (default: 0.8) |
+| `--gap S` | Seconds of silence before each 256-byte block, so BASIC has time to process the block (default: 1.0) |
+
+The script changes the line ends to CRLF. The output is 48 kHz, 16-bit mono.
+A WAV from this script, converted with [`wav2cas.py`](#wav2caspy), loads in
+the emulator. Loading on real hardware has not been tested yet.
+
+## `wav2cas.py`
+
+Converts a WAV file of an MSX tape to a `.cas` file, for the emulator's
+`--tape` option. It reads the standard 1200-baud format, the format that
+`SAVE"CAS:"` writes and that `bas2wav.py` makes.
+
+```bash
+python tools/wav2cas.py tape.wav tape.cas
+python . --tape tape.cas    # then type RUN"CAS:" (or LOAD"CAS:") on the MSX
+```
+
+The script prints the length and the first bytes of each block that it
+finds. It reads 8-bit and 16-bit WAV files. It averages stereo to mono. It
+reads the normal and the inverted signal without an option. If the script
+finds no block, it writes no file and exits with status `1`.
 
 ## `run_z80_exercisers.py`
 

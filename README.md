@@ -314,7 +314,7 @@ The cassette port plays a CAS tape image. `--tape FILE.cas` (or the `tape` key o
 
 While a tape is mounted and the motor runs, the frontend runs as fast-forward and the window title shows `[TAPE]`. `--no-tape-fast` loads at normal speed. The speed does not change the result of a load. A save state records the identity of the tape signal (its size and SHA1), the position and the motor. It loads only with the same tape mounted.
 
-- Known limitations: CAS files only. Convert a WAV recording to CAS with an external tool. TSX files are not supported. There is no recording (the cassette output, Port C bit 5, is not implemented) and no fast loader: a load takes the time of the real tape, or less with tape-fast. Tape loads are not yet checked on real hardware. While a tape is mounted, the CPU loop counts the clock at each instruction, so CPython runs slightly slower: 2.7% on an MSX2 cartridge game in the benchmark, with the motor off. PyPy shows no measurable difference. Eject the tape to get the full speed back.
+- Known limitations: CAS files only. Convert a WAV recording to CAS with `tools/wav2cas.py`. TSX files are not supported. There is no recording (the cassette output, Port C bit 5, is not implemented) and no fast loader: a load takes the time of the real tape, or less with tape-fast. Tape loads are not yet checked on real hardware. While a tape is mounted, the CPU loop counts the clock at each instruction, so CPython runs slightly slower: 2.7% on an MSX2 cartridge game in the benchmark, with the motor off. PyPy shows no measurable difference. Eject the tape to get the full speed back.
 - Implementation: `msx/cassette.py` (the core plays the signal), `host/cas_image.py` (CAS conversion), `host/tape.py` (the mounted file and its blocks)
 
 ### Keyboard / joystick input
@@ -555,7 +555,7 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--fdd2 DSK` | _(none)_ | Floppy `*.dsk` image mounted in drive B, on a machine with two drives. Every shipped machine has one drive, so the emulator ignores `--fdd2` with a warning |
 | `--resume [FILE]` | _(none)_ | Resume from `saves/states/latest.state`, or a specific `.state` file. Mount the disks the state was saved with: the first `--fdd1` image must be the one that was in drive A |
 | `--mouse [1\|2]` | _(none)_ | Attach an MSX mouse to a joystick port (bare = Joy2). Overrides the `mouse` settings in `py_emulator.yaml`. Headless runs (`--count-frame`, `--benchmark`) attach it too, so a state saved with a mouse resumes there |
-| `--tape CAS` | _(none)_ | Mount a CAS tape image at startup. Only CAS is supported: convert a WAV recording to CAS with an external tool. A missing or invalid file stops with an error. With `--resume`, give the tape that the state was saved with |
+| `--tape CAS` | _(none)_ | Mount a CAS tape image at startup. Only CAS is supported: convert a WAV recording to CAS with `tools/wav2cas.py`. A missing or invalid file stops with an error. With `--resume`, give the tape that the state was saved with |
 | `--tape-fast`, `--no-tape-fast` | on | Run as fast-forward while a tape is mounted and its motor runs. `--no-tape-fast` loads at normal speed |
 | `--printer-log FILE` | _(none)_ | Attach a printer to the printer port and write the raw bytes it receives to FILE (created or truncated). A machine with no port stops with an error. Cannot be used with `--benchmark` |
 | `--frame-skip MODE` | `auto` | Frame skip: `auto` skips VDP rendering on late frames. `none` disables frame skip |
@@ -695,7 +695,7 @@ F6, F7, F11, F12 and their Shift combinations are the built-in defaults. To assi
 
 ## Tools
 
-Standalone command-line utilities in `tools/`. They include disk image tools: an interactive ftp-style shell, a blank-image creator, and a raw-sector copier for a physical USB floppy drive. They also include the RPC/MCP client tools for [Remote control](#remote-control-socket-rpc--mcp) below. Two runners check the Z80 core alone against external instruction tests: `run_z80_exercisers.py` (zexdoc, zexall, z80test) and `run_singlestep_tests.py` (SingleStepTests/z80). See [Instruction exercisers](docs/technical-implementation.md#instruction-exercisers) in the technical docs.
+Standalone command-line utilities in `tools/`. They include disk image tools: an interactive ftp-style shell, a blank-image creator, and a raw-sector copier for a physical USB floppy drive. They also include the RPC/MCP client tools for [Remote control](#remote-control-socket-rpc--mcp) below. Two tape tools convert between a WAV and the MSX tape format: `bas2wav.py` makes a tape WAV from an ASCII BASIC program, and `wav2cas.py` converts a tape WAV to a CAS file for `--tape`. Two runners check the Z80 core alone against external instruction tests: `run_z80_exercisers.py` (zexdoc, zexall, z80test) and `run_singlestep_tests.py` (SingleStepTests/z80). See [Instruction exercisers](docs/technical-implementation.md#instruction-exercisers) in the technical docs.
 
 For full usage, options, and examples for every script, see [`tools/README_tools.md`](tools/README_tools.md) / [`tools/README_tools_ja.md`](tools/README_tools_ja.md).
 
@@ -908,7 +908,7 @@ py-msx-emulator/
 ├── config/
 │   ├── devices/           # Device YAML definitions (VDP, PSG, PPI, RTC, ...)
 │   └── machines/          # Machine YAML definitions (cbios_msx1_jp, cbios_msx2_jp, ...)
-├── tools/                 # Disk image tools (dskftp, dskblank, dskdd), RPC client, MCP server, Z80 test runners (see tools/README_tools.md)
+├── tools/                 # Disk image tools (dskftp, dskblank, dskdd), tape WAV tools (bas2wav, wav2cas), RPC client, MCP server, Z80 test runners (see tools/README_tools.md)
 ├── docs/                  # Internals and porting guide, extensions, debugger, socket RPC / MCP
 ├── assets/                # Benchmark history charts used by this README
 ├── roms/

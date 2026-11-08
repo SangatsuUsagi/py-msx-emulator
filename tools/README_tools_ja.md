@@ -1,6 +1,6 @@
 # Tools
 
-エミュレータ本体とは別に動く、ディスクイメージ管理・CPU 命令テストの実行・エージェント向けRPC/MCP層のコマンドラインツール群です。
+エミュレータ本体とは別に動く、ディスクイメージ管理・テープ用 WAV との相互変換・CPU 命令テストの実行・エージェント向けRPC/MCP層のコマンドラインツール群です。
 いずれもエミュレータのプロセス内では動作せず、`python tools/<script>.py` として個別に実行します。
 
 | スクリプト / セクション | 用途 |
@@ -8,6 +8,8 @@
 | [`dskftp.py`](#dskftppy) | `.dsk` イメージ内のファイルを編集する、ftp風の対話シェル |
 | [`dskblank.py`](#dskblankpy) | 未フォーマットの空 `.dsk` イメージを作成 |
 | [`dskdd.py`](#dskddpy) | `.dsk` イメージと物理USBフロッピードライブ間で生セクタをコピー(Linux専用) |
+| [`bas2wav.py`](#bas2wavpy) | ASCII 形式の BASIC プログラムを、実機の MSX が `LOAD"CAS:"` で読み込めるテープ用 WAV に変換 |
+| [`wav2cas.py`](#wav2caspy) | MSX のテープの WAV を、エミュレータの `--tape` で使う `.cas` ファイルに変換 |
 | [`run_z80_exercisers.py`](#run_z80_exerciserspy) | Z80 の命令テスト(zexdoc、zexall、z80test)を CPU コア単体で実行 |
 | [`run_singlestep_tests.py`](#run_singlestep_testspy) | SingleStepTests/z80 の 1 命令ごとのテストを CPU コア単体で実行 |
 | [`golden_state.py`](#golden_statepy) | コア全体の決まった実行(ゴールデンケース)を動かし、そのハッシュを記録または照合 |
@@ -111,6 +113,57 @@ LinuxではUSB FDDは(`/dev/fd0` ではなく)ブロックデバイスとして 
 
 終了コード: `0` 成功、`1` エラー、`2` イメージ化はできたが読み取れないセクタ
 が残った場合(イメージ内では0埋めされ、標準出力に一覧表示されます)。
+
+## `bas2wav.py`
+
+ASCII 形式の BASIC プログラム(`.BAS` のテキストファイル)を、MSX のテープの
+WAV ファイルに変換します。この WAV を実機の MSX に再生して聞かせると、プログラム
+を手で打ち込まずに読み込めます。WAV の中身は 1200 ボーの MSX の ASCII テープ
+ファイルで、`SAVE"CAS:NAME"` が書くものと同じ形式です。
+
+```bash
+python tools/bas2wav.py PROGRAM.BAS program.wav
+python tools/bas2wav.py PROGRAM.BAS program.wav --invert   # 信号を反転
+```
+
+読み込みの手順:
+
+1. コンピュータのヘッドホン出力を、MSX のカセットケーブルの **EAR** プラグに
+   つなぎます。MIC と REMOTE のプラグはつなぎません。
+2. MSX で `LOAD"CAS:"` を入力します(読み込み後にそのまま実行するなら
+   `RUN"CAS:"`)。
+3. WAV を再生します。ファイルが見つかると、MSX に `Found:` とファイル名が表示
+   されます。
+
+ファイルが見つからないときやエラーになるときは、まず音量を上げ、次に
+`--invert` を試してください。
+
+| オプション | 意味 |
+| --- | --- |
+| `--name NAME` | テープ上のファイル名、6 文字まで(既定: 元のファイル名を大文字にしたもの) |
+| `--invert` | 信号を反転する |
+| `--volume V` | ピークの大きさ、0 より大きく 1 以下(既定: 0.8) |
+| `--gap S` | 256 バイトの各ブロックの前に入れる無音の秒数。BASIC がブロックを処理する時間になる(既定: 1.0) |
+
+改行は CRLF にそろえます。出力は 48 kHz、16 ビット、モノラルです。この
+スクリプトで作った WAV は、[`wav2cas.py`](#wav2caspy) で変換するとエミュレータで
+読み込めます。実機での読み込みはまだ試していません。
+
+## `wav2cas.py`
+
+MSX のテープの WAV ファイルを、エミュレータの `--tape` オプションで使う
+`.cas` ファイルに変換します。読めるのは 1200 ボーの標準形式で、
+`SAVE"CAS:"` が書く形式、`bas2wav.py` が作る形式です。
+
+```bash
+python tools/wav2cas.py tape.wav tape.cas
+python . --tape tape.cas    # その後、MSX で RUN"CAS:"(または LOAD"CAS:")を入力
+```
+
+見つけた各ブロックの長さと先頭のバイトを表示します。8 ビットと 16 ビットの
+WAV を読めます。ステレオは平均してモノラルにします。信号が反転していても、
+オプションなしでそのまま読めます。ブロックが 1 つも見つからないときは、
+ファイルを書かずに終了コード `1` で終わります。
 
 ## `run_z80_exercisers.py`
 
