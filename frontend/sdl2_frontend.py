@@ -1152,7 +1152,7 @@ def run(
     keyboard_joystick: Mapping[str, str] | None = None,
     debugger: Debugger | None = None,
     disk_files: DiskFiles | None = None,
-    tape_fast: bool = False,
+    tape_fast: bool = True,
 ) -> None:
     """Run the SDL2 window loop for `machine` until the user quits.
 

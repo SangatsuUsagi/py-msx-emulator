@@ -53,12 +53,16 @@ def _format_disasm(read: Callable[[int], int], addr: int) -> tuple[str, int]:
     return f"{raw_bytes:<12}  {mnem}", size
 
 
+_TAPE_USAGE = "tape [blocks|load FILE|eject|rewind|seek SECONDS|seek #N]"
+# The `tape` subcommands and how many arguments each takes.
+_TAPE_ARGUMENTS = {"": 0, "blocks": 0, "load": 1, "eject": 0, "rewind": 0, "seek": 1}
+
 _HELP = (
     "Commands: h/? | rc | rv | rp | v | dm ADDR [SIZE] | dv VADDR [SIZE] | dvf FILE | "
     "ba/br/bl ADDR | bh | bs [LOW HIGH|off] | wa/wd/wl ADDR | da [ADDR] | s [N] | "
     "g ADDR | gf N | so | te | td | ce | cd | ds | sl | st | ss | "
     "sv [TITLE] | ld FILE | fdd1/fdd2 [FILE|-] | "
-    "tape [blocks|load FILE|eject|rewind|seek SECONDS|seek #N] | reset | c | q"
+    f"{_TAPE_USAGE} | reset | c | q"
 )
 
 # `da` disassembles a fixed window of instructions from the given address.
@@ -727,32 +731,35 @@ class Debugger:
     def _cmd_tape(self, args: list[str]) -> None:
         """`tape [blocks|load FILE|eject|rewind|seek SECONDS|seek #N]`: show
         or change the cassette. An error is printed and changes nothing."""
-        deck = self._tape
         sub = args[0] if args else ""
+        if _TAPE_ARGUMENTS.get(sub) != len(args[1:]):
+            print(f"tape: usage: {_TAPE_USAGE}")
+            return
         try:
             if sub == "":
                 self._tape_status()
-            elif sub == "blocks" and len(args) == 1:
+            elif sub == "blocks":
                 self._tape_blocks()
-            elif sub == "load" and len(args) == 2:
-                path = Path(args[1]).expanduser()
-                warnings = deck.load(path)
-                print(f"tape: mounted {path} ({len(deck.blocks)} blocks)")
-                for warning in warnings:
-                    print(f"tape: warning: {warning}")
-            elif sub == "eject" and len(args) == 1:
-                deck.eject()
+            elif sub == "load":
+                self._tape_load(args[1])
+            elif sub == "eject":
+                self._tape.eject()
                 print("tape: ejected")
-            elif sub == "rewind" and len(args) == 1:
-                deck.rewind()
-                self._tape_status()
-            elif sub == "seek" and len(args) == 2:
-                self._tape_seek(args[1])
+            elif sub == "rewind":
+                self._tape.rewind()
                 self._tape_status()
             else:
-                print("tape: usage: tape [blocks|load FILE|eject|rewind|seek SECONDS|seek #N]")
+                self._tape_seek(args[1])
+                self._tape_status()
         except TapeError as exc:
             print(f"tape: {exc}")
+
+    def _tape_load(self, path_text: str) -> None:
+        path = Path(path_text).expanduser()
+        warnings = self._tape.load(path)
+        print(f"tape: mounted {path} ({len(self._tape.blocks)} blocks)")
+        for warning in warnings:
+            print(f"tape: warning: {warning}")
 
     def _tape_seek(self, target: str) -> None:
         if target.startswith("#"):

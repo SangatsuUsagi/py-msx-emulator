@@ -490,6 +490,20 @@ def test_motor_on_and_off() -> None:
     assert [(e.a, e.b | (e.c << 32), e.d) for e in events] == [(1, 0, 1), (0, 1000, 1)]
 
 
+def test_a_motor_event_at_a_position_of_2_31_or_more() -> None:
+    machine = _machine()
+    position = (1 << 32) + (1 << 31) + 5
+    assert machine.mount_tape(_edges([0xFFFFFFFF, 0xFFFFFFFF])) == STATUS_OK
+    assert machine.seek_tape(position) == STATUS_OK
+    assert machine.set_trace_kinds(TRACE_DEBUG) == STATUS_OK
+    machine.drain_trace()
+    _motor_on(machine)
+    (event,) = [e for e in machine.drain_trace() if e.kind == TRACE_EVENT_TAPE_MOTOR]
+    assert (event.b, event.c) == (-(1 << 31) + 5, 1)
+    assert -(1 << 31) <= event.b < (1 << 31)
+    assert (event.b & 0xFFFFFFFF) | (event.c << 32) == position
+
+
 def test_no_motor_event_without_trace_debug() -> None:
     machine = _machine()
     assert machine.mount_tape(_edges([10_000_000])) == STATUS_OK

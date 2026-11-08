@@ -8,6 +8,7 @@ leaves the deck as it was when it fails.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -22,6 +23,10 @@ WAV_MESSAGE = (
     "only CAS tape files are supported; convert a WAV recording to CAS "
     "with an external tool"
 )
+
+# The largest position the core takes: seek_tape's argument is int64_t in the
+# C ABI (include/msx_core.h).
+_INT64_MAX = 0x7FFF_FFFF_FFFF_FFFF
 
 
 class TapeError(Exception):
@@ -103,13 +108,26 @@ class TapeDeck:
         self._check(self._machine.seek_tape(0))
 
     def seek_seconds(self, value: float) -> None:
-        if value < 0:
+        """Seek to `value` seconds. A value that is not finite, or too large
+        for the core's int64 position, is an error before the core call."""
+        try:
+            seconds = float(value)
+        except OverflowError:
+            raise TapeError(f"tape position {value} s is outside the tape") from None
+        if not math.isfinite(seconds):
+            raise TapeError(f"tape position {value} s is not a finite number")
+        if seconds < 0:
             raise TapeError(f"tape position {value} s is negative")
-        self._check(self._machine.seek_tape(int(value * CPU_HZ)))
+        position = int(seconds * CPU_HZ)
+        if position > _INT64_MAX:
+            raise TapeError(f"tape position {value} s is outside the tape")
+        self._check(self._machine.seek_tape(position))
 
     def seek_block(self, number: int) -> None:
         if not self._machine.tape_info().mounted:
-            self._check(self._machine.seek_tape(0))  # the core's no-tape error
+            # seek_tape fails here with the core's own no-tape status and text
+            # (or no-port on a machine with no cassette port); _check raises it.
+            self._check(self._machine.seek_tape(0))
         if number < 0 or number >= len(self._blocks):
             raise TapeError(f"no block {number}; the tape has {len(self._blocks)} blocks")
         self._check(self._machine.seek_tape(self._blocks[number].start))

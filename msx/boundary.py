@@ -248,8 +248,9 @@ TRACE_EVENT_CPU_HISTORY = 9   # a = PC, b = opcode: one entry of the last 64 ins
 TRACE_EVENT_HANG_PC_LOOP = 10  # a = PC repeated 1000 times (msx/machine.py
                                # HANG_PC_REPEAT_THRESHOLD)
 TRACE_EVENT_HANG_HALT_DI = 11  # a = PC of a HALT with interrupts off
-TRACE_EVENT_TAPE_MOTOR = 12  # a = new motor state (1 on), b and c = the low and
-                             # high 32 bits of the tape position, d = 1 when a
+TRACE_EVENT_TAPE_MOTOR = 12  # a = new motor state (1 on), b = the low 32 bits
+                             # of the tape position as a signed int32 (two's
+                             # complement), c = the high 32 bits, d = 1 when a
                              # tape is mounted
 
 # Instructions the TRACE_DEBUG history keeps (TRACE_EVENT_CPU_HISTORY).

@@ -8,15 +8,16 @@ the tape. It is computed from the cycle count when it is needed (at a read, a
 motor change, a seek or a save), so the port does no work between those
 events.
 
-The levels match openMSX's cassette port: with no tape, with the motor off and
-past the end of the tape the input reads 1 (the player gives sample 0, and
-the port reads `sample >= 0`). A machine with no port reads bit 7 as 0, and
-the machine then builds no CassettePort at all.
+The input reads 1 in three cases: no tape, motor off, or past the end of the
+tape. This matches openMSX's cassette port: the player gives sample 0, and the
+port reads `sample >= 0`. A machine with no cassette port builds no
+CassettePort, and PSG register 14 bit 7 then reads 0.
 """
 from __future__ import annotations
 
 import hashlib
 import struct
+from array import array
 from bisect import bisect_right
 from dataclasses import dataclass, field
 from typing import TypedDict
@@ -35,6 +36,10 @@ class CassetteState(TypedDict):
     identity: TapeIdentity | None
     position: int
     motor: int
+
+
+def _no_ends() -> array[int]:
+    return array("q")
 
 
 def edge_list_error(edges: bytes) -> str | None:
@@ -60,8 +65,10 @@ class CassettePort:
 
     clock: CoreClock
     # The end of each interval, in T-states from position 0 (prefix sums of
-    # the edge list). Interval i has level 1 when i is even.
-    _ends: list[int] = field(default_factory=list, init=False, repr=False)
+    # the edge list). Interval i has level 1 when i is even. A signed 64-bit
+    # array: 8 bytes per edge, where a list of ints takes about 40. The sums
+    # stay below 2^63; "q", not "Q", because PyPy reads "Q" items slowly.
+    _ends: array[int] = field(default_factory=_no_ends, init=False, repr=False)
     _identity: TapeIdentity | None = field(default=None, init=False, repr=False)
     # The position at `_base_cycle`; while the motor runs the position grows
     # by one per T-state from there.
@@ -93,23 +100,24 @@ class CassettePort:
         return self._identity
 
     def mount(self, edges: bytes) -> str | None:
-        """Mount a copy of `edges` at position 0. Returns an error text and
-        keeps the mounted tape when the list is not valid."""
+        """Mount the edge list `edges` at position 0 (the port keeps its own
+        prefix sums, not `edges`). Returns an error text and keeps the mounted
+        tape when the list is not valid."""
         error = edge_list_error(edges)
         if error is not None:
             return error
-        ends: list[int] = []
+        ends = _no_ends()
         total = 0
         for (interval,) in struct.iter_unpack("<I", edges):
             total += interval
             ends.append(total)
         self._ends = ends
-        self._identity = tape_identity(bytes(edges))
+        self._identity = tape_identity(edges)
         self._set_position(0)
         return None
 
     def eject(self) -> None:
-        self._ends = []
+        self._ends = _no_ends()
         self._identity = None
         self._set_position(0)
 
@@ -145,10 +153,14 @@ class CassettePort:
         self._motor = on
         trace = self._trace
         if trace is not None and trace.kinds & TRACE_DEBUG:
+            # b is the low word as a signed int32: TraceEvent fields are
+            # int32 in the C ABI. The host joins (b & 0xFFFFFFFF) | (c << 32).
             position = self._position
+            low = position & 0xFFFFFFFF
+            if low & 0x80000000:
+                low -= 0x1_0000_0000
             trace.record(TRACE_EVENT_TAPE_MOTOR, 1 if on else 0,
-                         position & 0xFFFFFFFF, position >> 32,
-                         1 if self.mounted else 0)
+                         low, position >> 32, 1 if self.mounted else 0)
         return True
 
     def read_level(self) -> int:
@@ -158,10 +170,14 @@ class CassettePort:
         position = self.position()
         ends = self._ends
         if position >= ends[-1]:
-            return 1
+            return 1  # past the end; this also keeps the walk below in range
         cursor = self._cursor
+        # The position is before the last interval read. Not reached while
+        # the motor runs (the position only grows, and seek() and
+        # apply_state() reset the cursor); kept as a guard.
         if cursor > 0 and ends[cursor - 1] > position:
             cursor = bisect_right(ends, position)
+        # Normal case: the position moved forward by a few intervals at most.
         while ends[cursor] <= position:
             cursor += 1
         self._cursor = cursor
@@ -174,8 +190,9 @@ class CassettePort:
         return {"identity": self._identity, "position": self.position(),
                 "motor": 1 if self._motor else 0}
 
-    def apply_state(self, state: CassetteState) -> None:
-        """Restore a snapshot_state() taken with the same tape mounted, after
+    def apply_state(self, position: int, motor: int) -> None:
+        """Restore the position and the motor of a snapshot_state() taken
+        with the same tape mounted (the caller checks the identity), after
         the clock is restored. The position counts from the current cycle."""
-        self._motor = state["motor"] == 1
-        self._set_position(state["position"])
+        self._motor = motor == 1
+        self._set_position(position)

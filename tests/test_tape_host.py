@@ -87,6 +87,16 @@ def test_a_seek_in_seconds(tmp_path: Path) -> None:
     assert deck.status().position == int(2.5 * CPU_HZ)
 
 
+@pytest.mark.parametrize("value", [float("inf"), float("nan"), 1e300, 10**400])
+def test_a_seek_beyond_the_core_range_is_an_error(tmp_path: Path, value: float) -> None:
+    deck = TapeDeck(_machine())
+    deck.load(_binary_cas(tmp_path))
+    deck.seek_seconds(2.5)
+    with pytest.raises(TapeError):
+        deck.seek_seconds(value)
+    assert deck.status().position == int(2.5 * CPU_HZ)
+
+
 # --- debug-monitor: tape ---
 
 def _debugger(machine: Machine | None = None) -> Debugger:
@@ -211,7 +221,8 @@ def test_rpc_seek_to_a_block(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("params", [
     {"seconds": 3, "block": 1}, {}, {"seconds": -1}, {"seconds": "3"}, {"block": 1.5},
-    {"block": 7}, {"seconds": 10_000},
+    {"block": 7}, {"seconds": 10_000}, {"seconds": float("inf")}, {"seconds": float("nan")},
+    {"seconds": 10**400},
 ])
 def test_bad_seek_targets_are_an_error(tmp_path: Path, params: dict[str, Any]) -> None:
     server = _server()

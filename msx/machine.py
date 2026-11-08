@@ -47,7 +47,7 @@ from msx.boundary import (
     VideoStandard,
     drive_media_id,
 )
-from msx.cassette import CassettePort, edge_list_error
+from msx.cassette import CassettePort
 from msx.clock import CoreClock
 from msx.cpu.z80 import Z80
 from msx.input import InputFrame, InputLines
@@ -425,10 +425,9 @@ class Machine:
         The motor does not change."""
         if self.cassette is None:
             return self._fail(STATUS_NO_TAPE_PORT, "this machine has no cassette port")
-        error = edge_list_error(edges)
+        error = self.cassette.mount(edges)
         if error is not None:
             return self._fail(STATUS_BAD_IMAGE, error)
-        self.cassette.mount(edges)
         self._error_text = b""
         return STATUS_OK
 
@@ -1134,7 +1133,7 @@ class Machine:
         self, vdp9938: V9938 | None, first_line: int, end_line: int, total: int
     ) -> int:
         """Run scanlines [first_line, end_line) with the loop arm this mode
-        needs (break conditions / hot / TRACE_DEBUG); return the running T-state
+        needs (break conditions / hot / tape-exact / TRACE_DEBUG); return the running T-state
         total, measured from the start of the frame.
 
         PORT-NOTE: the arms take `self` and `vdp9938` -- which aliases
@@ -1156,14 +1155,14 @@ class Machine:
         if self._break_conditions_active():
             return self._run_lines_debug(vdp9938, first_line, end_line, total)
         if not self._trace.kinds & TRACE_DEBUG:
-            if self._tape_mounted():
+            if self._needs_exact_clock():
                 return self._run_lines_exact(vdp9938, first_line, end_line, total)
             return self._run_lines_fast(vdp9938, first_line, end_line, total)
         return self._run_lines_traced(vdp9938, first_line, end_line, total)
 
-    def _tape_mounted(self) -> bool:
-        """Whether the clock must count per instruction: a tape is mounted,
-        so a read of the tape input sees the T-state of its instruction
+    def _needs_exact_clock(self) -> bool:
+        """Whether the clock must count per instruction. True while a tape is
+        mounted, so a read of the tape input sees the T-state of its instruction
         (io-cassette). Chosen by "mounted", not "motor on": a mount happens
         only between frames, so the arm cannot change inside a call however
         the host breaks the frame (add-cassette-playback design D4)."""
@@ -1186,7 +1185,7 @@ class Machine:
         step_one = self._step_one
         # While a tape is mounted the clock counts per instruction, as in
         # _run_lines_exact, so a break does not change what a read sees.
-        exact = self._tape_mounted()
+        exact = self._needs_exact_clock()
         # Either chip; hot-loop local for the per-instruction .irq read. When
         # vdp9938 is not None it is this same object, passed only to gate the
         # V9938 per-scanline hooks.
@@ -1295,7 +1294,8 @@ class Machine:
                     # (openspec cpu-z80 "Batched JR-to-self execution is
                     # externally transparent").
                     # PORT-NOTE: this condition is written out here, in the
-                    #   TMS9918A branch below and (negated) in Z80.step().
+                    #   TMS9918A branch below, in _run_lines_exact and
+                    #   (negated) in Z80.step().
                     # Rust equivalent: one #[inline] fn can_batch_idle(&self)
                     #   on Z80 (idle_hint && !nmi_pending && !(int_pending &&
                     #   iff1 && !ei_pending)), plus `&& !cmd_active` here.
@@ -1378,7 +1378,8 @@ class Machine:
             line_end = (line + 1) * cpf // lpf
             while total < line_end:
                 cpu.int_pending = vdp.irq
-                # The batching condition of _run_lines_fast (KEEP IN SYNC).
+                # The batching condition of _run_lines_fast's V9938 and
+                # TMS9918A branches and (negated) of Z80.step() (KEEP IN SYNC).
                 would_accept_interrupt = (
                     cpu.int_pending and cpu.iff1 and not cpu.ei_pending
                 )

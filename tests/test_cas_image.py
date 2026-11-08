@@ -187,7 +187,8 @@ def test_no_drift_over_a_long_tape() -> None:
     for interval in _intervals(signal.edge_bytes()):
         total += interval
         times.append(total)
-    expected = [sample_time(sample) for sample in signal.changes] + [sample_time(signal.samples)]
+    expected = [sample_time(sample) for sample in signal.change_samples]
+    expected.append(sample_time(signal.sample_count))
     assert times == expected
     assert times[-1] == 100_000 * 4 * CPU_HZ // SAMPLE_HZ
 
@@ -212,7 +213,7 @@ def test_the_list_of_a_binary_file() -> None:
     for _ in range(16):
         signal.byte(0)
     assert (second.number, second.type) == (1, "data")
-    assert second.start == sample_time(signal.samples)
+    assert second.start == sample_time(signal.sample_count)
 
 
 def test_a_binary_header_with_no_data_block_still_plays_a_data_sync() -> None:

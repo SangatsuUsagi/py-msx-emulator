@@ -22,18 +22,28 @@ from __future__ import annotations
 
 import struct
 from dataclasses import dataclass
+from typing import Literal
 
 CAS_HEADER = bytes((0x1F, 0xA6, 0xDE, 0xBA, 0xCC, 0x13, 0x7D, 0x74))
 _TYPE_LENGTH = 10
 _NAME_LENGTH = 6
-_FILE_TYPES = {0xD3: "basic", 0xEA: "ascii", 0xD0: "binary"}
+# A block's type: the file type of a file's first block, "data" for the
+# blocks after it, "unknown" for a first block with no known type marker.
+BlockType = Literal["basic", "ascii", "binary", "data", "unknown"]
+_FILE_TYPES: dict[int, BlockType] = {0xD3: "basic", 0xEA: "ascii", 0xD0: "binary"}
+# Ctrl-Z: the byte that ends an ASCII file.
+_ASCII_EOF = 0x1A
 
+# The MSX CPU clock. A copy of msx/clock.py's CPU_CLOCK_HZ: host code may not
+# import msx.clock (tests/test_core_frontend_boundary.py). Keep the two equal.
 CPU_HZ = 3579545
 SAMPLE_HZ = 4800
-_SHORT_SILENCE = SAMPLE_HZ * 1  # samples
-_LONG_SILENCE = SAMPLE_HZ * 2
-_SHORT_SYNC = 2000  # one bits
-_LONG_SYNC = 8000
+# Before a file's first block: 2 s of silence and 8000 one bits of sync;
+# before the other blocks: 1 s and 2000.
+_SHORT_SILENCE_SAMPLES = SAMPLE_HZ * 1
+_LONG_SILENCE_SAMPLES = SAMPLE_HZ * 2
+_SHORT_SYNC_BITS = 2000
+_LONG_SYNC_BITS = 8000
 
 
 class CasImageError(ValueError):
@@ -47,7 +57,7 @@ class CasBlock:
 
     number: int
     start: int
-    type: str
+    type: BlockType
     name: str | None
     length: int
 
@@ -72,15 +82,15 @@ class _Signal:
     """The tape signal as level runs; it keeps the sample of each change."""
 
     def __init__(self) -> None:
-        self.samples = 0
+        self.sample_count = 0  # the length of the signal so far
         self.level = 1
-        self.changes: list[int] = []
+        self.change_samples: list[int] = []
 
-    def run(self, level: int, count: int) -> None:
+    def run(self, level: int, samples: int) -> None:
         if level != self.level:
-            self.changes.append(self.samples)
+            self.change_samples.append(self.sample_count)
             self.level = level
-        self.samples += count
+        self.sample_count += samples
 
     def silence(self, count: int) -> None:
         self.run(1, count)
@@ -100,6 +110,8 @@ class _Signal:
             self.bit(1)
 
     def byte(self, value: int) -> None:
+        """One byte as the BIOS writes it: a 0 start bit, the 8 data bits
+        LSB first, then two 1 stop bits."""
         self.bit(0)
         for i in range(8):
             self.bit((value >> i) & 1)
@@ -111,11 +123,11 @@ class _Signal:
         the end of the signal."""
         intervals: list[int] = []
         previous = 0
-        for sample in self.changes:
+        for sample in self.change_samples:
             now = sample_time(sample)
             intervals.append(now - previous)
             previous = now
-        intervals.append(sample_time(self.samples) - previous)
+        intervals.append(sample_time(self.sample_count) - previous)
         return struct.pack(f"<{len(intervals)}I", *intervals)
 
 
@@ -130,31 +142,34 @@ class _Parser:
         end = self.pos + len(CAS_HEADER)
         return end <= len(self.data) and self.data[self.pos:end] == CAS_HEADER
 
-    def block(self, silence: int, sync: int, kind: str, name: str | None) -> bool:
+    def block(self, silence_samples: int, sync_bits: int, kind: BlockType,
+              name: str | None) -> bool:
         """Play one block whose header is at `pos`: the silence, the sync
         and the bytes up to the next header. Returns whether the bytes hold
-        0x1A, which ends an ASCII file. As in openMSX, a block is played also
-        when no header is left, and then it has no bytes."""
-        start = sample_time(self.signal.samples)
-        self.pos += len(CAS_HEADER)
-        self.signal.silence(silence)
-        self.signal.sync(sync)
+        _ASCII_EOF, which ends an ASCII file. As in openMSX, a block is played
+        also when no header is left, and then it has no bytes."""
+        start = sample_time(self.signal.sample_count)
+        # With no header left (see above) `pos` stops at the end of the data.
+        self.pos = min(self.pos + len(CAS_HEADER), len(self.data))
+        self.signal.silence(silence_samples)
+        self.signal.sync(sync_bits)
         first = self.pos
         eof = False
         while self.pos < len(self.data) and not self.at_header():
             value = self.data[self.pos]
             self.signal.byte(value)
-            if value == 0x1A:
+            if value == _ASCII_EOF:
                 eof = True
             self.pos += 1
-        length = max(0, self.pos - first)
+        length = self.pos - first
         self.blocks.append(CasBlock(len(self.blocks), start, kind, name, length))
         return eof
 
-    def file_type(self) -> str:
+    def file_type(self) -> BlockType:
         """The type of the block after the header at `pos`."""
         first = self.pos + len(CAS_HEADER)
         marker = self.data[first:first + _TYPE_LENGTH]
+        # The type marker is ten copies of one type byte.
         if len(marker) == _TYPE_LENGTH and marker.count(marker[0]) == _TYPE_LENGTH:
             return _FILE_TYPES.get(marker[0], "unknown")
         return "unknown"
@@ -168,16 +183,20 @@ class _Parser:
         """Play the file whose first header is at `pos`."""
         kind = self.file_type()
         if kind == "unknown":
-            self.block(_LONG_SILENCE, _LONG_SYNC, kind, None)
+            # No name and no data block: the next header starts a new file
+            # in parse_cas.
+            self.block(_LONG_SILENCE_SAMPLES, _LONG_SYNC_BITS, kind, None)
             return
-        self.block(_LONG_SILENCE, _LONG_SYNC, kind, self.file_name())
+        self.block(_LONG_SILENCE_SAMPLES, _LONG_SYNC_BITS, kind, self.file_name())
         if kind == "ascii":
             while True:
-                eof = self.block(_SHORT_SILENCE, _SHORT_SYNC, "data", None)
+                eof = self.block(_SHORT_SILENCE_SAMPLES, _SHORT_SYNC_BITS, "data", None)
                 if eof or not self.at_header():
                     return
         else:
-            self.block(_SHORT_SILENCE, _SHORT_SYNC, "data", None)
+            # A binary or BASIC file always has one data block; with no
+            # header left it is empty (as in openMSX).
+            self.block(_SHORT_SILENCE_SAMPLES, _SHORT_SYNC_BITS, "data", None)
 
 
 def parse_cas(data: bytes) -> CasImage:
@@ -201,5 +220,5 @@ def parse_cas(data: bytes) -> CasImage:
         blocks=tuple(parser.blocks),
         warnings=tuple(warnings),
         edges=parser.signal.edge_bytes(),
-        length=sample_time(parser.signal.samples),
+        length=sample_time(parser.signal.sample_count),
     )

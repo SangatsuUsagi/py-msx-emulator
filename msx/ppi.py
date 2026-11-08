@@ -15,6 +15,10 @@ from msx.memory import Memory
 # to a DACSound8U (127/128 of full scale), and its machine configs give the PPI
 # sound volume 16000 against the PSG's 21000. 12287 * 127/128 * 16000/21000.
 KEY_CLICK_LEVEL: int = 9288
+# Control word bit 3: 1 sets the Port C upper half (bits 7-4) to input.
+_CTRL_PORT_C_UPPER_INPUT = 0x08
+# Port C bit 4: the tape motor, 0 = on.
+_PORT_C_MOTOR_OFF = 0x10
 
 
 class PpiState(TypedDict):
@@ -103,8 +107,8 @@ class PPI:
         I8255::outputPortC does. In input mode the motor keeps its state.
         The key click and the row select do not follow this rule (a known
         difference, add-cassette-playback design Non-Goals)."""
-        if self.cassette is not None and not self._control & 0x08:
-            self.cassette.set_motor(not self._port_c & 0x10)
+        if self.cassette is not None and not self._control & _CTRL_PORT_C_UPPER_INPUT:
+            self.cassette.set_motor(not self._port_c & _PORT_C_MOTOR_OFF)
 
     def reset(self) -> None:
         """Restore the Intel 8255 post-reset defaults: control word back to

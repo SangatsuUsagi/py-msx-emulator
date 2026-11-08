@@ -8,7 +8,7 @@ and turns them into `[CATEGORY]  message` lines.
 """
 from __future__ import annotations
 
-from host.cas_image import CPU_HZ
+from host.tape import seconds
 from msx.boundary import (
     TRACE_EVENT_CPU_HISTORY,
     TRACE_EVENT_HANG_HALT_DI,
@@ -58,7 +58,7 @@ def _tape_motor_line(event: TraceEvent) -> str:
     position = (event.b & 0xFFFFFFFF) | (event.c << 32)
     tape = "tape mounted" if event.d else "no tape"
     return _line(
-        "IO", f"tape motor {state}  position={position} ({position / CPU_HZ:.3f} s)  {tape}",
+        "IO", f"tape motor {state}  position={position} ({seconds(position):.3f} s)  {tape}",
     )
 
 

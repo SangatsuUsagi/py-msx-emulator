@@ -916,7 +916,7 @@ def _h_tape_seek(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
         value = params["seconds"]
         if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
             raise RpcError(ERR_INVALID_PARAMS, "seconds must be a number of 0 or more")
-        _tape_call(lambda: deck.seek_seconds(float(value)))
+        _tape_call(lambda: deck.seek_seconds(value))
     return _h_tape_status(server, params)
 
 

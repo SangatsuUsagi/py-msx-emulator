@@ -23,8 +23,9 @@
  *   - A member that returns a status returns int32_t, one of MSX_STATUS_*.
  *     After a failure, msx_core_last_error_text gives the UTF-8 message.
  *   - Integer arguments are int32_t, so -1 can mean "none" where a member
- *     says so. Booleans are int32_t 0 or 1; a setter returns
- *     MSX_STATUS_BAD_ARGUMENT for any other value.
+ *     says so. T-state and frame counts are int64_t (msx_core_seek_tape,
+ *     msx_core_set_frame_breakpoint). Booleans are int32_t 0 or 1; a setter
+ *     returns MSX_STATUS_BAD_ARGUMENT for any other value.
  *   - Lists with a fixed limit are written to a caller array, and the
  *     function returns the count.
  *

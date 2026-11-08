@@ -36,6 +36,7 @@ from msx.vdp.v9938 import V9938, V9938State, parse_v9938_state
 from msx.vdp.vdp import VDP
 
 if TYPE_CHECKING:
+    from msx.cassette import TapeIdentity
     from msx.fdc.interface import FloppyDiskParsed
     from msx.machine import Machine
     from msx.mapper import Mapper
@@ -135,6 +136,9 @@ if TYPE_CHECKING:
 CURRENT_FORMAT_VERSION: int = 23
 
 _SHA256_HEX_LEN = 64
+_SHA1_HEX_LEN = 40
+# The smallest edge list: one u32 interval (io-cassette).
+_MIN_EDGE_LIST_BYTES = 4
 
 
 class StateLoadError(SnapshotError):
@@ -405,15 +409,18 @@ def _printer_snapshot(machine: "Machine") -> PrinterSnapshot | None:
     return PrinterSnapshot(data=state["data"], strobe=state["strobe"])
 
 
+def _identity_snapshot(identity: TapeIdentity | None) -> TapeIdentitySnapshot | None:
+    if identity is None:
+        return None
+    return TapeIdentitySnapshot(size=identity["size"], sha1=identity["sha1"])
+
+
 def _tape_snapshot(machine: "Machine") -> TapeSnapshot | None:
     if machine.cassette is None:
         return None
     state = machine.cassette.snapshot_state()
-    identity = state["identity"]
     return TapeSnapshot(
-        identity=None if identity is None else TapeIdentitySnapshot(
-            size=identity["size"], sha1=identity["sha1"]
-        ),
+        identity=_identity_snapshot(state["identity"]),
         position=state["position"],
         motor=state["motor"],
     )
@@ -431,10 +438,7 @@ def _check_tape(machine: "Machine", saved: TapeSnapshot | None) -> None:
     _check_optional_wiring("cassette port", machine.cassette is not None, saved)
     if machine.cassette is None or saved is None:
         return
-    current = machine.cassette.identity
-    running = None if current is None else TapeIdentitySnapshot(
-        size=current["size"], sha1=current["sha1"]
-    )
+    running = _identity_snapshot(machine.cassette.identity)
     if running != saved.identity:
         raise SnapshotMismatchError(
             f"tape mismatch: running has {_tape_text(running)}, "
@@ -835,8 +839,9 @@ def _parse_tape(value: object) -> TapeSnapshot | None:
     if obj["identity"] is not None:
         ident = check_object(obj["identity"], "tape.identity", _TAPE_IDENTITY_KEYS)
         identity = TapeIdentitySnapshot(
-            size=check_int(ident["size"], "tape.identity.size", 4, SAFE_INT_MAX),
-            sha1=check_lower_hex(ident["sha1"], "tape.identity.sha1", 40),
+            size=check_int(ident["size"], "tape.identity.size", _MIN_EDGE_LIST_BYTES,
+                           SAFE_INT_MAX),
+            sha1=check_lower_hex(ident["sha1"], "tape.identity.sha1", _SHA1_HEX_LEN),
         )
     return TapeSnapshot(
         identity=identity,
@@ -1178,11 +1183,7 @@ def _apply_sound_and_io(
         machine.printer.apply_state({"data": snap.printer.data, "strobe": snap.printer.strobe})
     if machine.cassette is not None and snap.tape is not None:
         # After the clock: the position counts from the restored cycle.
-        machine.cassette.apply_state({
-            "identity": machine.cassette.identity,
-            "position": snap.tape.position,
-            "motor": snap.tape.motor,
-        })
+        machine.cassette.apply_state(snap.tape.position, snap.tape.motor)
 
 
 def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
