@@ -2,7 +2,7 @@
 
 [← README.md](../README.md)
 
-This document describes the internal structure of the MSX1/MSX2 emulator: CPU execution, interrupt handling, I/O dispatch, VDP rendering, and the memory subsystem.
+This document describes the internal structure of the MSX1/MSX2 emulator: the CPU, interrupts, I/O, the VDP, audio, frame pacing, memory and slots, the floppy and cassette interfaces, and the machine YAML and its loader. It ends with the core boundary and notes for a port to another language.
 
 - [CPU emulation](#cpu-emulation)
 - [Interrupt management](#interrupt-management)
@@ -436,7 +436,7 @@ The floppy subsystem is a generic layer (`msx/fdc/`). A new controller chip or c
 The `fdc:` block in the machine YAML declares the controller and the connection style of a machine. The two shipped floppy machines thus differ only in data:
 
 - The Sony HB-F1XD (`hb_f1xd`) puts the WD2793 and its DISK ROM in slot 3 sub-slot 0, with 64 KB of flat RAM in sub-slot 3.
-- The Panasonic FS-A1F (`fs_a1f`) uses the TC8566AF and spreads the roles across its four secondary slots: RAM in sub-slot 0, SUB ROM in 1, and the FDC in 2.
+- The Panasonic FS-A1F (`fs_a1f`) uses the TC8566AF and spreads the roles across its four secondary slots: RAM in sub-slot 0, SUB ROM in 1, and the FDC in 2. This machine definition comes from publicly available technical documentation and is not verified on real hardware.
 
 `--fdd1`/`--fdd2` mount images into drives A/B. `--fdd1` can take a list of images. Three paths swap disks at runtime. All of them call `swap_disk()` in `host/media.py`. It first writes a dirty outgoing image back to its file, and then calls `Machine.mount_disk()`, which calls the `swap()` of the floppy interface. On success, it records the new file in the `DiskFiles` table that the three paths share:
 
@@ -799,9 +799,7 @@ Apart from that device-register case, no inspection query changes emulated state
 
 No `CoreApi` member takes a callback. A break is reported only through the `step_frame` result and `last_stop()`: the core calls no host code, prints nothing and catches no `KeyboardInterrupt`. After a stop, the host's `handle_stop()` (`host/debugger/stop.py`) prints the watchpoint line, then pauses the RPC server or opens the debugger. While the emulator runs, the host maps Ctrl-C in the terminal to `request_break()`. The next `step_frame` continues the stopped frame. Its first instruction is not tested against the breakpoints, so a resume does not stop again at once.
 
-The other members do not cross the boundary, and a port does not need them to run software:
-
-- `run_frame()`, the internal frame loop
+The internal frame loop `run_frame()` does not cross the boundary, and a port does not need it to run software.
 
 ### MachineConfig document
 
@@ -905,7 +903,7 @@ A port must also decide one point:
 
 - **Debug control.** The break settings, `request_break()` and the stop result are in the contract (DebugControl). A port that supports the debugger keeps the position of a stopped frame and continues it on the next `step_frame`, and skips the breakpoint test for the first instruction after a stop. A port can leave the break settings out at first: with none armed, `step_frame` never stops.
 
-Some Python patterns have no direct equivalent in a statically typed language: bus hooks, register properties, the PSG envelope underflow, the renderer lookup tables and callable hooks. See [Portability](#portability).
+Some Python patterns have no direct equivalent in a statically typed language: bus hooks, register properties, the PSG envelope underflow, the renderer lookup tables and the frame-timer spin loop. See [Portability](#portability).
 
 A suggested order for a port:
 
@@ -967,4 +965,4 @@ The V9938 G4/G6 and G5 per-scanline pixel expanders memoize `bytes.translate()` 
 
 A Rust port adds `std::hint::spin_loop()` in the same loop. This gives the CPU pipeline a hint without a sleep. It can decrease power consumption and improve timing jitter on SMT cores.
 
-During fast-forward, the frontend calls `FrameTimer.tick_unpaced()` instead of `tick()`. It counts the frame for the fps measurement and restarts the deadline, but it does not wait. A port keeps the same two entry points.
+A port keeps the same two entry points, `tick()` and `tick_unpaced()` (see [Frame pacing](#frame-pacing-frontend)).
