@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import functools
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -1401,6 +1402,14 @@ class TestReadlineIntegration:
             with patch("builtins.input", side_effect=iter(["c"])):
                 Debugger(m).enter()  # must not raise
         assert "Debugger entered" in capsys.readouterr().out
+
+    def test_cpython_and_pypy_keep_separate_history_files(self):
+        """debug-monitor: CPython and PyPy keep separate history files."""
+        cpython = prompt_module._history_file_for("cpython")
+        pypy = prompt_module._history_file_for("pypy")
+        assert cpython == Path.home() / ".msx_dbg_history_cpython"
+        assert pypy == Path.home() / ".msx_dbg_history_pypy"
+        assert cpython != pypy
 
     def test_missing_history_file_does_not_raise(self, capsys):
         m = _make_machine()

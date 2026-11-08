@@ -68,8 +68,19 @@ _HELP = (
 # `da` disassembles a fixed window of instructions from the given address.
 _DISASM_WINDOW = 10
 
+
+def _history_file_for(implementation: str) -> Path:
+    """The REPL history file of one Python implementation (`cpython`, `pypy`).
+
+    The implementations cannot share one file: macOS CPython's libedit
+    `readline` writes a space as `\\040`, and PyPy's pyrepl `readline` reads
+    each line as plain text, so a shared file shows `tape\\040load` in PyPy.
+    """
+    return Path.home() / f".msx_dbg_history_{implementation}"
+
+
 # Cross-session REPL command history (only used when `readline` is available).
-_HISTORY_FILE = Path.home() / ".msx_dbg_history"
+_HISTORY_FILE = _history_file_for(sys.implementation.name)
 _HISTORY_LENGTH = 500
 
 # Loop-control commands handled inline in Debugger._repl_loop() (see below), not

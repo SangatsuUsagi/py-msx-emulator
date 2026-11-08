@@ -28,7 +28,7 @@ With `--rpc`, Ctrl+C in the terminal also opens the REPL, and the RPC pause stat
 
 ### Line editing and history
 
-The `readline` module is available in stock CPython and PyPy on macOS and Linux. Where it is available, the prompt gives the usual line editing and Tab completion of all command names. It also keeps a command history across runs in `~/.msx_dbg_history`. The history holds the last 500 entries. The debugger reads it when the REPL opens and writes it when emulation resumes. Stock Windows CPython has no `readline`. The REPL still works there, but without editing, completion, or history.
+The `readline` module is available in stock CPython and PyPy on macOS and Linux. Where it is available, the prompt gives the usual line editing and Tab completion of all command names. It also keeps a command history across runs, in `~/.msx_dbg_history_cpython` on CPython and in `~/.msx_dbg_history_pypy` on PyPy. The two interpreters write the file in different formats, so each one has its own file. The history holds the last 500 entries. The debugger reads it when the REPL opens and writes it when emulation resumes. Stock Windows CPython has no `readline`. The REPL still works there, but without editing, completion, or history.
 
 ### Breakpoints and watchpoints at launch
 
