@@ -314,7 +314,7 @@ The cassette port plays a CAS tape image. `--tape FILE.cas` (or the `tape` key o
 
 While a tape is mounted and the motor runs, the frontend runs as fast-forward and the window title shows `[TAPE]`. `--no-tape-fast` loads at normal speed. The speed does not change the result of a load. A save state records the identity of the tape signal (its size and SHA1), the position and the motor. It loads only with the same tape mounted.
 
-- Known limitations: CAS files only. Convert a WAV recording to CAS with an external tool. TSX files are not supported. There is no recording (the cassette output, Port C bit 5, is not implemented) and no fast loader: a load takes the time of the real tape, or less with tape-fast. Tape loads are not yet checked on real hardware.
+- Known limitations: CAS files only. Convert a WAV recording to CAS with an external tool. TSX files are not supported. There is no recording (the cassette output, Port C bit 5, is not implemented) and no fast loader: a load takes the time of the real tape, or less with tape-fast. Tape loads are not yet checked on real hardware. While a tape is mounted, the CPU loop counts the clock at each instruction, so CPython runs slightly slower: 2.7% on an MSX2 cartridge game in the benchmark, with the motor off. PyPy shows no measurable difference. Eject the tape to get the full speed back.
 - Implementation: `msx/cassette.py` (the core plays the signal), `host/cas_image.py` (CAS conversion), `host/tape.py` (the mounted file and its blocks)
 
 ### Keyboard / joystick input
