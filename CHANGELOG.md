@@ -2,6 +2,13 @@
 
 [日本語版はこちら](CHANGELOG_ja.md)
 
+- **v2.10.1** (2026-11-08): The debugger keeps a separate command history file for CPython and for PyPy.
+  - CPython and PyPy shared `~/.msx_dbg_history`, but they write it in different formats. On macOS, CPython's
+    `readline` (libedit) writes a space as `\040`, and PyPy's `readline` reads each line as plain text. After a CPython
+    session, PyPy showed history lines such as `tape\040load`. The history is now in `~/.msx_dbg_history_cpython` on
+    CPython and in `~/.msx_dbg_history_pypy` on PyPy.
+  - The old `~/.msx_dbg_history` is no longer read, and it can be deleted.
+  - No change to the save-state format.
 - **v2.10.0** (2026-11-08): Cassette tape playback, tape WAV tools, ABI version 1.2, and save-state format 23.
   - The cassette port plays a CAS tape image on every shipped machine. The host converts the CAS file into a
     1200-baud tape signal, and the guest BIOS reads it with its own routines (`CLOAD`, `BLOAD"CAS:",R`,

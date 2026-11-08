@@ -2,6 +2,13 @@
 
 [English version here](CHANGELOG.md)
 
+- **v2.10.1** (2026-11-08): デバッガのコマンド履歴のファイルを、CPython と PyPy で分けた。
+  - CPython と PyPy は `~/.msx_dbg_history` を共有していたが、書式が違っていた。macOS の CPython の `readline`
+    （libedit）は空白を `\040` として書き、PyPy の `readline` は各行をそのままの文字列として読む。そのため、CPython で
+    使ったあとの PyPy では、`tape\040load` のような履歴が出ていた。履歴は、CPython では `~/.msx_dbg_history_cpython`、
+    PyPy では `~/.msx_dbg_history_pypy` に残すようにした。
+  - これまでの `~/.msx_dbg_history` はもう読まないので、消してよい。
+  - セーブステートの形式は変わらない。
 - **v2.10.0** (2026-11-08): カセットテープの再生とテープ WAV のツールを追加し、ABI バージョンを 1.2、セーブステートの形式を 23 にした。
   - カセットポートが CAS のテープイメージを再生する。同梱のすべての機種にポートがある。ホストが CAS ファイルを
     1200 ボーのテープ信号に変換し、ゲストの BIOS が自身のルーチン（`CLOAD`、`BLOAD"CAS:",R`、`RUN"CAS:"`）で読む。

@@ -28,7 +28,7 @@ Debugger entered. Type 'c' to resume, 'q' to exit.
 
 ### 行編集と履歴
 
-`readline` モジュールは、macOS と Linux では標準の CPython にも PyPy にも入っています。使える環境では、プロンプトで通常の行編集と、全コマンド名の Tab 補完ができます。コマンドの履歴も、最新の 500 件を実行をまたいで `~/.msx_dbg_history` に残します。デバッガは REPL を開くときに履歴を読み込み、エミュレーションを再開するときに書き出します。Windows の標準の CPython には `readline` がありません。そこでも REPL は動きますが、行編集、補完、履歴は使えません。
+`readline` モジュールは、macOS と Linux では標準の CPython にも PyPy にも入っています。使える環境では、プロンプトで通常の行編集と、全コマンド名の Tab 補完ができます。コマンドの履歴も、最新の 500 件を実行をまたいで残します。履歴のファイルは、CPython では `~/.msx_dbg_history_cpython`、PyPy では `~/.msx_dbg_history_pypy` です。2 つのインタプリタは履歴を違う書式で書くので、ファイルを分けています。デバッガは REPL を開くときに履歴を読み込み、エミュレーションを再開するときに書き出します。Windows の標準の CPython には `readline` がありません。そこでも REPL は動きますが、行編集、補完、履歴は使えません。
 
 ### 起動時にブレークポイントとウォッチポイントを設定する
 
