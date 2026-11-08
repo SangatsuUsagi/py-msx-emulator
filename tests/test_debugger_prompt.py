@@ -866,6 +866,54 @@ def _slot_bank(mem: Memory, primary: int, secondary, page: int) -> str:
     return slot_bank_text(mem.describe_slot(primary, sub, page), page)
 
 
+def _make_plain_slot3_machine(
+    slot_register: int, ram_size: int, slot0_ram: bytearray | None = None,
+) -> MagicMock:
+    """A machine with a non-expanded slot 3 holding `ram_size` bytes of flat
+    RAM (0: none) and, optionally, RAM in slot 0 page 2 (as on an HB-10)."""
+    m = _make_machine()
+    m.memory = Memory(
+        rom=b"\x00" * 32768,
+        ram=bytearray(ram_size),
+        mapper1=FlatMapper(None),
+        mapper2=FlatMapper(None),
+        slot_register=slot_register,
+        slot0_ram=slot0_ram,
+        slot0_ram_page=2,
+    )
+    return m
+
+
+class TestPlainSlot3:
+    """debug-monitor "sl / st — content of a non-expanded slot 3"."""
+
+    def test_msx1_flat_ram_shows_as_ram(self, capsys):
+        # 0xF0: P0/P1 -> slot 0, P2/P3 -> slot 3.
+        m = _make_plain_slot3_machine(slot_register=0xF0, ram_size=0x8000)
+        Debugger(m)._cmd_slot_active()
+        rows = capsys.readouterr().out.splitlines()
+        p2 = next(line for line in rows if line.strip().startswith("P2"))
+        p3 = next(line for line in rows if line.strip().startswith("P3"))
+        assert p2.split()[4] == "RAM"
+        assert p3.split()[4] == "RAM"
+        Debugger(m)._cmd_slot_tree()
+        assert "  Primary 3  RAM  32KB" in capsys.readouterr().out.splitlines()
+
+    def test_page_below_flat_ram_shows_empty(self, capsys):
+        # 0xF3: P0 -> slot 3, P1 -> slot 0, P2/P3 -> slot 3.
+        m = _make_plain_slot3_machine(slot_register=0xF3, ram_size=0x8000)
+        Debugger(m)._cmd_slot_active()
+        rows = capsys.readouterr().out.splitlines()
+        p0 = next(line for line in rows if line.strip().startswith("P0"))
+        assert p0.split()[4] == "empty"
+
+    def test_slot3_without_ram_shows_empty(self, capsys):
+        m = _make_plain_slot3_machine(
+            slot_register=0xF0, ram_size=0, slot0_ram=bytearray(0x4000))
+        Debugger(m)._cmd_slot_tree()
+        assert "  Primary 3  empty" in capsys.readouterr().out.splitlines()
+
+
 class TestSlotRomMapperBank:
     @staticmethod
     def _rom16(pages: int):
