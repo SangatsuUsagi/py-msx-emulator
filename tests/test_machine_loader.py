@@ -849,7 +849,8 @@ def test_parse_slot3_msx2_flat_ram_last_declared_subslot_wins() -> None:
 
 
 # ---------------------------------------------------------------------------
-# RAM mapper size resolution (openspec/changes/archive/2026-09-09-ram-mapper-configurable-size)
+# RAM mapper size resolution (machine-loader "MachineSpec resolves MSX2 slot 3
+# sub-ROM and RAM mapper")
 # ---------------------------------------------------------------------------
 
 
@@ -1001,7 +1002,7 @@ def test_slot3_multiple_violations_reports_sub_rom_out_of_range_first() -> None:
 
 # ---------------------------------------------------------------------------
 # _parse_fdc: drives must be positive, not silently clamped
-# (openspec/changes/archive/2026-09-01-machine-loader-validation-gaps)
+# (machine-loader "Zero or negative drive count is rejected")
 # ---------------------------------------------------------------------------
 
 _FDC_ROM = {"rom": {"file": "disk.rom", "size_kb": 16, "pages": [1]}}
@@ -1023,7 +1024,7 @@ def test_parse_fdc_rejects_negative_drives() -> None:
 # ---------------------------------------------------------------------------
 # flat RAM colliding with SUB ROM's or the FDC's sub-slot is rejected;
 # SUB ROM and FDC sharing a sub-slot (HB-F1XD's real layout) remains allowed
-# (openspec/changes/archive/2026-09-01-machine-loader-validation-gaps)
+# (machine-loader "Loader resolves MSX2 slot 3 sub-slot layout")
 # ---------------------------------------------------------------------------
 
 
@@ -1114,7 +1115,7 @@ def test_build_machine_logo_override_bypasses_disk(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # Real config/machines/cbios_msx2*.yaml keep their pre-existing 128 KB RAM
 # mapper resolution unchanged now that size_kb is configurable
-# (openspec/changes/archive/2026-09-09-ram-mapper-configurable-size)
+# (machine-loader "mapper: standard sub-slot defaults to 128 KB")
 # ---------------------------------------------------------------------------
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -1137,7 +1138,8 @@ def test_real_cbios_msx2_machines_resolve_128kb_ram_mapper(machine_id: str) -> N
 
 
 # ---------------------------------------------------------------------------
-# Machine-level io_device (openspec/changes/add-machine-io-device): a global
+# Machine-level io_device (machine-loader "Machine YAML declares a
+# machine-level global I/O device"): a global
 # I/O device (kanji_rom) declared directly on a machine's own YAML, decoupled
 # from --extension's overlay-only io_device (see tests/test_cli_hbi_j1.py for
 # the overlay-side coverage of the same device kind).

@@ -31,9 +31,8 @@ class Memory:
 
     Resolves the current `slot_register`/`sub_slot_reg` into a per-page
     (16 KB) dispatch cache (`_page_read`/`_page_write`) rather than
-    re-deriving the routing decision on every access; see
-    `openspec/changes/archive/2026-08-09-memory-dispatch-cache/design.md`
-    for the full design history, including two benchmark-driven revisions.
+    re-deriving the routing decision on every access; see memory-slot-bus
+    "Page-routing cache stays consistent with slot state".
     """
 
     rom: bytes

@@ -9,7 +9,8 @@ file is read. The document holds no host path. Each ROM is a reference
 the debugger), and the image itself travels beside the document, keyed by
 SHA1. Run inputs (initial SRAM/CMOS images, disks, the RTC start time) are
 not part of it. msx/machine_config.schema.json states the same layout
-language-neutrally; see openspec/changes/archive/2026-10-25-portable-machine-config.
+language-neutrally; see machine-loader "The document layout is published as
+a JSON Schema".
 """
 from __future__ import annotations
 
@@ -47,10 +48,9 @@ from msx.snapshot_schema import (
 
 _T = TypeVar("_T")
 
-# Version 1: the first MachineConfig document (openspec/changes/archive/
-#   2026-10-25-portable-machine-config).
+# Version 1: the first MachineConfig document.
 # Version 2: machine.printer_port added.
-# Version 3: machine.cassette_port added (openspec/changes/add-cassette-playback).
+# Version 3: machine.cassette_port added.
 # Version 4: machine.ram_mapper_subslot added.
 MACHINE_CONFIG_FORMAT_VERSION: int = 4
 # The oldest version the parser accepts (machine-loader "build_machine checks

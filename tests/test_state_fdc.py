@@ -256,7 +256,8 @@ def test_fdc_unwired_machine_rejects_fdc_state(tmp_path: Path, saves_dir: Path) 
 
 
 # ---------------------------------------------------------------------------
-# Restore atomicity (openspec/changes/2026-09-01-restore-atomicity)
+# Restore atomicity (machine-state "Producer parse_state validates before
+# any producer is restored")
 # ---------------------------------------------------------------------------
 
 def test_floppy_disk_state_drive_count_mismatch_rejected_before_restore() -> None:

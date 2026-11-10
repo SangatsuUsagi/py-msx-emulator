@@ -5,7 +5,8 @@ name:
   font ROM"
 
 # Verifies the ascii8/ascii16 expanded-overlay sub-slot device kinds
-# (openspec/changes/add-ascii-expanded-subslot-devices) against a real ROM.
+# (cart-extension-overlay "An expanded overlay sub-slot may hold an ASCII8 or
+# ASCII16 mapper") against a real ROM.
 # Same shape as msxdos2_512k.yaml (sub-slot 0 RAM mapper, sub-slot 1
 # MSX-DOS2 kernel ROM), plus an ASCII8-mapped (8 KB-bank MEGA ROM
 # Controller) View font ROM in sub-slot 2.

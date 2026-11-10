@@ -7,8 +7,8 @@ PORT-LIBRARY-NOTE: this file's `yaml.safe_load()` -> `dict[str, Any]` ->
   hand-rolled isinstance/.get() validation into typed dataclasses (MachineSpec
   et al.) used to be the largest source of `Any` in this codebase (same
   pattern, at smaller scale, still applies to host/app_config.py and
-  host/romdb.py). RESOLVED for this file by
-  openspec/changes/archive/2026-08-22-typed-machine-loader-yaml: every raw YAML mapping this
+  host/romdb.py). RESOLVED for this file (machine-loader "YAML-to-dataclass
+  boundary is statically typed"): every raw YAML mapping this
   file validates is now typed via `TypedDict` (`RomEntryYaml`,
   `DeviceEntryYaml`, `MachineEntryYaml`, etc.) with `TypeGuard`-returning
   `_is_<thing>_shape` narrowing functions, so a field read off an
@@ -178,8 +178,8 @@ class RomEntryYaml(TypedDict, total=False):
 
 def _is_rom_entry_shape(data: object) -> TypeGuard[RomEntryYaml]:
     """True if `data` is a dict (rom: block shape). `file`'s presence is
-    still checked by `_parse_rom_entry` itself, not guaranteed here -- see
-    openspec/changes/archive/2026-08-22-typed-machine-loader-yaml/design.md Decision 2."""
+    still checked by `_parse_rom_entry` itself, not guaranteed here -- this
+    file's parsers check each field inline where they read it."""
     return isinstance(data, dict)
 
 
@@ -1093,8 +1093,8 @@ def load_extension_overlay(
         )
 
     # `slot:` documents which primary slot this overlay YAML's author
-    # targeted/tested -- both slots 1 and 2 are supported placements now
-    # (openspec/changes/archive/2026-09-21-slot1-slot2-symmetrization); it does NOT itself
+    # targeted/tested -- both slots 1 and 2 are supported placements now;
+    # it does NOT itself
     # route the overlay to a slot -- load_machine_config's caller decides that via
     # which of extension_overlay1/extension_overlay2 it passes the resolved
     # overlay through as.

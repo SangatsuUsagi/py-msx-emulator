@@ -1,11 +1,10 @@
 """Correctness tests for Memory's per-page dispatch cache.
 
-Covers the scenarios in
-openspec/changes/memory-dispatch-cache/specs/memory-bus/spec.md: routing
+Covers memory-slot-bus "Page-routing cache stays consistent with slot
+state": routing
 must always reflect the current slot_register/sub_slot_reg, for every
 slot-3 RAM strategy (MSX1 flat, legacy RamMapper, data-driven
-flat_ram_subslot). Also includes a differential sweep (task 3.3 of
-openspec/changes/memory-dispatch-cache/tasks.md) against a frozen copy of
+flat_ram_subslot). Also includes a differential sweep against a frozen copy of
 the pre-cache read()/write() decode logic, across every slot_register and
 sub_slot_reg value.
 """

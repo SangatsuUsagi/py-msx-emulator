@@ -632,7 +632,7 @@ class TestMachineLoaderSramIntegration:
         assert machine.memory.mapper1.sram_image.data() == bytearray(2048)
 
     # -----------------------------------------------------------------------
-    # Slot 2 (openspec/changes/slot1-slot2-symmetrization, design.md D1):
+    # Slot 2 (cart-sram-mapper "Host SRAM load/save integration"):
     # the identical SHA1-keyed load/save path mechanism, now run once per
     # slot instead of slot 1 only.
     # -----------------------------------------------------------------------

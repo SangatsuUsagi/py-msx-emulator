@@ -110,8 +110,8 @@ class MapperKind(str, Enum):
     # Memory.mapper2, see machine_loader.py), so it needs a kind too --
     # msx/state.py's mapper2_kind identity check covers slot 2 (Memory.
     # mapper2/mapper2_subslots) the same way mapper_kind already covers
-    # slot 1 (Memory.mapper1), see openspec/changes/
-    # generalize-slot2-mapper-state.
+    # slot 1 (Memory.mapper1), see machine-state "Slot 2 mapper state save
+    # and restore".
     FMPAC = "fmpac"
     # RamMapper (msx/ram_mapper.py) structurally satisfies Mapper so it can be
     # placed in Memory.mapper2_subslots (an expanded slot 2's --extension

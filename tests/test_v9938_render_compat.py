@@ -92,8 +92,8 @@ def test_screen1_name_and_pattern_tables_above_16k() -> None:
     """GRAPHIC1's name/pattern tables use the full V9938 128 KB range (R#2 7
     bits, R#4 6 bits), the same fix GRAPHIC2/3 already had
     (test_screen4_name_table_above_16k / test_g3_pattern_base_uses_r4_bits_5_2)
-    -- found by an allium weed pass while investigating
-    logs/msx-21-hb-f1xd-select-screen-text-missing.md: this codebase's own
+    -- found by an allium weed pass while investigating a menu screen whose
+    text rendered blank on the V9938: this codebase's own
     G1 colour table was already on the wide (R#10/&0x1FFFF) form while
     name/pattern were still the narrow TMS9918A-only (16 KB) form."""
     vdp = V9938()
@@ -124,8 +124,7 @@ def test_screen1_name_and_pattern_tables_above_16k() -> None:
 def test_screen2_band1_2_alias_band0_when_r4_r3_low_bits_clear() -> None:
     """R#4 bits 1:0 clear (and R#3 bits 6:5 clear) collapse the 2nd/3rd-third
     pattern/colour tables onto the 1st third (msx.org/wiki/SCREEN_2's
-    documented "reused" behaviour) -- a real-ROM regression
-    (logs/msx-21-hb-f1xd-select-screen-text-missing.md): a title/menu screen
+    documented "reused" behaviour) -- a real-ROM regression: a title/menu screen
     defining only one 2 KB font+colour third rendered blank on tile rows
     8-23 because the code read the (uninitialised) 2nd/3rd-third VRAM
     directly instead of mirroring the 1st third's real data."""
@@ -386,7 +385,7 @@ def test_banded_frame_applies_tp_per_band() -> None:
 def test_text1_name_and_pattern_tables_above_16k() -> None:
     """TEXT1's name/pattern tables use the full V9938 128 KB range, the same
     fix as GRAPHIC1/GRAPHIC2/GRAPHIC3 above -- found by the same allium weed
-    pass (logs/msx-21-hb-f1xd-select-screen-text-missing.md)."""
+    pass."""
     vdp = V9938()
     vdp.regs[1] = 0x50  # TEXT1
     vdp.regs[2] = 0x30  # name_base = (0x30 & 0x7F) << 10 = 0xC000
@@ -411,7 +410,7 @@ def test_text1_name_and_pattern_tables_above_16k() -> None:
 def test_mc_name_and_pattern_tables_above_16k() -> None:
     """MULTICOLOUR's name/pattern tables use the full V9938 128 KB range, the
     same fix as GRAPHIC1/2/3 and TEXT1 above -- found by the same allium weed
-    pass (logs/msx-21-hb-f1xd-select-screen-text-missing.md)."""
+    pass."""
     vdp = V9938()
     vdp.regs[1] = 0x48   # MULTICOLOR
     vdp.regs[2] = 0x30   # name_base = (0x30 & 0x7F) << 10 = 0xC000

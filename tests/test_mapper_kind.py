@@ -1,6 +1,7 @@
 """MapperKind is the closed, port-friendly identifier persisted in save-state
 in place of a mapper's Python class name (see msx/mapper.py's MapperKind
-docstring and openspec/changes/mapper-state-tagged-union). This test only
+docstring and machine-state "Closed mapper-kind discriminant for
+save-state"). This test only
 checks the class-level `kind` wiring is consistent -- it does not exercise
 save/load behavior (see tests/test_state.py for that).
 """
@@ -184,9 +185,8 @@ def test_reset_restores_ascii8_bank_registers_to_power_on_values() -> None:
     # Every bank-switching mapper now restores its bank registers on
     # reset() -- an explicit emulation-policy choice (this project treats
     # the slot reset signal as reaching every cartridge mapper's own reset
-    # input; see openspec/changes/wire-cartridge-mapper-and-ppi-reset and
-    # cart-rom-mapper's "Bank-switching mapper reset restores power-on
-    # state"), reversing this project's earlier no-op position.
+    # input; see cart-rom-mapper's "Bank-switching mapper reset restores
+    # power-on state"), reversing this project's earlier no-op position.
     ascii8 = Ascii8Mapper(rom=bytes(range(256)) * 128)
     ascii8.write(0x6000, 3)
     assert ascii8._banks != [0, 0, 0, 0]

@@ -368,7 +368,6 @@ def test_unpopulated_subslots_read_open_bus(tmp_path: Path) -> None:
 
 # ---------------------------------------------------------------------------
 # Slot 1: the identical expanded overlay, targeting slot 1 instead of slot 2
-# (openspec/changes/slot1-slot2-symmetrization Phase 5)
 # ---------------------------------------------------------------------------
 
 def test_build_machine_wires_ram_mapper_subslot_on_slot1(tmp_path: Path) -> None:

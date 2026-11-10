@@ -53,7 +53,8 @@ def test_extension_fmpac_alone_boots() -> None:
 
 
 def test_extension1_fmpac_alone_boots() -> None:
-    # openspec/changes/slot1-slot2-symmetrization: --extension1 places a
+    # cart-extension-overlay "fmpac extension installs FmPac in its selected
+    # slot": --extension1 places a
     # flat-shape overlay (fmpac) on slot 1, real end-to-end (build_machine
     # is not mocked here, only the filesystem/SDL2).
     code, out, _err = _run_main(["--extension1", "fmpac", "--count-frame", "1"])

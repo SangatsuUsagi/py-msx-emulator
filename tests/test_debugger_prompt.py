@@ -646,7 +646,7 @@ class TestSlotActive:
                 assert "Flat" in line
 
     def test_sl_slot1_subslot_shows_its_own_mapper_content(self, capsys):
-        """openspec/changes/slot1-slot2-symmetrization: the identical
+        """The identical
         regression coverage test_sl_slot2_subslot_shows_its_own_mapper_content
         establishes for slot 2, applied to slot 1's own expansion."""
         from msx.mapper import FlatMapper as _FlatMapper
@@ -830,7 +830,7 @@ class TestSlotTree:
         assert "2-1  Cartridge (empty)" in out
 
     def test_st_shows_expanded_slot1_subslots(self, capsys):
-        """openspec/changes/slot1-slot2-symmetrization: the identical
+        """The identical
         regression coverage test_st_shows_expanded_slot2_subslots
         establishes for slot 2, applied to slot 1's own expansion."""
         from msx.mapper import FlatMapper as _FlatMapper

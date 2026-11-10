@@ -221,7 +221,6 @@ def test_standard_ports_still_register_alongside_kernel_rom(tmp_path: Path) -> N
 
 # ---------------------------------------------------------------------------
 # Slot 1: the identical expanded overlay, targeting slot 1 instead of slot 2
-# (openspec/changes/slot1-slot2-symmetrization Phase 5)
 # ---------------------------------------------------------------------------
 
 def test_build_machine_wires_ram_mapper_and_kernel_rom_subslots_on_slot1(

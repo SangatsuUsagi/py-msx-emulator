@@ -1,8 +1,8 @@
 """Tests for FDC + RAM mapper coexistence in the legacy slot-3 strategy.
 
-Before openspec/changes/archive/2026-09-09-slot3-fdc-ram-mapper-coexistence,
-an FDC required flat_ram_subslot (the data-driven strategy); this file
-covers the newly allowed combination of an FDC with a RAM mapper instead.
+An FDC once required flat_ram_subslot (the data-driven strategy); this file
+covers the newly allowed combination of an FDC with a RAM mapper instead
+(memory-slot-bus "FDC composes with a RAM mapper").
 
 slot_register 0xFF selects slot 3 for every page, so sub_slot_reg alone
 drives the sub-slot dispatch. sub_slot_reg bit pairs: page0=1:0, page1=3:2,

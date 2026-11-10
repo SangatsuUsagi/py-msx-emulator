@@ -103,7 +103,8 @@ def test_sprite_mode2_colour_from_colour_table() -> None:
 def test_sprite_mode2_colour_table_r5_low_bits_gate_not_relocate() -> None:
     """R#5 bits 1:0 (base bits 8:7) GATE, not simply relocate, the low bits
     of the per-sprite colour offset (sprite_idx*16 + line) -- found by an
-    allium weed pass (logs/msx-21-hb-f1xd-select-screen-text-missing.md).
+    allium weed pass (while investigating a menu screen whose text rendered
+    blank).
     With R#5 = 0x74 (bits 1:0 clear), sprite 8's offset (8*16=128, bit 7 set)
     has that bit masked to 0 by the colour-table read, so sprite 8 reads the
     SAME colour byte as sprite 0 (bit 7 already 0 there) -- not a distinct,
@@ -695,7 +696,7 @@ def test_collision_coordinate_reads_do_not_clear_s0_flags() -> None:
 
 def test_s6_bit1_reports_the_display_field() -> None:
     """S#6 = 1 1 1 1 1 1 EO Y8: bit 1 follows the field (S#2 bit 1), as a
-    real HB-F1XD reports it (extras/HB-F1XD/S6EO.BAS)."""
+    real HB-F1XD reports it (2026-10-05: S#6 reads FC and FE in turn)."""
     vdp = V9938()
     _set_screen5(vdp)
     vdp.frame_count = 0

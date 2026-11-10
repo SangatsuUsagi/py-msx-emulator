@@ -3,7 +3,8 @@
 Ascii8Mapper/Ascii16Mapper instance banked exactly as `--mapper ASCII8`/
 `ASCII16` behaves for a normal cartridge slot), and the missing-ROM error.
 Mirrors tests/test_cli_hbi_j1.py's structure for the expanded-overlay case.
-See openspec/changes/add-ascii-expanded-subslot-devices.
+See cart-extension-overlay "An expanded overlay sub-slot may hold an ASCII8
+or ASCII16 mapper".
 """
 from __future__ import annotations
 

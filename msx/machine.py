@@ -1124,8 +1124,7 @@ class Machine:
         True when the frame stops there.
 
         Checked at segment boundaries, not in the scanline loops: Ctrl-C needs
-        no finer stop (openspec/changes/archive/2026-10-29-add-core-debug-control
-        design Decision 3)."""
+        no finer stop."""
         if not self._break_request:
             return False
         self._break_request = False

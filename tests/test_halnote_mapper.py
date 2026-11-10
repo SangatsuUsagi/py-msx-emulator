@@ -211,7 +211,7 @@ def test_state_round_trips_through_snapshot_restore() -> None:
 
 
 # ---------------------------------------------------------------------------
-# reset() (openspec/changes/wire-kanji-and-halnote-reset)
+# reset() (cart-halnote "HalnoteMapper reset() restores power-on state")
 # ---------------------------------------------------------------------------
 
 def test_reset_restores_bank_registers() -> None:

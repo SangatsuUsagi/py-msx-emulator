@@ -13,9 +13,8 @@ they're only ever set once, as Memory(...) constructor kwargs, so any
 assignment to them outside __init__ is itself the bug, not just a missed
 setter call.
 
-This is a static, regex-based scan (not an AST-based one -- see
-openspec/changes/archive/*-memory-explicit-setters/design.md's Decision 3),
-scoped to the same directories that change's proposal covers. It
+This is a static, regex-based scan (not an AST-based one -- a grep is
+simpler to implement correctly), scoped to the directories in _SCAN_DIRS. It
 deliberately only flags assignments whose base expression looks like a
 Memory instance (`mem`, `memory`, or anything ending in `.memory`) -- a field
 name that collides with another class (`fdc` on Machine) is a real, legitimate,

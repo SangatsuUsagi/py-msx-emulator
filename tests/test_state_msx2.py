@@ -181,8 +181,8 @@ def test_slot2_sub_slot_disabled_none_in_snapshot(saves_dir):
 
 
 # ---------------------------------------------------------------------------
-# slot1_sub_slot_reg round-trip (openspec/changes/slot1-slot2-symmetrization
-# -- the identical mechanism the slot2 section above exercises, applied
+# slot1_sub_slot_reg round-trip (memory-slot-bus "State save/load includes
+# slot1_sub_slot_reg" -- the identical mechanism the slot2 section above exercises, applied
 # independently to slot 1; no machine-loader wiring exists yet to build one
 # end-to-end via --extension1, so the flag/sub-slot mappers are set directly
 # for test purposes, matching the slot2 tests' own precedent)

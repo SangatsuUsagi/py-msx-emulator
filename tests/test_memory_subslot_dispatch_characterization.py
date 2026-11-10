@@ -1,5 +1,5 @@
 """Characterization tests locking in msx/memory.py's current slot-3 sub-slot
-dispatch behaviour ahead of openspec/changes/parameterize-subslot-index's
+dispatch behaviour ahead of the
 refactor (generalising the `sub0_rom` / `if sub == 0` hard-coding to
 configurable per-role sub-slot indices).
 

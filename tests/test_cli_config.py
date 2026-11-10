@@ -250,8 +250,8 @@ def test_extension2_none_without_config_extension_is_a_no_op() -> None:
 # ---------------------------------------------------------------------------
 # extension1 -- flat-shape ids (fmpac, scc_plus) place correctly on slot 1;
 # expanded-shape ids are PHASE-3-TEMPORARY rejected (Memory's slot-1
-# sub-slot expansion lands in a later phase of openspec/changes/
-# slot1-slot2-symmetrization -- see __main__.py's PHASE-3-TEMPORARY guard)
+# sub-slot expansion lands in a later phase -- see __main__.py's
+# PHASE-3-TEMPORARY guard)
 # ---------------------------------------------------------------------------
 
 def test_extension1_flat_shape_accepted() -> None:
@@ -403,8 +403,8 @@ def test_mapper1_accepts_sram_backed_type() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Identical ROM in both slots (openspec/changes/slot1-slot2-symmetrization's
-# app-cli "Identical ROM or extension across both slots is rejected")
+# Identical ROM in both slots (app-cli "Identical ROM or extension across
+# both slots is rejected")
 # ---------------------------------------------------------------------------
 
 def test_identical_cartridge_in_both_slots_rejected() -> None:
@@ -465,8 +465,9 @@ def test_cli_mapper2_accepts_rtype_and_fixed_page_types() -> None:
 
 def test_cli_mapper2_accepts_sram_backed_type() -> None:
     # --mapper1 and --mapper2 now accept an identical VALID_MAPPERS list
-    # (openspec/changes/slot1-slot2-symmetrization) -- GameMaster2 (and the
-    # other SRAM-backed types) were rejected here before that change.
+    # (app-cli "`--mapper1`/`--mapper2` accept an identical, SRAM-symmetric
+    # mapper type list") -- GameMaster2 (and the other SRAM-backed types)
+    # were rejected here before.
     code, _o, err, _run, build_mock, *_ = _run_main(
         ["--machine", "cbios_msx1", "--mapper2", "GameMaster2"], app_cfg=AppConfig())
     assert code == 0

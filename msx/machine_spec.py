@@ -32,11 +32,10 @@ class PpiControlRead(str, Enum):
     # The last mode-set word: CMOS 82C55A, as openMSX I8255::readControlPort.
     CONTROL = "control"
     # 0xFF: nothing drives the bus. Verified on a real SONY HB-F1XD (S1985
-    # MSX-ENGINE), extras/HB-F1XD/PORTRD.BAS, 2026-10-05.
+    # MSX-ENGINE), 2026-10-05.
     OPEN_BUS = "open_bus"
     # The byte latched by the last PPI access (see msx/ppi.py PPI._bus_latch). Verified
-    # on a real SONY HB-10 (S3527 MSX-ENGINE), extras/HB-10/PORTRD1-4.BAS,
-    # 2026-10-08.
+    # on a real SONY HB-10 (S3527 MSX-ENGINE), 2026-10-08.
     BUS_LATCH = "bus_latch"
 
 

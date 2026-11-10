@@ -523,8 +523,8 @@ def test_make_machine_mapper2_konamiscc_rejected_when_slot1_also_konamiscc(
 
 # ---------------------------------------------------------------------------
 # Either slot's KonamiSCC mapper vs. either slot's scc_plus extension --
-# the 4-way single-scc-field conflict (openspec/changes/
-# slot1-slot2-symmetrization, design.md Decision D1/D5)
+# the 4-way single-scc-field conflict (machine-loader "Either slot's
+# KonamiSCC mapper shares the machine's single SCC chip")
 # ---------------------------------------------------------------------------
 
 def test_make_machine_mapper1_konamiscc_rejected_when_extension2_is_scc_plus() -> None:
