@@ -1974,6 +1974,14 @@
           "minimum": -9007199254740991,
           "maximum": 9007199254740991
         },
+        "pcn": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
         "phase": {
           "type": "integer",
           "minimum": -9007199254740991,
@@ -2049,6 +2057,7 @@
         "exec_needed",
         "format_fill",
         "last_pcn",
+        "pcn",
         "last_st0",
         "phase",
         "result_buffer",

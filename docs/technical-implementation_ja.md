@@ -430,8 +430,8 @@ MSX2 のデフォルトの配置：
 | --- | --- | --- |
 | ディスクイメージ | `disk_image.py`（`DskDiskImage`） | host がファイルから読んだバイト列で作った `*.dsk` のセクタイメージを持ちます。ジオメトリは openMSX と同じ方法で求めます。720 KB のイメージは常に 9 セクタ/トラック・2 面です。それ以外では、ブートセクタがジャンプ命令で始まれば BPB（BIOS Parameter Block）のトラックあたりのセクタ数とヘッド数を、そうでなければ FAT のメディアバイトを使います。どれも使えないときは 9 セクタ/トラックで、360 KB のイメージなら 1 面、それ以外は 2 面とします。書き込みはバッファにためてイメージを dirty にします。`host/media.py` が、終了時、ステートセーブの前、ディスクをドライブから外すときに、dirty のイメージをファイルへ書き戻します |
 | ドライブ | `disk_drive.py`（`DiskDrive`） | 物理ドライブ 1 台。マウント中のイメージを持ち、ヘッドの位置を追い、セクタを読み書きします |
-| コントローラ | `wd2793.py`（`WD2793`）、`tc8566af.py`（`TC8566AF`） | FDC チップ。`WD2793`：Type I–IV コマンドデコード、ステータスレジスタ、データ/トラック/セクタレジスタ、`abort()`。`TC8566AF`（uPD765 系）：コマンド/実行/結果フェーズモデル、Main Status Register、非 DMA 転送、直接アドレス指定できるトラック/セクタレジスタは持ちません |
-| インターフェース | `interface.py` | コントローラとメモリバスの接続方式。どちらも DISK ROM を 0x4000〜0x7FFF にマップします。`SonyPhilipsInterface`（openMSX の PhilipsFDC にあたる）は WD2793 のレジスタを 0x7FF8〜0x7FFF に置き、ディスク交換ビットを使います。`TC8566AFInterface` は 2 つの制御レジスタ、Main Status Register、Data Register を 0x7FF8〜0x7FFB に置きます。実行中のマウントと取り出しを行う `swap()` は両方で共通 |
+| コントローラ | `wd2793.py`（`WD2793`）、`tc8566af.py`（`TC8566AF`） | FDC チップ。`WD2793`：Type I–IV コマンドデコード、ステータスレジスタ、データ/トラック/セクタレジスタ、`abort()`。`TC8566AF`（uPD765 系）：コマンド/実行/結果フェーズモデル、Main Status Register、非 DMA 転送、直接アドレス指定できるトラック/セクタレジスタは持ちません。openMSX と同じく、ドライブごとのシリンダ位置（PCN）をヘッドとは別に数えます。ドライブは、モーターが回っている間だけ Track 0 と Write Protected を返します |
+| インターフェース | `interface.py` | コントローラとメモリバスの接続方式。どちらも openMSX と同じく 0x4000〜0xBFFF を受け持ちます。DISK ROM は 0x4000〜0x7FFF にだけ見え、レジスタは 0xBFF8〜0xBFFF にも現れます。`SonyPhilipsInterface`（openMSX の PhilipsFDC にあたる）は WD2793 のレジスタを 0x7FF8〜0x7FFF に置き、ディスク交換ビットを使います。`TC8566AFInterface` は 2 つの制御レジスタ、Main Status Register、Data Register を 0x7FF8〜0x7FFB に置き、0x7FF0〜0x7FF7 は 0xFF を読みます。実行中のマウントと取り出しを行う `swap()` は両方で共通 |
 
 マシンのコントローラと接続方式は、マシン YAML の `fdc:` ブロックで決まります。同梱のフロッピー付きの 2 機種も、このデータが違うだけです。
 

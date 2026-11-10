@@ -102,7 +102,7 @@ class Memory:
     slot0_ram: bytearray | None = field(default=None, repr=False)
     slot0_ram_page: int = field(default=3)
     # Which sub-slot owns the SUB ROM (page 0 of that sub-slot) and which owns
-    # the FDC (`fdc_page` of that sub-slot) -- independent of each other and of
+    # the FDC (`fdc_page` and the next page of that sub-slot) -- independent of each other and of
     # flat_ram_subslot. Both default to 0, still true for every MSX2 machine
     # except FS-A1F (HB-F1XD combines SUB ROM + FDC in sub-slot 0); FS-A1F
     # resolves them to sub-slot 1 and 2 respectively, its real hardware's
@@ -114,8 +114,8 @@ class Memory:
     sub_rom_subslot: int = field(default=0)
     fdc_subslot: int = field(default=0)
     fdc_page: int = field(default=1)
-    # Memory-mapped floppy interface in slot 3 sub-slot `fdc_subslot` page
-    # `fdc_page` (0x4000-0x7FFF by default); the concrete FloppyDisk base
+    # Memory-mapped floppy interface in slot 3 sub-slot `fdc_subslot` pages
+    # `fdc_page` and `fdc_page + 1` (0x4000-0xBFFF by default); the concrete FloppyDisk base
     # exposes read_mem(addr)/write_mem(addr, value). None when the machine has
     # no FDC.
     fdc: FloppyDisk | None = field(default=None, repr=False)
@@ -299,6 +299,11 @@ class Memory:
     #   per memory access, so a plain guard chain costs nothing here that a
     #   match/switch would save.
 
+    def _is_fdc_page(self, page: int) -> bool:
+        """The FDC covers fdc_page and the page after it: a 32 KB window,
+        as openMSX maps the interface (base 0x4000, size 0x8000)."""
+        return page == self.fdc_page or page == self.fdc_page + 1
+
     def _resolve_slot3_read_leaf(self, page: int) -> Callable[[int], int]:
         sub = (self.sub_slot_reg >> (page * 2)) & 0x03
         if self.flat_ram_subslot is not None:
@@ -315,7 +320,7 @@ class Memory:
         (offset == address) in `self.flat_ram_subslot`, else open bus."""
         if sub == self.sub_rom_subslot and page == 0 and self.sub0_rom is not None:
             return self._read_sub0_rom
-        if sub == self.fdc_subslot and page == self.fdc_page and self.fdc is not None:
+        if sub == self.fdc_subslot and self._is_fdc_page(page) and self.fdc is not None:
             return self.fdc.read_mem
         if sub == self.flat_ram_subslot:
             return self._read_flat_ram
@@ -346,7 +351,7 @@ class Memory:
         """
         if sub == self.sub_rom_subslot and self.sub0_rom is not None and page == 0:
             return self._read_sub0_rom
-        if sub == self.fdc_subslot and page == self.fdc_page and self.fdc is not None:
+        if sub == self.fdc_subslot and self._is_fdc_page(page) and self.fdc is not None:
             return self.fdc.read_mem
         if sub == self.sub_rom_subslot and self.sub0_rom is not None:
             return self._read_open_bus  # sub0_rom present, addr out of page-0 range
@@ -371,7 +376,7 @@ class Memory:
         needs no explicit check here: it is read-only, so it falls through
         to the same write_noop every other non-FDC, non-RAM sub-slot/page
         gets."""
-        if sub == self.fdc_subslot and page == self.fdc_page and self.fdc is not None:
+        if sub == self.fdc_subslot and self._is_fdc_page(page) and self.fdc is not None:
             return self.fdc.write_mem
         if sub == self.flat_ram_subslot:
             return self._write_flat_ram
@@ -396,7 +401,7 @@ class Memory:
         not an oversight, do not add a `sub_rom_subslot` exclusion here to
         "match" the read leaf.
         """
-        if sub == self.fdc_subslot and page == self.fdc_page and self.fdc is not None:
+        if sub == self.fdc_subslot and self._is_fdc_page(page) and self.fdc is not None:
             return self.fdc.write_mem
         if sub == 1 and sub != self.fdc_subslot:
             return self._write_noop  # reserved, ignore
@@ -607,7 +612,7 @@ class Memory:
             if (
                 secondary == self.fdc_subslot
                 and self.fdc is not None
-                and page in (self.fdc_page, -1)
+                and (page == -1 or self._is_fdc_page(page))
             ):
                 return SLOT_CONTENT_FDC
             if secondary == flat_sub:

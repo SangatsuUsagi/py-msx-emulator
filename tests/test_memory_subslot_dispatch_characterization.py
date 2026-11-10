@@ -63,25 +63,24 @@ def _make_flat(sub0_rom: bytes | None = None, fdc: object | None = None) -> Memo
 
 # -- Gap 1: page 2 of the flat_ram_subslot sub-slot-0 branch -----------------
 
-def test_flat_subslot0_page2_is_open_bus_even_with_subrom_and_fdc_present() -> None:
-    """0x8000-0xBFFF (page 2) is untouched by _resolve_slot3_read_leaf's
-    sub == 0 branch (which only special-cases page 0 and page 1) -- it must
-    fall through to open bus regardless of whether SUB ROM/FDC are wired."""
+def test_flat_subslot0_page2_reaches_the_fdc() -> None:
+    """0x8000-0xBFFF (page 2) of the FDC sub-slot is the second half of the
+    FDC's 32 KB window (openMSX maps the interface at 0x4000, size 0x8000),
+    so it reaches the FDC device, not open bus."""
     sub_rom = bytes([0xAA] * 0x4000)
     fdc = _StubFdc()
     mem = _make_flat(sub0_rom=sub_rom, fdc=fdc)
     mem.set_sub_slot_reg(0x00)  # every page -> sub-slot 0
-    assert mem.read(0x8000) == 0xFF
-    assert fdc.reads == []  # page 2 must not reach the FDC either
+    assert mem.read(0x8000) == 0x99
+    assert fdc.reads == [0x8000]
 
 
-def test_flat_subslot0_page2_write_is_ignored() -> None:
+def test_flat_subslot0_page2_write_reaches_the_fdc() -> None:
     fdc = _StubFdc()
     mem = _make_flat(fdc=fdc)
     mem.set_sub_slot_reg(0x00)
     mem.write(0x8000, 0x42)
-    assert mem.read(0x8000) == 0xFF
-    assert fdc.writes == []
+    assert fdc.writes == [(0x8000, 0x42)]
 
 
 # -- Gap 2: page 1's own 4-value sub-slot sweep -------------------------------

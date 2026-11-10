@@ -298,3 +298,9 @@ def test_immediate_interrupt_holds_intrq_until_d0(tmp_path: Path) -> None:
     assert wd.get_irq() is True
     wd.set_command(0xD0)
     assert wd.get_irq() is False
+
+
+def test_type1_status_reports_a_write_protected_disk(tmp_path: Path) -> None:
+    wd, _, _ = _ctrl(tmp_path, write_protected=True)
+    wd.set_command(0x00)  # RESTORE
+    assert wd.get_status() == (TRACK00 | WRITE_PROTECTED)

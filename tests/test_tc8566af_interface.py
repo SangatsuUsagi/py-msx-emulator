@@ -1,8 +1,7 @@
 """Tests for the TC8566AF FDC connection-style interface (Panasonic FS-A1F).
 
-One test per Scenario in openspec/changes/archive/2026-08-21-add-tc8566af-fdc/specs/fdc-interface/
-spec.md's "TC8566AF connection style register decode" Requirement (written
-before TC8566AFInterface exists -- TDD red phase).
+Tests for the Scenarios of openspec/specs/fdc-interface/spec.md's "TC8566AF
+connection style register decode" Requirement.
 """
 from __future__ import annotations
 
@@ -46,7 +45,7 @@ def test_main_status_read_does_not_consume_data_register(tmp_path: Path) -> None
     assert before == after           # reading MSR twice doesn't advance phase
 
 
-def test_control_reg0_selects_drive_and_enables_motor(tmp_path: Path) -> None:
+def test_control_reg0_write_enables_a_drives_motor(tmp_path: Path) -> None:
     iface = _iface(tmp_path)
     iface.write_mem(0x7FF8, 0x10)  # Control Register 0: MEN0 set
     assert iface.controller.motor_on(0) is True
@@ -74,3 +73,27 @@ def test_disk_rom_outside_register_window_unaffected(tmp_path: Path) -> None:
     assert iface.read_mem(0x4000) == 0xC3  # first DISK ROM byte
     iface.write_mem(0x4000, 0x55)          # ROM is read-only
     assert iface.read_mem(0x4000) == 0xC3
+
+
+def test_the_16_bytes_below_the_registers_read_0xff(tmp_path: Path) -> None:
+    iface = _iface(tmp_path)
+    for addr in range(0x7FF0, 0x7FF8):
+        assert iface.read_mem(addr) == 0xFF  # not the DISK ROM byte (0x00)
+
+
+def test_page_2_mirrors_the_registers(tmp_path: Path) -> None:
+    iface = _iface(tmp_path)
+    assert iface.read_mem(0xBFFA) == iface.read_mem(0x7FFA)  # Main Status Register
+    assert iface.read_mem(0xBFFC) == 0xFC
+    assert iface.read_mem(0xBFF0) == 0xFF
+    assert iface.read_mem(0x8000) == 0xFF  # no DISK ROM in page 2
+
+
+def test_writes_to_the_status_and_fixed_offsets_are_ignored(tmp_path: Path) -> None:
+    iface = _iface(tmp_path)
+    before = iface.controller.snapshot()
+    for addr in (0x7FFA, 0x7FFC, 0x7FFD, 0x7FFE, 0x7FFF, 0x7FF0):
+        iface.write_mem(addr, 0x00)
+    assert iface.controller.snapshot() == before
+    assert iface.read_mem(0x7FFE) == 0xFF
+    assert iface.read_mem(0x7FFF) == 0x3F
