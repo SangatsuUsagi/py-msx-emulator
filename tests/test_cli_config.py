@@ -248,10 +248,8 @@ def test_extension2_none_without_config_extension_is_a_no_op() -> None:
 
 
 # ---------------------------------------------------------------------------
-# extension1 -- flat-shape ids (fmpac, scc_plus) place correctly on slot 1;
-# expanded-shape ids are PHASE-3-TEMPORARY rejected (Memory's slot-1
-# sub-slot expansion lands in a later phase -- see __main__.py's
-# PHASE-3-TEMPORARY guard)
+# extension1 -- flat-shape ids (fmpac, scc_plus) and expanded-shape ids
+# (hbi_j1, memory_512k) are both accepted on slot 1
 # ---------------------------------------------------------------------------
 
 def test_extension1_flat_shape_accepted() -> None:

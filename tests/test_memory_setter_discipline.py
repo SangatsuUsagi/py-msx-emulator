@@ -1,7 +1,6 @@
 """Regression guard for msx/memory.py's Memory class.
 
-Memory has no __setattr__ hook (removed by the memory-explicit-setters
-OpenSpec change): writing directly to one of its 8 page-routing-affecting
+Memory has no __setattr__ hook: writing directly to one of its 8 page-routing-affecting
 fields (slot_register, sub_slot_reg, ram_mapper, sub0_rom, fdc,
 flat_ram_subslot, mapper1, mapper2) from outside Memory's own class body
 no longer raises or invalidates anything -- it just silently leaves the
