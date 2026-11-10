@@ -168,8 +168,7 @@ class FloppyDiskState(Generic[S]):
         """
         target = self.drives[drive]
         outgoing = target.image
-        target.mount(image)
-        target.disk_changed = True
+        target.mount(image)  # also sets disk_changed
         # Only abort a transfer on the drive actually connected to the
         # controller -- swapping a *different* drive's disk on a multi-drive
         # machine must not disturb an in-progress transfer on the selected one.

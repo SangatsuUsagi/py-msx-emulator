@@ -60,6 +60,7 @@ def test_irq_status_byte_active_low(tmp_path: Path) -> None:
 
 def test_disk_change_bit_reports_not_changed(tmp_path: Path) -> None:
     iface = _iface(tmp_path)
+    iface.read_mem(0x7FFD)  # consume the power-on change
     assert iface.read_mem(0x7FFD) & 0x04  # bit 2 = 1 (disk not changed)
 
 
@@ -89,4 +90,10 @@ def test_disk_change_reported_then_consumed(tmp_path: Path) -> None:
 
 def test_disk_change_not_set_reports_not_changed(tmp_path: Path) -> None:
     iface = _iface(tmp_path)
-    assert iface.read_mem(0x7FFD) & 0x04  # no swap -> not changed
+    iface.read_mem(0x7FFD)  # consume the power-on change
+    assert iface.read_mem(0x7FFD) & 0x04  # no swap since -> not changed
+
+
+def test_disk_change_is_reported_after_power_on(tmp_path: Path) -> None:
+    assert _iface(tmp_path).read_mem(0x7FFD) & 0x04 == 0
+    assert _iface(with_disk=False).read_mem(0x7FFD) & 0x04 == 0
