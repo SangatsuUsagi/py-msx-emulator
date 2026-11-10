@@ -1025,7 +1025,7 @@ class TestSlotRomMapperBank:
         assert _bank(m, 0) == "-"
         m.write(0x4FFF, 0x85)  # bank 0: page 5, SRAM on
         assert _bank(m, 0) == "SRAM@0000-3FFF"
-        assert _bank(m, 1) == "w0=b5@0A000  w1=b1@02000"
+        assert _bank(m, 1) == "w0=b5@0A000  w1=b0@00000"
         m.write(0x6FFF, 0x86)  # bank 1: page 6, sub-mapper on
         m.write(0x77FF, 0x12)
         m.write(0x7FFF, 0x34)

@@ -69,6 +69,8 @@ from msx.mapper import (
     MapperKind,
     RTypeMapper,
     SCCICart,
+    guess_plain_rom_base,
+    page2_rom_image,
 )
 from msx.memory import Memory
 from msx.opll import Opll
@@ -108,7 +110,9 @@ _MAPPER_BUILDERS: dict[
     str, Callable[[bytes | None, bytes, bytes | None, SCC | None], Mapper]
 ] = {
     "Mirrored":     lambda cart, rom, sram, scc: FlatMapper(cart),
-    "Normal":       lambda cart, rom, sram, scc: FlatMapper(cart),
+    "Normal":       lambda cart, rom, sram, scc: FixedPageMapper(
+        rom, base=guess_plain_rom_base(rom)
+    ),
     "ASCII8":       lambda cart, rom, sram, scc: Ascii8Mapper(rom),
     "ASCII8SRAM2":  lambda cart, rom, sram, scc: Ascii8Sram2Mapper(rom, sram=sram),
     "ASCII8SRAM8":  lambda cart, rom, sram, scc: Ascii8Sram8Mapper(rom, sram=sram),
@@ -123,9 +127,11 @@ _MAPPER_BUILDERS: dict[
     "Majutsushi":   lambda cart, rom, sram, scc: MajutsushiMapper(rom),
     "R-Type":       lambda cart, rom, sram, scc: RTypeMapper(rom),
     "KonamiSCC":    lambda cart, rom, sram, scc: KonamiSCCMapper(rom, scc=_require_scc(scc)),
-    # "Page2" (MSX slot page 2, 0x8000-0xBFFF) and "0x8000" are distinct
-    # ROM-DB mapper names for the same fixed-window layout -- not a duplicate.
-    "Page2":        lambda cart, rom, sram, scc: FixedPageMapper(rom, base=0x8000),
+    # "Page2" shows only the 16 KB page 0x8000-0xBFFF (an 8 KB ROM repeats at
+    # 0xA000); "0x8000" shows the whole ROM from 0x8000 on, unmirrored.
+    "Page2":        lambda cart, rom, sram, scc: FixedPageMapper(
+        page2_rom_image(rom), base=0x8000
+    ),
     "0x4000":       lambda cart, rom, sram, scc: FixedPageMapper(rom, base=0x4000),
     "0x8000":       lambda cart, rom, sram, scc: FixedPageMapper(rom, base=0x8000),
     "KoeiSRAM32":   lambda cart, rom, sram, scc: KoeiSRAM32Mapper(rom, sram=sram),

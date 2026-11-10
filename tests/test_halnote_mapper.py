@@ -42,11 +42,12 @@ def test_wrong_size_rom_rejected() -> None:
 # ---------------------------------------------------------------------------
 
 def test_initial_bank_state() -> None:
-    cart = _cart()
-    assert cart.read(0x4000) == 0
-    assert cart.read(0x6000) == 1
-    assert cart.read(0x8000) == 2
-    assert cart.read(0xA000) == 3
+    # openMSX RomHalnote::reset: all four windows select page 0.
+    rom = _make_rom()
+    rom[0] = 0x5A
+    cart = _cart(rom)
+    for addr in (0x4000, 0x6000, 0x8000, 0xA000):
+        assert cart.read(addr) == 0x5A
 
 
 def test_bank_switch_selects_new_page() -> None:
@@ -126,7 +127,7 @@ def test_sram_write_ignored_while_disabled() -> None:
 
 def test_submapper_disabled_leaves_bank1_content_visible() -> None:
     rom = _make_rom()
-    rom[1 * 8192 + 0x1000] = 0xEE  # bank 1 (page 1)'s content at offset 0x7000-0x6000
+    rom[0x1000] = 0xEE  # bank 1 (page 0 at power-on)'s content at offset 0x7000-0x6000
     cart = _cart(rom)
     cart.write(0x77FF, 0x30)
     assert cart.read(0x7000) == 0xEE  # bank 1's ordinary ROM content, not sub-bank 0x30's
@@ -220,15 +221,13 @@ def test_reset_restores_bank_registers() -> None:
     cart.write(0x8FFF, 0x0C)
     cart.write(0xAFFF, 0x0D)
     cart.reset()
-    assert cart.read(0x4000) == 0
-    assert cart.read(0x6000) == 1
-    assert cart.read(0x8000) == 2
-    assert cart.read(0xA000) == 3
+    for addr in (0x4000, 0x6000, 0x8000, 0xA000):
+        assert cart.read(addr) == 0
 
 
 def test_reset_disables_submapper() -> None:
     rom = _make_rom()
-    rom[1 * 8192 + 0x1000] = 0xEE  # bank 1 (page 1)'s content at 0x7000-0x6000
+    rom[0x1000] = 0xEE  # bank 1 (page 0 after reset)'s content at 0x7000-0x6000
     cart = _cart(rom)
     cart.write(0x6FFF, 0x85)  # sub-mapper enabled, bank 1 -> page 5
     cart.write(0x77FF, 0x03)

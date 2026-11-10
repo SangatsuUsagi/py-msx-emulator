@@ -60,17 +60,20 @@ class TestAscii8Sram2:
         m.write(0x8800, 0x77)  # offset 0x800 & 0x7FF = 0x000
         assert m.sram_image.read(0x000) == 0x77
 
-    def test_windows_0_and_1_never_map_sram(self):
-        # _SRAM_PAGES (0x30) only allows windows 2 (0x8000) and 3 (0xA000).
+    def test_windows_0_and_1_map_sram_read_only(self):
+        # Any window maps SRAM for reading (openMSX RomAscii8_8::writeMem);
+        # _SRAM_PAGES (0x30) lets only windows 2 (0x8000) and 3 (0xA000) write.
         m = Ascii8Sram2Mapper(rom=_ROM_16K)
         m.sram_image.write(0x00, 0xCC)
+        m.sram_image.write(0x100, 0xAB)
         m.write(0x6000, _SRAM_BANK)  # window 0 bank reg, enable bit set
         m.write(0x6800, _SRAM_BANK)  # window 1 bank reg, enable bit set
-        # Window 0 body reads ROM (out-of-range page → 0xFF), not SRAM.
-        assert m.read(0x4000) != 0xCC
+        assert m.read(0x4000) == 0xCC
+        assert m.read(0x6000) == 0xCC
         # Window 0 body write does not reach SRAM.
-        m.write(0x4100, 0xEE)
-        assert m.sram_image.read(0x100) == 0x00
+        m.write(0x4100, 0x55)
+        assert m.read(0x4100) == 0xAB
+        assert m.sram_image.read(0x100) == 0xAB
 
     def test_bank_reg_write_never_writes_sram(self):
         # Writes to 0x6000-0x7FFF always update bank registers, never SRAM.
@@ -108,14 +111,13 @@ class TestAscii8Sram2:
         # Ascii8Mapper (see test_mapper.py's
         # test_ascii8_out_of_range_bank_uses_openmsx_mask_not_modulo)
         # applies here for the non-SRAM (ROM) path, inherited via
-        # _sync_window's super() call. 24 pages, value 25: modulo gives
-        # page 1, openMSX's mask gives 25 & 23 == 17. Window 0 is not an
-        # SRAM-selectable window (_SRAM_PAGES == 0x30), so this value can
-        # only ever resolve to a ROM page here.
+        # _sync_window's super() call. 24 pages, so the SRAM-enable bit is
+        # 24 (0x18); value 0x25 leaves both of its bits clear, so it selects
+        # ROM: modulo gives page 13, openMSX's mask gives 0x25 & 23 == 5.
         rom_24 = bytes([(p if i == 0 else 0) for p in range(24) for i in range(8192)])
         m = Ascii8Sram2Mapper(rom=rom_24)
-        m.write(0x6000, 25)
-        assert m.read(0x4000) == 17
+        m.write(0x6000, 0x25)
+        assert m.read(0x4000) == 5
 
     def test_mapper_trace_called_on_bank_write(self):
         # Verify _trace_bank path: after write, _banks is updated (no crash)
