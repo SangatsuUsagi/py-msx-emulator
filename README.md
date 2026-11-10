@@ -209,6 +209,7 @@ MSX1 uses a 4-page × 4-slot dispatch. Slot 0 holds the BIOS ROM, slot 1 a cartr
 | Slot 2 | Second cartridge ROM, with the mapper that `--mapper2` selects. Open bus (0xFF on read, writes ignored) when no slot 2 ROM is present. `--extension2` expands it into sub-slots, see [`docs/README_extension.md`](docs/README_extension.md#slot-model) |
 | Slot 3 (MSX1) | 32 KB RAM at 0x8000-0xFFFF by default. Each machine sets the size (64 KB across all pages on `hb_10_64k`, unpopulated open bus on `hb_10`) |
 | Slot 3 (MSX2) | Expanded into 4 secondary slots: sub-ROM in 3-0, RAM mapper in 3-2 |
+| Known limitations | All RAM starts with every byte 0x00 at power-on: main RAM, the RAM mapper, and cartridge SRAM with no save file. A real RAM chip powers on with each cell biased toward 0 or 1, in a pattern that stays mostly the same for each chip. The emulator does not reproduce these per-machine patterns as openMSX does. A program that reads work RAM before it writes it can therefore fail. For example, Mahjong Friend (雀フレンド) does not start on `hb_f1xd` |
 
 ### RAM mapper
 
