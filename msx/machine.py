@@ -230,8 +230,8 @@ class Machine:
 
         Every `Mapper` is reset unconditionally regardless of whether a given
         real cartridge's bank-select hardware is actually wired to the slot
-        reset signal -- rationale in openspec/changes/
-        wire-cartridge-mapper-and-ppi-reset. Always STATUS_OK."""
+        reset signal -- rationale in change
+        `2026-09-28-wire-cartridge-mapper-and-ppi-reset`. Always STATUS_OK."""
         self.cpu.reset()
         self.psg.reset()
         self.audio.reset()

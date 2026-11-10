@@ -134,7 +134,8 @@ class PSG:
     _env_step: int = field(default=0x1F, init=False, repr=False)   # 5-bit counter 0-31
     _env_attack: int = field(default=0, init=False, repr=False)    # 0x00 or 0x1F
     _env_alternate: bool = field(default=False, init=False, repr=False)
-    _env_hold_flag: bool = field(default=False, init=False, repr=False)
+    # Power-on envelope state is that of R13 shape 0 (_reset_envelope): hold set.
+    _env_hold_flag: bool = field(default=True, init=False, repr=False)
     _env_holding: bool = field(default=False, init=False, repr=False)
     _clk_frac: int = field(default=0, init=False, repr=False)
 
@@ -170,7 +171,7 @@ class PSG:
                     self._regs_base = self.regs[:]
                     self._gen_base = self.snapshot_synth()
                 self._events.append((self._clock.cycle, reg, value))
-            self.regs[reg] = value
+            self._set_reg(reg, value)
             if reg == 13:
                 self._reset_envelope()
             elif reg == 15 and self._mouse is not None:
@@ -198,6 +199,29 @@ class PSG:
             return self.regs[self.latch]
         return 0xFF
 
+    def _set_reg(self, reg: int, value: int) -> None:
+        """Store a register value. A tone (R0-R5) or noise (R6) period change
+        takes effect at once: the chip's period counter counts up and is
+        compared with `>=` against the period register (lvd2 AY-3-8910 die
+        model), so the remaining count of this down-counter model moves by
+        the period difference, and a period below the elapsed count ends the
+        half-cycle on the next tick."""
+        if reg <= 5:
+            ch = reg >> 1
+            old = self._tone_period(ch)
+            self.regs[reg] = value
+            self._tone_cnt[ch] = max(1, self._tone_cnt[ch] + self._tone_period(ch) - old)
+        elif reg == 6:
+            old = max(1, self.regs[6] & 0x1F)
+            self.regs[6] = value
+            # The noise counter reloads to 2 * NP (see _step_noise).
+            self._noise_cnt = max(1, self._noise_cnt + 2 * (max(1, value & 0x1F) - old))
+        else:
+            self.regs[reg] = value
+
+    def _tone_period(self, ch: int) -> int:
+        return max(1, ((self.regs[ch * 2 + 1] & 0x0F) << 8) | self.regs[ch * 2])
+
     # --------------------------------------------------------------- reset
 
     def reset(self) -> None:
@@ -212,7 +236,7 @@ class PSG:
         self._env_step = 0x1F
         self._env_attack = 0
         self._env_alternate = False
-        self._env_hold_flag = False
+        self._env_hold_flag = True
         self._env_holding = False
         self._clk_frac = 0
         self.discard_frame_events()
@@ -625,7 +649,7 @@ class PSG:
             if pos > lo:
                 self._render(out, lo, pos)
                 lo = pos
-            self.regs[reg] = val
+            self._set_reg(reg, val)
             if reg == 13:
                 self._reset_envelope()
         if lo < n:
