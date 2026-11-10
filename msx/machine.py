@@ -280,9 +280,9 @@ class Machine:
         self._stop_pending = False
 
     def sram_media(self) -> Mapping[MediaId, SramImage]:
-        """Every SRAM medium by id: `slot1.sram`/`slot2.sram` (cartridge
-        mapper), `slot<n>.<sub>.sram` (expanded-slot device), `fmpac.sram`,
-        `rtc.cmos`. Fixed when build_machine finished wiring (no device is
+        """Every SRAM medium by id: SLOT1_SRAM/SLOT2_SRAM (cartridge
+        mapper), SLOT<n>_SUB<m>_SRAM (expanded-slot device), FMPAC_SRAM,
+        RTC_CMOS. Fixed when build_machine finished wiring (no device is
         replaced afterwards), so this is a read-only view of that table."""
         return self._sram_table
 

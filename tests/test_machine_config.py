@@ -651,6 +651,75 @@ def test_a_device_without_a_rom_file_to_read_is_a_load_error(
         load_machine_config(spec, **_overrides(spec)).config
 
 
+def test_a_machine_without_a_rom_base_dir_cannot_read_its_rom_files(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # machine-config-loader RejectRomLoadWithoutRomBaseDir, machine level.
+    monkeypatch.chdir(tmp_path)
+    spec = dataclasses.replace(_spec("hb_f1xd"), rom_base_dir=None)
+    with pytest.raises(MachineLoadError, match="has no rom_base_dir to read"):
+        load_machine_config(spec)
+
+
+def test_a_missing_optional_logo_rom_is_skipped_with_a_warning(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # machine-config-loader SkipMissingOptionalRom.
+    monkeypatch.chdir(tmp_path)
+    spec = dataclasses.replace(
+        _spec("hb_f1xd"), rom_base_dir=tmp_path,
+        logo_rom_entry=RomEntry(file="logo.rom", size_kb=16, pages=[]),
+    )
+    overrides = _overrides(spec)
+    del overrides["logo_override"]
+    config = load_machine_config(spec, **overrides).config
+    assert json.loads(config.document)["machine"]["logo_rom"] is None
+    assert "optional ROM file not found, skipping" in capsys.readouterr().err
+
+
+def test_a_saved_sram_of_the_wrong_size_is_discarded(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # machine-config-loader DiscardMismatchedSram, host side.
+    monkeypatch.chdir(tmp_path)
+    save = tmp_path / "fmpac.sram"
+    save.write_bytes(bytes(100))
+    overlay = dataclasses.replace(_overlay("fmpac"), sram_save_path=save)
+    spec = _spec("hb_f1xd")
+    config = load_machine_config(spec, **_overrides(spec), extension_overlay2=overlay).config
+    assert all(image.media_id != MediaId.FMPAC_SRAM for image in config.media)
+    assert "has wrong size (100 != 8192), starting fresh" in capsys.readouterr().err
+
+
+def test_an_fmpac_rom_of_the_wrong_size_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "fmpac.rom").write_bytes(bytes(16 * 1024))
+    overlay = dataclasses.replace(
+        _overlay("fmpac"), rom_base_dir=tmp_path,
+        rom_entry=RomEntry(file="fmpac.rom", size_kb=16, pages=[]),
+    )
+    spec = _spec("hb_f1xd")
+    config = load_machine_config(spec, **_overrides(spec), extension_overlay2=overlay).config
+    with pytest.raises(MachineLoadError, match="the FM-PAC ROM is 16384 bytes, not 65536"):
+        build_machine(config)
+
+
+def test_a_rom_image_of_the_wrong_size_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # The SHA1 matches; only the size the reference records differs.
+    monkeypatch.chdir(tmp_path)
+    config = _hb_f1xd_config(tmp_path)
+
+    def edit(decoded: dict) -> None:
+        decoded["machine"]["main_rom"]["size"] += 1
+
+    with pytest.raises(MachineLoadError, match="expected 32769 bytes"):
+        build_machine(_edited(config, edit))
+
+
 def test_a_ram_mapper_size_the_mapper_does_not_accept_is_rejected() -> None:
     # machine-core "A RAM mapper size the mapper does not accept is rejected".
     from msx.boundary import STATUS_BAD_CONFIG

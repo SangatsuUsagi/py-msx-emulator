@@ -603,7 +603,8 @@ def parse_machine_config(document: bytes) -> ParsedMachineConfig:
 
     Raises:
         MachineLoadError: For anything malformed, naming the field; for a
-            format version outside 1-2, naming the version.
+            format version outside MACHINE_CONFIG_MIN_FORMAT_VERSION to
+            MACHINE_CONFIG_FORMAT_VERSION, naming the version.
     """
     try:
         decoded = decode_strict(document)

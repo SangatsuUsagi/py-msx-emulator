@@ -86,6 +86,7 @@ from msx.machine_config import (
     SUBSLOT_DEVICES_REQUIRING_ROM,
     SUBSLOT_DEVICES_REQUIRING_SIZE,
     encode_machine_config,
+    parse_machine_config,
 )
 from msx.machine_loader import create_machine
 from msx.machine_spec import (
@@ -994,10 +995,13 @@ def _parse_expanded_extension_overlay(
     rom_base_dir = project_root / rom_base
 
     subslots_raw = raw.get("subslots")
-    if not isinstance(subslots_raw, dict) or not subslots_raw:
+    subslots_by_index: dict[int, Any] = {}
+    if isinstance(subslots_raw, dict):
+        subslots_by_index = _int_keys(cast("dict[Any, Any]", subslots_raw))
+    if not subslots_by_index:
         raise MachineLoadError(f"{path}: expanded overlay missing required 'subslots' mapping")
     subslots: dict[int, ExpandedSubslotDevice] = {}
-    for index, sub_data in _int_keys(cast("dict[Any, Any]", subslots_raw)).items():
+    for index, sub_data in subslots_by_index.items():
         _check_subslot_index(str(path), "extension", index)
         if not _is_expanded_device_shape(sub_data):
             raise MachineLoadError(f"{path}: subslot {index}: expected a YAML mapping")
@@ -1380,7 +1384,9 @@ def load_machine_config(
 
     Raises:
         MachineLoadError: If a required ROM file is missing and no override
-            is given, or `spec` has no rom_base_dir to read a ROM file from.
+            is given, `spec` has no rom_base_dir to read a ROM file from, or
+            the core's parser rejects the document (a value outside its
+            bounds).
         OSError: If a disk image cannot be read.
     """
     roms = _load_spec_roms(spec, bios_override, logo_override, extrom_override, disk_rom_override)
@@ -1399,6 +1405,10 @@ def load_machine_config(
         extension_overlay1=carts.extension_overlay1,
         extension_overlay2=carts.extension_overlay2,
     )
+    try:
+        parse_machine_config(document)
+    except MachineLoadError as exc:
+        raise MachineLoadError(f"machine '{spec.name}': {exc}") from exc
     sram_files = _resolve_sram_files(spec, carts)
     return LoadedMachineConfig(
         config=MachineConfig(

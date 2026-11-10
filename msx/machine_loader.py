@@ -576,7 +576,7 @@ def _wire_flat_overlay(
         if scc is not None:
             raise MachineLoadError(
                 f"{spec.machine_id}: cannot combine a KonamiSCC cartridge mapper "
-                "(or another slot's scc_plus extension) with --extension scc_plus: "
+                "(or another slot's scc_plus extension) with an scc_plus extension: "
                 "real hardware never has two SCC chips attached at once, and "
                 "Machine has a single scc field"
             )
@@ -753,8 +753,9 @@ def _resolve_shared_scc(
 def _is_majutsushi_mapper(mapper: Mapper) -> TypeGuard[MajutsushiMapper]:
     """True if `mapper` is the one DAC-equipped mapper kind this codebase
     models (Majutsushi). Narrows the concrete type from a closed `kind`
-    comparison instead of `isinstance`, matching this file's `_is_*_shape`
-    TypeGuard convention (see `_is_rom_entry_shape` and friends above) for
+    comparison instead of `isinstance`, matching the `_is_*_shape`
+    TypeGuard convention of host/machine_config.py (`_is_rom_entry_shape`
+    and friends) for
     the identical "check the discriminant, then need the narrowed type"
     shape."""
     return mapper.kind == MapperKind.MAJUTSUSHI
