@@ -709,10 +709,9 @@ def test_a_configuration_without_a_start_time_starts_at_2000() -> None:
     assert RTC_DEFAULT_START == RtcTime(2000, 1, 1, 0, 0, 0)
     machine = create_machine(make_config_msx2(_ROM, bytes(16 * 1024))).machine
     assert machine is not None
-    machine.rtc._refresh_time_regs()
     # Block 0 BCD digits: seconds, minutes, hours (0-5), day (7, 8),
     # month (9, 10), years since 1980 (11, 12).
-    regs = machine.rtc._regs
+    regs = list(machine.rtc.cmos.data())
     assert regs[0:6] == [0, 0, 0, 0, 0, 0]
     assert (regs[7], regs[8], regs[9], regs[10]) == (1, 0, 1, 0)
     assert (regs[11], regs[12]) == (0, 2)

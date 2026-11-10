@@ -175,8 +175,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mouse", nargs="?", const="2", default=None, choices=["1", "2"],
                         help="Plug an MSX mouse into a joystick port, driven by the host "
                              "mouse (default port 2 if bare). Overrides py_emulator.yaml's "
-                             "mouse.enabled/mouse.port. Ignored in headless "
-                             "(--count-frame/--benchmark) runs — no SDL window/event loop.")
+                             "mouse.enabled/mouse.port. Headless (--count-frame/--benchmark) "
+                             "runs attach it too, with no host motion.")
     parser.add_argument("--tape", metavar="CAS", default=None,
                         help="Mount a CAS tape image at startup (WAV is not supported: "
                              "convert it to CAS with an external tool)")

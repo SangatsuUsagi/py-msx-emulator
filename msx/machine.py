@@ -220,7 +220,8 @@ class Machine:
     def reset(self) -> int:
         """Full power-on reset: CPU, PSG, SCC (if present), FM-PAC (if
         present), VDP, FDC (if present), Kanji ROM (if present), PPI (if
-        present), the printer port (if present), the primary/secondary slot
+        present), the RTC's MODE/TEST/RESET and latch (if present), the printer
+        port (if present), the primary/secondary slot
         registers, the RAM mapper (if present, in either its slot-3 or its
         expanded-slot-2-sub-slot placement), and every `Mapper` --
         `memory.mapper1`, `memory.mapper2`, and every non-`None` entry of an
@@ -246,6 +247,8 @@ class Machine:
             self.kanji.reset()
         if self.ppi is not None:
             self.ppi.reset()
+        if self.rtc is not None:
+            self.rtc.reset()
         if self.printer is not None:
             self.printer.reset()
         # Power-on slot state: all pages select slot 0 (matches construction).
@@ -1064,9 +1067,11 @@ class Machine:
         `render_video`), its pre-filter audio and the frame number.
         `render_video` never changes emulated state.
 
-        A call that stops at a break returns its stop reason, no video, no
-        audio and `frame_complete` 0; the next call continues the frame,
-        applies its input lines and buttons and feeds no mouse motion.
+        A call that stops at a break inside the frame returns its stop
+        reason, no video, no audio and `frame_complete` 0; the next call
+        continues the frame, applies its input lines and buttons and feeds no
+        mouse motion. A frame breakpoint stops after the frame completes, so
+        that call also returns the frame's video and audio.
         """
         self._stop = StopInfo()
         new_frame = not self._frame_active

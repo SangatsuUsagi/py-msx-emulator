@@ -96,6 +96,9 @@ class PSG:
     latch: int = 0
     _input: InputLines | None = field(default=None, repr=False)
     _mouse: MouseSlot | None = field(default=None, repr=False)
+    # The mouse port's pins 6, 7 and 8 (bits 0-2) at the last register 15
+    # write; -1 before the first write, so that write always reaches the mouse.
+    _mouse_pins: int = field(default=-1, repr=False)
     # The machine's cassette port (attach_cassette), or None with no port.
     _cassette: CassettePort | None = field(default=None, repr=False)
 
@@ -175,11 +178,27 @@ class PSG:
             if reg == 13:
                 self._reset_envelope()
             elif reg == 15 and self._mouse is not None:
-                # Pin 8 (mouse nibble-select clock) for the mouse's port:
-                # bit 4 = Joy1, bit 5 = Joy2. Driven on both ports on every
-                # register-15 write, independent of JOY_SELECT (bit 6).
-                pin8_bit = 4 if self._mouse.port == JoystickPort.JOY1 else 5
-                self._mouse.device.write_pin8((value >> pin8_bit) & 1, self._clock.cycle)
+                # The joystick port passes a write to its device only when
+                # the port's output pins change, independent of JOY_SELECT
+                # (bit 6) (openMSX JoystickPort::write).
+                pins = self._mouse_port_pins(value)
+                if pins != self._mouse_pins:
+                    self._mouse_pins = pins
+                    self._mouse.device.write_pin8(pins >> 2, self._clock.cycle)
+
+    def _mouse_port_pins(self, value: int) -> int:
+        """The mouse port's pins 6 and 7 (bits 0-1) and pin 8 (bit 2) in a
+        register 15 value: Joy1 bits 0, 1 and 4; Joy2 bits 2, 3 and 5."""
+        assert self._mouse is not None
+        if self._mouse.port == JoystickPort.JOY1:
+            return (value & 0x03) | ((value >> 2) & 0x04)
+        return ((value >> 2) & 0x03) | ((value >> 3) & 0x04)
+
+    def sync_mouse_pins(self) -> None:
+        """After a state load: take the mouse port's last pins from the
+        loaded register 15."""
+        if self._mouse is not None:
+            self._mouse_pins = self._mouse_port_pins(self.regs[15])
 
     def read_port(self, port: int) -> int:
         if port == 0xA2:

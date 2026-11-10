@@ -118,8 +118,9 @@ def test_repeated_identical_pin8_value_is_noop() -> None:
 
 
 def test_same_value_writes_refresh_the_idle_timer() -> None:
-    # A same-value register-15 write still refreshes the time base (openMSX
-    # refreshes lastTime on every write()), so a train of same-value writes
+    # A call with the same pin-8 level (the PSG makes one when pin 6 or 7
+    # changes) still refreshes the time base (openMSX refreshes lastTime on
+    # every write()), so a train of same-value calls
     # spaced within the timeout -- even though the *cumulative* span since
     # the original edge exceeds it -- must not resync.
     cycle = [0]

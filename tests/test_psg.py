@@ -217,13 +217,49 @@ def test_reg15_write_forwards_pin8_bit_for_mouse_port() -> None:
     assert mouse.pin8_calls[-1] == 0
 
 
-def test_reg15_other_port_pin8_bit_does_not_affect_mouse() -> None:
+def test_reg15_other_port_pin8_bit_is_not_forwarded() -> None:
+    # input-mouse "Pin 8 write for the other port is not forwarded".
     psg = _psg(InputLines())
     mouse = _FakeMouse()
     psg._mouse = MouseSlot(mouse, JoystickPort.JOY2)  # bit 5
     psg.write_port(0xA0, 15)
-    psg.write_port(0xA1, 0x10)  # bit 4 (Joy1 pin 8) = 1, bit 5 = 0
-    assert mouse.pin8_calls[-1] == 0  # derived from bit 5 only
+    psg.write_port(0xA1, 0x00)  # the first write always reaches the mouse
+    assert mouse.pin8_calls == [0]
+    psg.write_port(0xA1, 0x10)  # bit 4 (Joy1 pin 8) only
+    assert mouse.pin8_calls == [0]
+
+
+def test_reg15_pin6_change_on_the_mouse_port_is_forwarded() -> None:
+    # input-mouse "A pin 6 change on the mouse's port is forwarded".
+    psg = _psg(InputLines())
+    mouse = _FakeMouse()
+    psg._mouse = MouseSlot(mouse, JoystickPort.JOY2)
+    psg.write_port(0xA0, 15)
+    psg.write_port(0xA1, 0x20)
+    psg.write_port(0xA1, 0x24)  # bit 2: Joy2 pin 6
+    assert mouse.pin8_calls == [1, 1]
+
+
+def test_reg15_repeated_value_is_not_forwarded() -> None:
+    # input-mouse "A repeated register 15 value is not forwarded".
+    psg = _psg(InputLines())
+    mouse = _FakeMouse()
+    psg._mouse = MouseSlot(mouse, JoystickPort.JOY1)
+    psg.write_port(0xA0, 15)
+    psg.write_port(0xA1, 0x13)
+    psg.write_port(0xA1, 0x13)
+    assert mouse.pin8_calls == [1]
+
+
+def test_a_state_load_takes_the_mouse_pins_from_register_15() -> None:
+    psg = _psg(InputLines())
+    mouse = _FakeMouse()
+    psg._mouse = MouseSlot(mouse, JoystickPort.JOY2)
+    psg.regs[15] = 0x20
+    psg.sync_mouse_pins()
+    psg.write_port(0xA0, 15)
+    psg.write_port(0xA1, 0x20)  # the loaded pins: no change
+    assert mouse.pin8_calls == []
 
 
 def test_reg14_delegates_to_mouse_when_its_port_is_selected() -> None:

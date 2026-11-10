@@ -284,8 +284,8 @@ def _disks_by_drive(config: MachineConfig, drive_count: int) -> dict[int, DiskMo
 
 
 def _check_rtc_initial_time(start: RtcTime) -> None:
-    """Reject an RTC start time that a state load would reject, so a built
-    machine can always load its own saved state."""
+    """Reject an RTC start time that is not a real calendar date and time,
+    since the RTC's counters start from it."""
     fields = [start.year, start.month, start.day, start.hour, start.minute, start.second]
     try:
         check_start(fields, "MachineConfig.rtc_initial_time")

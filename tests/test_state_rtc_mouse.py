@@ -34,6 +34,7 @@ def _msx2(start: RtcTime) -> Machine:
     machine = make_machine_msx2(_ROM, _EXTROM)
     assert machine.rtc is not None
     machine.rtc.start = start
+    machine.rtc._start_counters()
     return machine
 
 
@@ -98,12 +99,12 @@ def test_mouse_wiring_mismatch_is_rejected() -> None:
         _restore_snapshot(make_machine(_ROM), snap)
 
 
-def test_rtc_state_with_an_invalid_date_is_rejected() -> None:
+def test_rtc_state_with_a_leap_counter_out_of_range_is_rejected() -> None:
     saved = _msx2(RtcTime(2026, 1, 1, 0, 0, 0))
     snap = _snapshot_from_machine(saved)
     assert snap.rtc is not None
-    snap.rtc["start"] = [2026, 2, 30, 0, 0, 0]
-    with pytest.raises(ValueError, match="rtc"):
+    snap.rtc["leap_year"] = 4
+    with pytest.raises(ValueError, match="rtc.leap_year"):
         _restore_snapshot(_msx2(RtcTime(2026, 1, 1, 0, 0, 0)), snap)
 
 
@@ -157,5 +158,5 @@ def test_a_long_session_loads_into_a_fresh_machine() -> None:
     state.load_state(fresh, data)
     assert fresh.rtc is not None
     assert fresh.rtc._base_cycle >= 0 and fresh_mouse._base_cycle >= 0
-    assert fresh.rtc._elapsed_cycles() == saved.rtc._elapsed_cycles() == 10_000_000
+    assert fresh.rtc._uncounted_cycles() == saved.rtc._uncounted_cycles() == 10_000_000
     assert state.save_state(fresh) == data

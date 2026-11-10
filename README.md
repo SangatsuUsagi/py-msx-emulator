@@ -219,12 +219,12 @@ Main RAM in 16 KB segments, with segment registers at ports 0xFC-0xFF. The stand
 
 ### RTC: RP5C01
 
-A real-time clock at ports 0xB4-0xB5. It includes 26 nibbles of battery-backed CMOS RAM (blocks 2/3) and the 12/24-hour mode encoding (register 10, bit 0).
+A real-time clock at ports 0xB4-0xB5. On a real machine the battery keeps every register of the chip, so the emulator saves all four register blocks (52 nibbles): the clock digits, the alarm and settings block with the 12/24-hour select (register 10, bit 0), and 26 nibbles of CMOS RAM (blocks 2/3).
 
 - Implementation: `msx/rtc.py`
-- CMOS RAM persistence: `saves/sram/rtc_<machine_id>.sram`, one file per machine. Real hardware has one physical RTC and battery per machine, unlike cartridge SRAM. The emulator loads the file on start and saves it on exit if it changed.
-- Clock: starts at the host's local time when the emulator creates the machine, then advances with emulated time only. The emulation is thus the same on every run with the same input. The clock runs at the emulated speed: fast under fast-forward, stopped while paused.
-- Known limitations: setting the clock from the MSX does not change it. There is no alarm or timer output.
+- Register persistence: `saves/sram/rtc_<machine_id>.sram` (52 bytes), one file per machine. Real hardware has one physical RTC and battery per machine, unlike cartridge SRAM. The emulator loads the file on start and saves it on exit if it changed.
+- Clock: starts at the host's local time when the emulator creates the machine, then advances with emulated time only. The saved clock digits are not used, because the emulator does not run the clock while the machine is off. The MSX can set the clock. The emulation is thus the same on every run with the same input. The clock runs at the emulated speed: fast under fast-forward, stopped while paused.
+- Known limitations: there is no alarm or timer output.
 
 ### Cartridge mappers
 
@@ -334,7 +334,7 @@ While a tape is mounted and the motor runs, the frontend runs as fast-forward an
 
 ### Mouse
 
-An optional MSX mouse that follows the host mouse. It connects to a joystick port in place of the physical or keyboard joystick on that port. It reproduces the real protocol. The MSX toggles pin 8 of the port, which is normally the always-high strobe output of the PSG. Each toggle clocks out one 4-bit nibble of signed relative motion, in the order X high, X low, Y high, Y low. A zero-delta alternate cycle follows, so the MSX BIOS mouse detection identifies the device as a mouse, not a trackball. The left and right buttons drive the trigger A/B lines of the port.
+An optional MSX mouse that follows the host mouse. It connects to a joystick port in place of the physical or keyboard joystick on that port. It reproduces the real protocol. The MSX toggles pin 8 of the port, an output that PSG register 15 drives. Each toggle clocks out one 4-bit nibble of signed relative motion, in the order X high, X low, Y high, Y low. A zero-delta alternate cycle follows, so the MSX BIOS mouse detection identifies the device as a mouse, not a trackball. The left and right buttons drive the trigger A/B lines of the port.
 
 | Item | Detail |
 | --- | --- |
@@ -345,7 +345,7 @@ An optional MSX mouse that follows the host mouse. It connects to a joystick por
 - Known limitations:
   - The emulator does not implement the NYYRIKKI/Prodatron extended protocol (higher resolution, wheel, extra buttons).
   - The emulator does not implement absolute positioning.
-  - The emulator does not implement the click-and-hold joystick-emulation mode of the real mouse.
+  - The emulator does not implement the joystick mode that a real mouse enters when its left button is held down at power-on.
 
 ### SDL2 frontend
 
