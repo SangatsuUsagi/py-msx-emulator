@@ -43,8 +43,8 @@ Already covered, no new test added for these:
     negative test for every other rule in the dispatch
 
 Gaps this file fills:
-  - StepCommand / StepInCommand / StepOutCommand -- untested anywhere,
-    including the StepCommand Open-Questions wrap-at-track-0 quirk
+  - StepCommand / StepInCommand / StepOutCommand -- untested anywhere
+    (the head-stepping scenarios are in test_wd2793.py)
   - WriteSectorCommand's not-ready branch -- test_no_disk_reports_not_ready
     only exercises READ SECTOR (0x80) with no disk, never WRITE SECTOR
     (0xA0); test_write_protect_rejects_write_sector covers a *mounted*
@@ -59,8 +59,7 @@ Gaps this file fills:
     postconditions -- test_swap_aborts_in_progress_transfer checks BUSY
     and mode only
   - Reset -- no test anywhere calls WD2793.reset() (confirmed by grep
-    across tests/); includes its as-built command_register divergence
-    from GT/openMSX (0, not the Hex-03 latch)
+    across tests/); reset runs RESTORE, so COMMAND holds 0x03
   - ReadDataRegisterIdle -- both branches (idle, and reading DATA mid-write)
   - WriteDataRegisterIdle -- the "reading" branch (write mid-read-transfer
     must not disturb it); the "idle" branch is incidentally exercised
@@ -136,12 +135,14 @@ def test_config_defaults_match_declared_transfer_sizes() -> None:
 
 def test_step_in_increments_track_and_latches_direction(tmp_path: Path) -> None:
     wd, drive, _ = _ctrl(tmp_path)
-    wd.set_track(10)
-    wd.set_command(0x40)  # STEP-IN
+    wd.set_data(10)
+    wd.set_command(0x10)  # SEEK to track 10
+    wd.set_command(0x50)  # STEP-IN, T set: TRACK follows the head
     assert wd.get_track() == 11
     assert drive.track == 11
-    wd.set_command(0x20)  # STEP: repeats the latched "in" direction
+    wd.set_command(0x30)  # STEP, T set: repeats the latched "in" direction
     assert wd.get_track() == 12
+    assert drive.track == 12
 
 
 def test_step_out_decrements_track_and_clamps_at_zero(tmp_path: Path) -> None:
@@ -167,13 +168,16 @@ def test_step_repeat_out_clamps_at_zero_same_as_dedicated_step_out(
     assert wd.get_track() == 0
 
 
-def test_step_default_direction_before_any_step_in_or_out_is_in(
+def test_step_after_reset_repeats_the_reset_restore_direction(
     tmp_path: Path,
 ) -> None:
-    wd, _, _ = _ctrl(tmp_path)
+    # The RESTORE that reset runs steps out, so a later STEP steps out too.
+    wd, drive, _ = _ctrl(tmp_path)
+    drive.track = 5
     wd.set_track(5)
-    wd.set_command(0x20)  # STEP with no prior STEP-IN/STEP-OUT this session
-    assert wd.get_track() == 6  # last_step_direction defaults to +1 ("in")
+    wd.set_command(0x30)  # STEP, T set, no STEP-IN/STEP-OUT since reset
+    assert wd.get_track() == 4
+    assert drive.track == 4
 
 
 # ---------------------------------------------------------------------------
@@ -184,7 +188,8 @@ def test_read_address_reports_synthesized_id_field_and_track_into_sector_registe
     tmp_path: Path,
 ) -> None:
     wd, drive, _ = _ctrl(tmp_path)
-    wd.set_track(5)
+    wd.set_data(5)
+    wd.set_command(0x10)  # SEEK: the ID field carries the head's track
     drive.side = 1
     wd.set_command(0xC0)  # READ ADDRESS
     assert wd.get_status() & (BUSY | S_DRQ) == (BUSY | S_DRQ)
@@ -276,7 +281,8 @@ def test_abort_clears_transfer_state_but_preserves_head_position(
 ) -> None:
     wd, _, image = _ctrl(tmp_path)
     image.write_sector(0, b"\x22" * SECTOR_SIZE)
-    wd.set_track(7)
+    wd.set_data(7)
+    wd.set_command(0x10)  # SEEK: READ SECTOR needs TRACK == head track
     wd.set_sector(3)
     wd.set_command(0x80)  # start a read: BUSY|DRQ
     assert wd.get_drq() is True
@@ -304,17 +310,16 @@ def test_reset_returns_to_power_on_state(tmp_path: Path) -> None:
 
     wd.reset()
 
+    # Reset runs RESTORE (COMMAND 0x03), as a real MR pulse does.
+    assert wd.command_reg == 0x03
+    assert wd.get_irq() is True  # the RESTORE ended
     assert wd.get_track() == 0
     assert wd.get_sector() == 1
     assert wd.get_data() == 0
-    assert wd.get_status() == 0
-    assert wd.get_irq() is False
+    assert wd.get_status() == TRACK00
+    assert wd.get_irq() is False  # the status read cleared INTRQ
     assert wd.get_drq() is False
     assert wd._mode is Mode.IDLE
-    # As-built divergence from GT/openMSX (see Reset's @guidance in the
-    # spec): a real MR pulse latches Hex 03 (RESTORE) into the command
-    # register; this model leaves it at 0 (idle, no command dispatched).
-    assert wd.command_reg == 0
 
 
 def test_reset_does_not_disconnect_the_selected_drive(tmp_path: Path) -> None:
@@ -377,15 +382,17 @@ def test_no_drive_connected_at_all_reports_not_ready_but_type1_still_runs() -> N
     assert wd.get_status() & NOT_READY  # still reported, just doesn't block Type I
 
 
-def test_restore_with_no_disk_reports_track00_and_not_ready_together() -> None:
-    """STATUS bits compose independently, not as a priority ladder: TRACK00
-    and NOT_READY must both be set, not one masking the other out. This is
-    the first command every MSX2 DISK ROM issues at boot with no disk
-    mounted. Regression guard for allium's PositioningCommandCompleted
-    composition fix (fdc-wd2793-core.allium)."""
-    wd = WD2793()  # no drive connected
+def test_restore_with_no_disk_reports_track00_and_not_ready_together(
+    tmp_path: Path,
+) -> None:
+    """STATUS bits compose independently, not as a priority ladder: TRACK00,
+    WRITE PROTECT and NOT_READY are all set. This is the first command every
+    MSX2 DISK ROM issues at boot with no disk mounted. With no disk the
+    write-protect signal reads as set (openMSX's DummyDisk)."""
+    wd, drive, _ = _ctrl(tmp_path)
+    drive.mount(None)
     wd.set_command(0x00)  # RESTORE
-    assert wd.get_status() == (TRACK00 | NOT_READY)  # exactly 0x84, not 0x80
+    assert wd.get_status() == (TRACK00 | WRITE_PROTECTED | NOT_READY)  # 0xC4
 
 
 # ---------------------------------------------------------------------------

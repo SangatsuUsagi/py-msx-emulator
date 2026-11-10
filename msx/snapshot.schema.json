@@ -2443,6 +2443,9 @@
           "type": "integer",
           "minimum": -9007199254740991,
           "maximum": 9007199254740991
+        },
+        "immediate_irq": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -2450,6 +2453,7 @@
         "command_reg",
         "data_reg",
         "drq",
+        "immediate_irq",
         "index",
         "intrq",
         "mode",

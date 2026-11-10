@@ -36,7 +36,9 @@ def _iface_with_disk(dsk: Path) -> SonyPhilipsInterface:
 
 
 def _format_track(iface: SonyPhilipsInterface, track: int) -> None:
-    iface.write_mem(_TRACK, track)
+    # WRITE TRACK formats the track under the head, so SEEK there first.
+    iface.write_mem(_DATA, track)
+    iface.write_mem(_CMD, 0x10)  # SEEK
     iface.write_mem(_CMD, 0xF0)  # WRITE TRACK
     for _ in range(TRACK_BYTES + 16):  # small margin; loop stops when BUSY clears
         if not (iface.read_mem(_STATUS) & BUSY):
