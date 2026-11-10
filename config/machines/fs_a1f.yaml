@@ -9,13 +9,14 @@ cpu:
   clock_mhz: 3.579545
   m1_wait_states: 1 # MSX inserts 1 wait per M1 (opcode fetch)
 
-# Panasonic FS-A1F. Slot 3 now matches real hardware's actual layout
-# (openMSX's references/openMSX/share/machines/Panasonic_FS-A1F.xml): four
-# independent secondary slots -- 0 = 64 KB flat RAM, 1 = SUB ROM (16 KB,
+# Panasonic FS-A1F. Slot 3 follows openMSX's machine description
+# (references/openMSX/share/machines/Panasonic_FS-A1F.xml); not verified on
+# real hardware. Four independent secondary slots -- 0 = 64 KB memory
+# mapper RAM (ports 0xFC-0xFF), 1 = SUB ROM (16 KB,
 # page 0), 2 = the TC8566AF FDC (`<io_regs>7FF8</io_regs>`) + its DISK ROM
 # window (pages 1-2, as openMSX's `<mem base="0x4000" size="0x8000"/>`: the
 # DISK ROM shows in page 1 only, and page 2 shows only the registers at
-# 0xBFF8-0xBFFF). msx/memory.py resolves each role (SUB ROM, FDC, flat RAM)
+# 0xBFF8-0xBFFF). msx/memory.py resolves each role (SUB ROM, FDC, RAM mapper)
 # from its own sub-slot index (openspec/specs/memory-slot-bus/spec.md).
 #
 # Two things real hardware has that this machine does not model, neither
@@ -50,6 +51,7 @@ slots:
         0:
           type: ram
           size_kb: 64
+          mapper: standard
         1:
           content:
             - rom:
@@ -81,5 +83,6 @@ builtin_devices:
     # Port decode (openMSX; not verified on a real FS-A1F).
     overrides: { form: s1985 }
   - ref: rtc_rp5c01
+  - ref: memory_mapper_standard
 
 default_extensions: []

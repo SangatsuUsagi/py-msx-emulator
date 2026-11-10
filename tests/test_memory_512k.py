@@ -115,7 +115,7 @@ def _msx2_with_ram_mapper_yaml(main_file: str = "main2.rom") -> str:
 
 def _msx2_no_ram_mapper_yaml(main_file: str = "main2.rom") -> str:
     # An MSX2 machine with a flat (non-mapper) slot-3 RAM sub-slot, the same
-    # shape real hb_f1xd/fs_a1f machines use -- has_ram_mapper is False, so
+    # shape hb_f1xd uses -- has_ram_mapper is False, so
     # this is the MSX2 base machine memory_512k's own build_machine tests
     # exercise (an expanded extension overlay has no MSX1 counterpart per
     # cart-extension-overlay's "Expanded extension overlay requires an MSX2

@@ -123,7 +123,7 @@ def test_sub_rom_and_fdc_default_to_subslot_0_when_combined() -> None:
 
 
 def test_sub_rom_and_fdc_resolve_to_independent_subslots() -> None:
-    """FS-A1F's real hardware shape: SUB ROM in one secondary slot, the fdc:
+    """The FS-A1F's shape: SUB ROM in one secondary slot, the fdc:
     block in a different one -- each resolves to its own declared index."""
     slot3 = {
         "expanded": True,

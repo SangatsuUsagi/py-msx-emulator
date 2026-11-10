@@ -436,7 +436,7 @@ The floppy subsystem is a generic layer (`msx/fdc/`). A new controller chip or c
 The `fdc:` block in the machine YAML declares the controller and the connection style of a machine. The two shipped floppy machines thus differ only in data:
 
 - The Sony HB-F1XD (`hb_f1xd`) puts the WD2793 and its DISK ROM in slot 3 sub-slot 0, with 64 KB of flat RAM in sub-slot 3.
-- The Panasonic FS-A1F (`fs_a1f`) uses the TC8566AF and spreads the roles across its four secondary slots: RAM in sub-slot 0, SUB ROM in 1, and the FDC in 2. This machine definition comes from publicly available technical documentation and is not verified on real hardware.
+- The Panasonic FS-A1F (`fs_a1f`) uses the TC8566AF and spreads the roles across its four secondary slots: a 64 KB RAM mapper in sub-slot 0, SUB ROM in 1, and the FDC in 2. This machine definition comes from publicly available technical documentation and is not verified on real hardware.
 
 `--fdd1`/`--fdd2` mount images into drives A/B. `--fdd1` can take a list of images. Three paths swap disks at runtime. All of them call `swap_disk()` in `host/media.py`. It first writes a dirty outgoing image back to its file, and then calls `Machine.mount_disk()`, which calls the `swap()` of the floppy interface. On success, it records the new file in the `DiskFiles` table that the three paths share:
 

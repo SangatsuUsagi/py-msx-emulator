@@ -110,8 +110,8 @@ def test_write_to_other_subslot_reaches_ram_mapper() -> None:
 
 
 def test_sub_rom_and_fdc_in_independent_subslots_with_mapper() -> None:
-    """FS-A1F-style independent sub-slots, but with a RAM mapper instead of
-    flat RAM: SUB ROM in sub-slot 1, FDC in sub-slot 2, RAM mapper elsewhere."""
+    """FS-A1F-style independent sub-slots with a RAM mapper: SUB ROM in
+    sub-slot 1, FDC in sub-slot 2, RAM mapper elsewhere."""
     sub_rom = bytes([0x41] + [0x00] * 0x3FFF)
     fdc = _StubFdc()
     mem = Memory(
