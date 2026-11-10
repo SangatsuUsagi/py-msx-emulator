@@ -161,6 +161,7 @@ class _Slot3Msx2:
     sub_rom_subslot: int = 0
     has_ram_mapper: bool = False
     ram_mapper_size_kb: int = _DEFAULT_RAM_MAPPER_KB
+    ram_mapper_subslot: int | None = None
     flat_ram_subslot: int | None = None
     flat_ram_size_kb: int = _DEFAULT_FLAT_RAM_KB
     fdc: FdcDef | None = None
@@ -625,6 +626,7 @@ def _parse_slot3_msx2(slot3: Slot3Msx2Yaml, machine_id: str) -> _Slot3Msx2:
                     result.fdc_subslot = sub_idx
             if sub_val.get("mapper") == "standard":
                 result.has_ram_mapper = True
+                result.ram_mapper_subslot = sub_idx
                 result.ram_mapper_size_kb = int(sub_val.get("size_kb", _DEFAULT_RAM_MAPPER_KB))
                 _check_ram_mapper_size_kb(
                     f"machine '{machine_id}' slot 3 sub-slot {sub_idx}",
@@ -657,6 +659,8 @@ def _validate_slot3(context: str, result: _Slot3Msx2) -> None:
         _check_subslot_index(context, "fdc", result.fdc_subslot)
     if result.flat_ram_subslot is not None:
         _check_subslot_index(context, "flat RAM", result.flat_ram_subslot)
+    if result.ram_mapper_subslot is not None:
+        _check_subslot_index(context, "RAM mapper", result.ram_mapper_subslot)
     if result.has_ram_mapper and result.flat_ram_subslot is not None:
         raise MachineLoadError(
             f"{context}: RAM mapper and flat RAM sub-slot {result.flat_ram_subslot} "
@@ -676,6 +680,20 @@ def _validate_slot3(context: str, result: _Slot3Msx2) -> None:
             f"{context}: flat RAM and fdc both declared in sub-slot "
             f"{result.flat_ram_subslot} -- Memory's write path has no FDC "
             "guard, so a write to that page would silently land in the flat RAM"
+        )
+    if result.ram_mapper_subslot is not None and result.sub_rom is not None \
+            and result.ram_mapper_subslot == result.sub_rom_subslot:
+        raise MachineLoadError(
+            f"{context}: RAM mapper and SUB ROM both declared in sub-slot "
+            f"{result.ram_mapper_subslot} -- Memory's write path has no SUB-ROM "
+            "guard, so a write to that page would silently land in the RAM mapper"
+        )
+    if result.ram_mapper_subslot is not None and result.fdc is not None \
+            and result.ram_mapper_subslot == result.fdc_subslot:
+        raise MachineLoadError(
+            f"{context}: RAM mapper and fdc both declared in sub-slot "
+            f"{result.ram_mapper_subslot} -- the RAM mapper would answer in the "
+            "FDC sub-slot's other pages"
         )
 
 
@@ -929,6 +947,7 @@ def load_machine_spec(
         m1_wait_states=m1_wait_states,
         flat_ram_subslot=s3.flat_ram_subslot,
         flat_ram_size_kb=s3.flat_ram_size_kb,
+        ram_mapper_subslot=s3.ram_mapper_subslot,
         sub_rom_subslot=s3.sub_rom_subslot,
         fdc=s3.fdc,
         fdc_subslot=s3.fdc_subslot,

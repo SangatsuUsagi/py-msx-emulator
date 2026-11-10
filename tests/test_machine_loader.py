@@ -876,6 +876,54 @@ def test_parse_slot3_msx2_mapper_standard_non_expanded_honours_declared_size() -
     assert result.ram_mapper_size_kb == 512
 
 
+def test_parse_slot3_msx2_records_the_mapper_subslot() -> None:
+    # machine-loader "Mapper RAM sub-slot still resolved".
+    slot3 = {
+        "expanded": True,
+        "secondary": {2: {"type": "ram", "mapper": "standard", "size_kb": 128}},
+    }
+    result = _parse_slot3_msx2(slot3, "test")
+    assert result.has_ram_mapper is True
+    assert result.ram_mapper_subslot == 2
+    assert result.flat_ram_subslot is None
+
+
+def test_parse_slot3_msx2_non_expanded_mapper_has_no_subslot() -> None:
+    # machine-loader "A non-expanded mapper slot 3 records no mapper sub-slot".
+    result = _parse_slot3_msx2({"mapper": "standard", "size_kb": 128}, "test")
+    assert result.has_ram_mapper is True
+    assert result.ram_mapper_subslot is None
+
+
+def test_parse_slot3_msx2_mapper_and_sub_rom_in_one_subslot_rejected() -> None:
+    slot3 = {
+        "expanded": True,
+        "secondary": {0: {
+            "type": "ram", "mapper": "standard", "size_kb": 128,
+            "content": [{"rom": {"file": "sub.rom", "size_kb": 16, "pages": [0]}}],
+        }},
+    }
+    with pytest.raises(
+        MachineLoadError, match="RAM mapper and SUB ROM both declared in sub-slot 0"
+    ):
+        _parse_slot3_msx2(slot3, "test")
+
+
+def test_parse_slot3_msx2_mapper_and_fdc_in_one_subslot_rejected() -> None:
+    slot3 = {
+        "expanded": True,
+        "secondary": {1: {
+            "type": "ram", "mapper": "standard", "size_kb": 128,
+            "fdc": {
+                "ref": "fdc_wd2793", "controller": "wd2793", "connection_style": "sony",
+                "drives": 1, "rom": {"file": "disk.rom", "size_kb": 16, "pages": [1]},
+            },
+        }},
+    }
+    with pytest.raises(MachineLoadError, match="RAM mapper and fdc both declared in sub-slot 1"):
+        _parse_slot3_msx2(slot3, "test")
+
+
 def test_parse_slot3_msx2_mapper_standard_invalid_size_rejected() -> None:
     slot3 = {
         "expanded": True,

@@ -10,7 +10,7 @@
 
 ハードウェアコンポーネントはすべて純粋な Python で書いています。各コンポーネントは実装の前に機械可読な仕様として定義し、その仕様がテストを決めます（[仕様駆動アーキテクチャ](#仕様駆動アーキテクチャ)を参照）。コンポーネントの配線は `build_machine()` に手で書いてあり、リフレクションや依存性注入は使いません。プラットフォーム固有の依存は、画面と音声のフロントエンドに使う pysdl2 だけです。内部構造は [`docs/technical-implementation_ja.md`](docs/technical-implementation_ja.md) で説明しています。
 
-コア（`msx/`）はファイルもホストの時計も読みません。コアの外のコードは、コア API（`msx/core_api.py`）だけを通してマシンを使います。`include/msx_core.h` は、この API を C で表したヘッダで、ABI バージョンは 1.2 です。このヘッダがあれば、Python のコアを、ほかの言語で書いたコアと置き換えられます。[コアの移植](docs/technical-implementation_ja.md#コアの移植)を参照してください。
+コア（`msx/`）はファイルもホストの時計も読みません。コアの外のコードは、コア API（`msx/core_api.py`）だけを通してマシンを使います。`include/msx_core.h` は、この API を C で表したヘッダで、ABI バージョンは 1.3 です。このヘッダがあれば、Python のコアを、ほかの言語で書いたコアと置き換えられます。[コアの移植](docs/technical-implementation_ja.md#コアの移植)を参照してください。
 
 動かすには BIOS ROM が必要で、リポジトリには含まれません。汎用マシンには無償の [C-BIOS](https://cbios.sourceforge.net/) が使えます。手順は [QUICK_START_ja.md](QUICK_START_ja.md) を参照してください。
 

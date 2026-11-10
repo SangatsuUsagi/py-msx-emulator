@@ -10,7 +10,7 @@ A functionally accurate MSX1/MSX2 emulator, written in pure Python 3.10+ and dri
 
 Every hardware component is pure Python. A machine-readable specification defines each component before its implementation, and these specs drive the test suite. See [Spec-driven architecture](#spec-driven-architecture) for details. The component wiring is explicit: `build_machine()` connects the components by hand, with no reflection or dependency injection. The only platform-specific dependency is pysdl2, for the display and audio frontend. [`docs/technical-implementation.md`](docs/technical-implementation.md) describes the internals.
 
-The core (`msx/`) reads no file and no host clock. Code outside it uses the machine only through the core API (`msx/core_api.py`). `include/msx_core.h` is the C form of that API, at ABI version 1.2, so that a core in another language can replace the Python core. See [Porting the core](docs/technical-implementation.md#porting-the-core).
+The core (`msx/`) reads no file and no host clock. Code outside it uses the machine only through the core API (`msx/core_api.py`). `include/msx_core.h` is the C form of that API, at ABI version 1.3, so that a core in another language can replace the Python core. See [Porting the core](docs/technical-implementation.md#porting-the-core).
 
 The emulator needs BIOS ROMs, which the repository does not include. The free [C-BIOS](https://cbios.sourceforge.net/) works for the generic machines. [QUICK_START.md](QUICK_START.md) explains the setup.
 

@@ -126,12 +126,41 @@ def test_invalid_params_type(server: DebugServer) -> None:
 
 
 def test_pause_sets_state(server: DebugServer) -> None:
+    # remote-socket-rpc "Server-push pause notifications": the transition to
+    # paused pushes a frame before the response.
     client = _connect(server)
     client.send({"id": "p", "method": "debugger.pause"})
+    push = client.readline()
+    assert push["notification"] == "paused"
+    assert push["reason"] == "user_request"
     resp = client.readline()
     assert resp["result"]["paused"] is True
     assert resp["result"]["reason"] == "user_request"
     assert server.pause_state.paused is True
+    client.close()
+
+
+def test_pause_while_paused_pushes_nothing(server: DebugServer) -> None:
+    client = _connect(server)
+    server.on_pause("breakpoint", 0x0000)
+    assert client.readline()["notification"] == "paused"
+    client.send({"id": "p", "method": "debugger.pause"})
+    resp = client.readline()
+    assert resp["id"] == "p" and resp["result"]["paused"] is True
+    client.close()
+
+
+def test_step_pushes_a_step_complete_notification(server: DebugServer) -> None:
+    client = _connect(server)
+    server.on_pause("breakpoint", 0x0000)
+    assert client.readline()["notification"] == "paused"
+    client.send({"id": "s", "method": "cpu.step"})
+    push = client.readline()
+    assert push["notification"] == "paused"
+    assert push["reason"] == "step_complete"
+    resp = client.readline()
+    assert resp["id"] == "s"
+    assert push["pc"] == resp["result"]["pc"]
     client.close()
 
 

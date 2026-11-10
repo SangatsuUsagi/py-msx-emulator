@@ -150,9 +150,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                         help="Overlay a slot 2 extension device: 'fmpac' (MSX-MUSIC + 8 KB "
                              "SRAM), 'scc_plus' (an SCC-I / SCC+ cartridge), 'hbi_j1' "
                              "(Sony HBI-J1: Kanji-ROM + MSX-JE + Kanji driver/BASIC, expands "
-                             "slot 2 into two sub-slots), or 'memory_512k' (a 512 KB volatile "
+                             "slot 2 into two sub-slots), 'memory_512k' (a 512 KB volatile "
                              "RAM-mapper memory-expansion cartridge; requires a machine with "
-                             "no existing slot-3 memory mapper) (conflicts with "
+                             "no existing slot-3 memory mapper), 'msxdos2_512k' (memory_512k "
+                             "plus an MSX-DOS2 kernel ROM), 'msxdos2_512k_kanjirom' "
+                             "(msxdos2_512k plus a Kanji font ROM) or 'msxdos2_512k_viewfont' "
+                             "(msxdos2_512k plus an ASCII8-mapped View font ROM) (conflicts with "
                              "--slot2/--mapper2). 'none' forces no extension overlay even when "
                              "py_emulator.yaml sets one, freeing --slot2/--mapper2 for CLI use. "
                              "'--extension' is accepted as an alias for '--extension2', "
@@ -652,12 +655,12 @@ def _open_trace_outputs(
 
     trace_output = TraceOutput()
     trace_file = None
-    if args.vdp_trace:
-        if args.vdp_trace_out:
-            trace_file = open(args.vdp_trace_out, "w", encoding="utf-8")
-            trace_output.set_vdp_output(trace_file, args.vdp_trace_out)
-        else:
-            trace_output.set_vdp_output(sys.stdout, "stdout")
+    if args.vdp_trace_out:
+        # Opened without --vdp-trace too: the debugger's `te` writes here.
+        trace_file = open(args.vdp_trace_out, "w", encoding="utf-8")
+        trace_output.set_vdp_output(trace_file, args.vdp_trace_out)
+    elif args.vdp_trace:
+        trace_output.set_vdp_output(sys.stdout, "stdout")
     log_file = None
     if args.debug:
         if args.log:
@@ -704,12 +707,13 @@ def _start_traces(
     if args.vdp_trace:
         _check(machine, machine.set_trace_kinds(machine.trace_kinds() | TRACE_VDP))
     mapper_trace_file = None
+    if args.mapper_trace_out:
+        # Opened without --mapper-trace too: the debugger's `ce` writes here.
+        mapper_trace_file = open(args.mapper_trace_out, "w", encoding="utf-8")
+        trace_output.set_map_output(mapper_trace_file, args.mapper_trace_out)
+    elif args.mapper_trace:
+        trace_output.set_map_output(sys.stdout, "stdout")
     if args.mapper_trace:
-        if args.mapper_trace_out:
-            mapper_trace_file = open(args.mapper_trace_out, "w", encoding="utf-8")
-            trace_output.set_map_output(mapper_trace_file, args.mapper_trace_out)
-        else:
-            trace_output.set_map_output(sys.stdout, "stdout")
         if machine.trace_sources() & TRACE_MAPPER:
             _check(machine, machine.set_trace_kinds(machine.trace_kinds() | TRACE_MAPPER))
         else:

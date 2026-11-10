@@ -1090,6 +1090,7 @@ def _build_msx2(
         ram_mapper = RamMapper(size_kb=spec.ram_mapper_size_kb) if spec.has_ram_mapper else None
         ram_bytes = bytearray(32768)
         flat_ram_subslot = None
+    ram_mapper_subslot = spec.ram_mapper_subslot if ram_mapper is not None else None
 
     fdc_device = _build_fdc(config) if spec.fdc is not None else None
     slot0_ram, slot0_ram_page = _slot0_ram_buffer(spec)
@@ -1104,6 +1105,7 @@ def _build_msx2(
         sub_slot_enabled=True,
         ram_mapper=ram_mapper,
         flat_ram_subslot=flat_ram_subslot,
+        ram_mapper_subslot=ram_mapper_subslot,
         sub_rom_subslot=spec.sub_rom_subslot,
         fdc=fdc_device,
         fdc_subslot=spec.fdc_subslot,

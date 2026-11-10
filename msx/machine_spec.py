@@ -153,6 +153,9 @@ class MachineSpec:
     # None when RAM is mapper-backed (the common C-BIOS case).
     flat_ram_subslot: int | None = None
     flat_ram_size_kb: int = 64
+    # MSX2 RAM mapper sub-slot (e.g. C-BIOS MSX2's sub-slot 2) of an expanded
+    # slot 3. None for a non-expanded mapper slot 3 or no mapper.
+    ram_mapper_subslot: int | None = None
 
     # Which sub-slot the SUB ROM resolves to -- default 0 preserves every
     # existing machine's resolved layout (all predate this field and
