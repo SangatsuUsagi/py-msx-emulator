@@ -267,7 +267,9 @@ def _render_sprites(vdp: VDP, buf: bytearray, status: int) -> int:
     vram = vdp.vram
 
     line_count = [0] * _H
-    fifth_set = False
+    # The 5S index is the overflowing sprite on the topmost overflowing line
+    # (openMSX SpriteChecker; TI data manual), not the first in SAT order.
+    fifth_line = _H
     # Two separate claim arrays: sprite_painted tracks z-order (only an
     # opaque colour claims a pixel, so a transparent higher-priority sprite
     # does not block a lower-priority one showing through); sprite_touched
@@ -308,9 +310,9 @@ def _render_sprites(vdp: VDP, buf: bytearray, status: int) -> int:
             sprite_row = (line - y_top) & 0xFF  # guaranteed < render_size
 
             if line_count[line] >= 4:  # TMS9918A: max 4 sprites per scanline
-                if not fifth_set:
+                if line < fifth_line:
                     status = (status & 0xA0) | 0x40 | (i & 0x1F)
-                    fifth_set = True
+                    fifth_line = line
                 continue
 
             line_count[line] += 1

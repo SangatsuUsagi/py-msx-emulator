@@ -1221,7 +1221,8 @@ class V9938:
 
         self._cmd_active = False
         # A delay left by an overridden HMMC/LMMC must not re-assert TR in the
-        # middle of this command (tick() only runs while a command is active).
+        # middle of this command (tick() re-asserts TR only while a command is
+        # active).
         self._tr_delay = 0
         self._status2 &= ~_S2_CE  # completion leaves TR alone (openMSX commandDone)
 

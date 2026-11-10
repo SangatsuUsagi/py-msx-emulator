@@ -76,6 +76,22 @@ def test_absorbed_dd_prefix_costs_a_full_m1_cycle() -> None:
     assert (base, extra) == (8, 2)
 
 
+def test_long_dd_prefix_chain_runs_as_one_step() -> None:
+    # 1000 absorbed DDs then NOP: one step, no host recursion limit.
+    c = _cpu([0xDD] * 1000 + [0x00], 0)
+    assert c.step() == 4 * 1000 + 4
+    assert c.registers.PC == 1001
+    base, extra = _delta([0xDD] * 1000 + [0x00])
+    assert extra == 1001
+
+
+def test_last_prefix_in_chain_selects_index_register() -> None:
+    # FD DD 21 34 12: the FD is absorbed, so this is LD IX,0x1234.
+    c = _cpu([0xFD, 0xDD, 0x21, 0x34, 0x12], 0)
+    assert c.step() == 4 + 14
+    assert c.registers.IX == 0x1234
+
+
 def test_halt_gets_one_wait() -> None:
     # HALT then a halted step: the halted internal NOP is one M1.
     c = _cpu([0x76], 1)

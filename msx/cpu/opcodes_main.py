@@ -956,15 +956,25 @@ _build_dd_fd_dispatch()
 
 
 def _execute_dd_fd(cpu: Z80, use_iy: bool) -> int:
+    # A prefix followed by another DD/FD is absorbed: it was its own
+    # 4-T-state M1 cycle (openMSX CC_DD), plus one M1 wait for the byte
+    # fetched after it; the last prefix selects IX or IY. A loop, not re-dispatch, so a
+    # chain of any length runs as one step at constant stack depth.
+    extra = 0
     op = cpu._fetch_opcode()
+    while op == 0xDD or op == 0xFD:
+        cpu.q = 0
+        extra += 4 + cpu.m1_wait_states
+        use_iy = op == 0xFD
+        op = cpu._fetch_opcode()
     handler = _DD_FD_DISPATCH.get(op)
     if handler is not None:
-        return handler(cpu, use_iy, op)
+        return handler(cpu, use_iy, op) + extra
     # Prefix absorbed: the byte runs as its unprefixed instruction, and the
     # prefix was its own 4-T-state M1 cycle (openMSX CC_DD). The prefix wrote
     # no flags, so that instruction sees Q = 0 (hoglet67/Z80Decoder wiki).
     cpu.q = 0
-    return _DISPATCH[op](cpu) + 4
+    return _DISPATCH[op](cpu) + 4 + extra
 
 
 # ---------------------------------------------------------------------------
@@ -1932,9 +1942,9 @@ def _op_out_n_a(cpu: Z80) -> int:
 
 
 # Prefix handlers add one M1 wait for the second opcode fetch (the byte after the
-# prefix). step() already charged the wait for the prefix byte itself. A DD/FD
-# chain re-enters _op_prefix_dd/_op_prefix_fd via dispatch, so each prefix byte
-# gets exactly one wait; for DDCB/FDCB the displacement and final opcode are
+# prefix). step() already charged the wait for the prefix byte itself. In a
+# DD/FD chain, _execute_dd_fd charges the wait of each further prefix byte, so
+# each prefix byte gets exactly one wait; for DDCB/FDCB the displacement and final opcode are
 # operand reads (not M1s) and correctly get none.
 def _op_prefix_cb(cpu: Z80) -> int:
     return _execute_cb(cpu) + cpu.m1_wait_states

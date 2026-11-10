@@ -803,6 +803,53 @@ def test_sprite_mode2_cc_after_cc0_still_ors() -> None:
     assert buf[1 * 256 + 0] == 7   # 3 | 4
 
 
+def test_sprite_mode2_intervening_cc0_sprite_stops_the_or_merge() -> None:
+    """A CC=1 sprite ORs only into the nearest CC=0 sprite above it: sprite 1
+    (CC=0, at X=100) ends sprite 0's merge chain, so sprite 2 (CC=1) does not
+    OR into sprite 0's pixel at X=0 (openMSX drawMode2)."""
+    vdp = V9938()
+    _set_screen5(vdp)
+    vdp.regs[5] = _SAT_R5
+    vdp.regs[6] = 0x00
+
+    _write_sat_entry(vdp, 0, y=0, x=0, pat=0)
+    _write_col_entry(vdp, 0, 0, color=2, or_mode=False)
+    _write_sat_entry(vdp, 1, y=0, x=100, pat=0)
+    _write_col_entry(vdp, 1, 0, color=4, or_mode=False)
+    _write_sat_entry(vdp, 2, y=0, x=0, pat=0)
+    _write_col_entry(vdp, 2, 0, color=1, or_mode=True)
+    _terminate_sat(vdp, after_idx=3)
+    vdp.vram[0] = 0x80
+
+    buf = _active(vdp)
+    assert buf[1 * 256 + 0] == 2     # not 2 | 1
+    assert buf[1 * 256 + 100] == 4   # sprite 2 does not cover X=100
+
+
+def test_sprite_mode2_cc_sprite_merges_into_the_chain_of_its_cc0_sprite() -> None:
+    """Sprite 2 (CC=1) ORs into sprite 1 (CC=0, the nearest above it) at X=100,
+    and shows its own colour where no sprite of an earlier chain is drawn."""
+    vdp = V9938()
+    _set_screen5(vdp)
+    vdp.regs[5] = _SAT_R5
+    vdp.regs[6] = 0x00
+
+    _write_sat_entry(vdp, 0, y=0, x=0, pat=0)
+    _write_col_entry(vdp, 0, 0, color=2, or_mode=False)
+    _write_sat_entry(vdp, 1, y=0, x=100, pat=0)
+    _write_col_entry(vdp, 1, 0, color=4, or_mode=False)
+    _write_sat_entry(vdp, 2, y=0, x=100, pat=0)
+    _write_col_entry(vdp, 2, 0, color=1, or_mode=True)
+    _write_sat_entry(vdp, 3, y=0, x=50, pat=0)
+    _write_col_entry(vdp, 3, 0, color=8, or_mode=True)
+    _terminate_sat(vdp, after_idx=4)
+    vdp.vram[0] = 0x80
+
+    buf = _active(vdp)
+    assert buf[1 * 256 + 100] == 5   # 4 | 1
+    assert buf[1 * 256 + 50] == 8    # its own colour
+
+
 def test_sprite_mode2_screen8_uses_fixed_sprite_palette() -> None:
     """SCREEN 8 sprites use the fixed GRAPHIC7 sprite palette, not the
     programmable palette. Colour 8 → fixed GRB332 byte 0x9D (from 0x472),
