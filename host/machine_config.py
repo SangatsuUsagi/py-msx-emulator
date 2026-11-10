@@ -599,7 +599,9 @@ def _parse_slot3_msx2(slot3: Slot3Msx2Yaml, machine_id: str) -> _Slot3Msx2:
             flat (non-mapper) RAM sub-slot are both declared -- these are
             mutually exclusive MSX2 slot 3 RAM strategies (see
             allium/slots.allium's SlotThreeStrategyIsExclusive invariant and
-            Memory.__post_init__'s corresponding construction-time check).
+            Memory.__post_init__'s corresponding construction-time check) --
+            or if the flat RAM or the RAM mapper shares its sub-slot with
+            the SUB ROM or the fdc.
     """
     result = _Slot3Msx2()
     if slot3.get("expanded"):
@@ -678,8 +680,8 @@ def _validate_slot3(context: str, result: _Slot3Msx2) -> None:
             and result.flat_ram_subslot == result.fdc_subslot:
         raise MachineLoadError(
             f"{context}: flat RAM and fdc both declared in sub-slot "
-            f"{result.flat_ram_subslot} -- Memory's write path has no FDC "
-            "guard, so a write to that page would silently land in the flat RAM"
+            f"{result.flat_ram_subslot} -- the flat RAM would answer in the "
+            "FDC sub-slot's other pages"
         )
     if result.ram_mapper_subslot is not None and result.sub_rom is not None \
             and result.ram_mapper_subslot == result.sub_rom_subslot:

@@ -222,17 +222,16 @@ class Machine:
         present), VDP, FDC (if present), Kanji ROM (if present), PPI (if
         present), the RTC's MODE/TEST/RESET and latch (if present), the printer
         port (if present), the primary/secondary slot
-        registers, the RAM mapper (if present, in either its slot-3 or its
-        expanded-slot-2-sub-slot placement), and every `Mapper` --
-        `memory.mapper1`, `memory.mapper2`, and every non-`None` entry of an
-        expanded slot's per-sub-slot array
-        (this also covers a present Halnote cartridge, which only ever lives
-        in one of those sub-slot entries). Memory/VRAM contents are retained.
+        registers, the slot-3 RAM mapper (if present), and every `Mapper` --
+        `memory.mapper1`, `memory.mapper2`, and every non-`None` sub-slot
+        entry of either expanded cartridge slot (1 or 2), which covers a
+        sub-slot RamMapper or a Halnote cartridge. Memory/VRAM contents are
+        retained.
 
         Every `Mapper` is reset unconditionally regardless of whether a given
         real cartridge's bank-select hardware is actually wired to the slot
-        reset signal -- rationale in change
-        `2026-09-28-wire-cartridge-mapper-and-ppi-reset`. Always STATUS_OK."""
+        reset signal (machine-core "Machine reset restores power-on state").
+        Always STATUS_OK."""
         self.cpu.reset()
         self.psg.reset()
         self.audio.reset()
@@ -261,11 +260,11 @@ class Machine:
         self.memory.mapper1.reset()
         self.memory.mapper2.reset()
         # A HalnoteMapper (when present) is always one of these sub-slot
-        # entries -- _wire_expanded_overlay is the only place that ever
-        # constructs one (EXTENSION_DEVICES, the flat overlay's device
+        # entries -- _build_expanded_subslot_device is the only place that
+        # ever constructs one (EXTENSION_DEVICES, the flat overlay's device
         # allow-list in msx/machine_config.py, lacks "halnote") -- so this
-        # loop resets it exactly once. Slot 1's own sub-slots (openspec/changes/
-        # slot1-slot2-symmetrization) get the identical treatment.
+        # loop resets it exactly once. Slot 1's own sub-slots get the
+        # identical treatment.
         for sub_mapper in (*self.memory.mapper1_subslots, *self.memory.mapper2_subslots):
             if sub_mapper is not None:
                 sub_mapper.reset()

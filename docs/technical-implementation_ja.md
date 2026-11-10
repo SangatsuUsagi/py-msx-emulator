@@ -560,7 +560,7 @@ vram_kb: 128 # 説明のためだけ。上の注記を参照
   secondary:
     0:
       content:
-        - rom: { file: cbios_sub.rom, size_kb: 32, pages: [0, 1], sha1: null }
+        - rom: { file: cbios_sub.rom, size_kb: 16, pages: [0], sha1: null }
     2:
       type: ram
       mapper: standard

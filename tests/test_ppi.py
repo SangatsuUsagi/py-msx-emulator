@@ -191,7 +191,7 @@ def test_port_ab_mode_word_leaves_port_c_unchanged() -> None:
 
 
 # --- allium/ppi.allium: rows 9-10 are real matrix rows (numeric keypad), not
-# out-of-range like rows 11-15 (see "Rows 9-10" open question) -----------------
+# out-of-range like rows 11-15 ------------------------------------------------
 
 def test_port_aa_row9_reads_matrix_row9() -> None:
     state = InputLines()

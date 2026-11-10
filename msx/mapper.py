@@ -1562,7 +1562,7 @@ _MAJUTSUSHI_KEYS: frozenset[str] = frozenset(MajutsushiMapperState.__annotations
 
 @dataclass
 class MajutsushiMapper(KonamiMapper):
-    """Konami mapper + DAC for Hai no Majutsushi.
+    """Konami mapper + DAC (the Majutsushi mapper).
 
     Writes to 0x5000–0x5FFF are routed to the DAC (8-bit unsigned PCM; MSX
     Wiki "MegaROM Mappers", "Konami MegaROMs without SCC" notes);

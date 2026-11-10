@@ -43,8 +43,8 @@ Already covered, no new test added for these:
     negative test for every other rule in the dispatch
 
 Gaps this file fills:
-  - StepCommand / StepInCommand / StepOutCommand -- untested anywhere
-    (the head-stepping scenarios are in test_wd2793.py)
+  - StepCommand / StepInCommand / StepOutCommand rule obligations that
+    test_wd2793.py's head-stepping tests do not cover
   - WriteSectorCommand's not-ready branch -- test_no_disk_reports_not_ready
     only exercises READ SECTOR (0x80) with no disk, never WRITE SECTOR
     (0xA0); test_write_protect_rejects_write_sector covers a *mounted*

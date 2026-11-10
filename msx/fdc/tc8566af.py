@@ -375,12 +375,9 @@ class TC8566AF:
             # result: a second, spurious call with no new seek in between
             # reports "nothing pending" (matches the power-on/reset default,
             # see ST0_INVALID) instead of replaying the same stale abnormal
-            # status forever. Without this, a DISK ROM probing for a second
-            # drive that doesn't exist (RECALIBRATE index=1 -> not ready ->
-            # SENSE INTERRUPT STATUS) never sees its own acknowledgement take
-            # effect and loops on SENSE INTERRUPT STATUS indefinitely --
-            # matches openMSX's TC8566AF::resultsPhaseRead, which zeroes
-            # status0 as soon as its first result byte is read.
+            # status forever. The reset value is ST0 = 0x80 and PCN = 0, per
+            # the datasheet; openMSX reports 0x00 here, an open question in
+            # the fdc-tc8566af spec.
             self._last_st0 = ST0_INVALID
             self._last_pcn = 0
         elif opcode == CMD_SENSE_DEVICE_STATUS:
