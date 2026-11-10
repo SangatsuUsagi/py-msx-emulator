@@ -301,3 +301,30 @@ def test_late_write_only_keeps_frame_start_registers() -> None:
     top = (212 - vdp.display_height) // 2 * _W
     active = slice(top, top + vdp.display_height * _W)
     assert render_frame(vdp)[active] == expected[active]
+
+
+def test_blanked_band_draws_no_sprites_under_one_sat() -> None:
+    # One SAT for the frame; BL clear on lines [0, 50), set from line 50. A
+    # sprite on lines 10-17 lies in the blanked band, so those lines show only
+    # the border colour even though the taller band below has BL set.
+    from tests.render_geometry import active_region
+
+    vdp = make_g4_vdp()
+    vdp.regs[1] = 0x00               # BL clear at frame start
+    vdp.regs[5] = 0xF7               # sprite mode 2 SAT at 0x7A00
+    vdp.regs[6] = 0x0E               # sprite patterns at 0x7000
+    vdp.regs[7] = 0x04               # border colour 4
+    sat = (0xF7 << 7) & ~0x1FF
+    vdp.vram[sat] = 9                # sprite 0 on lines 10-17
+    vdp.vram[sat + 1] = 0
+    vdp.vram[sat + 4] = 216
+    for row in range(8):
+        vdp.vram[(sat & ~0x3FF) + row] = 0x0F       # colour 15
+        vdp.vram[(0x0E << 11) + row] = 0xFF
+    vdp.begin_scanline(0)
+    vdp.regs[1] = 0x40
+    vdp._reg_write_log.append(_RegChange(49, 1, 0x40))
+
+    out = active_region(render_frame(vdp), 192)
+
+    assert list(out[12 * _W:12 * _W + 4]) == [4, 4, 4, 4]

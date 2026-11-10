@@ -88,7 +88,7 @@ python . path/to/msxdos2_kernel.rom --extension2 memory_512k --machine hb_f1xd -
 
 The kernel ROM for this extension is [`msxdos2s`](https://github.com/b3rendsh/msxdos2s), an open MSX-DOS2 kernel implementation, at `roms/msxdos2s/msxd22s.rom`. **Check the license of that project before use.** At the time of writing, it permits only educational, non-commercial use. It does not permit unrestricted redistribution or commercial use.
 
-> **Note**: to boot MSX-DOS2, you also need a floppy disk image with `MSXDOS2.SYS` and `COMMAND2.COM`, in addition to the DOS2 kernel ROM of this extension. The `cbios_*` machines have no floppy disk controller, so MSX-DOS2 cannot boot on them. Use `--machine hb_f1xd` or `fs_a1f` instead, because both have one. This project does **not** include `MSXDOS2.SYS`/`COMMAND2.COM`. The same applies to [msxdos2_512k_kanjirom](#msxdos2_512k_kanjirom-kanji-font-rom) and [msxdos2_512k_viewfont](#msxdos2_512k_viewfont-view-font-rom) below.
+> **Note**: to boot MSX-DOS2, you also need a floppy disk image with `MSXDOS2.SYS` and `COMMAND2.COM`, in addition to the DOS2 kernel ROM of this extension. The `cbios_*` machines have no floppy disk controller, so MSX-DOS2 cannot boot on them. Use `--machine hb_f1xd` instead: it has a controller and no slot-3 RAM mapper. `fs_a1f` also has a controller, but its slot-3 RAM mapper rejects this extension. This project does **not** include `MSXDOS2.SYS`/`COMMAND2.COM`. The same applies to [msxdos2_512k_kanjirom](#msxdos2_512k_kanjirom-kanji-font-rom) and [msxdos2_512k_viewfont](#msxdos2_512k_viewfont-view-font-rom) below.
 
 ```bash
 # Boot MSX-DOS2 directly -- no slot 1 cartridge needed, the kernel is built in

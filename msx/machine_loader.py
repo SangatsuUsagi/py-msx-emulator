@@ -69,6 +69,8 @@ from msx.mapper import (
     MapperKind,
     RTypeMapper,
     SCCICart,
+    guess_plain_rom_base,
+    page2_rom_image,
 )
 from msx.memory import Memory
 from msx.opll import Opll
@@ -108,7 +110,9 @@ _MAPPER_BUILDERS: dict[
     str, Callable[[bytes | None, bytes, bytes | None, SCC | None], Mapper]
 ] = {
     "Mirrored":     lambda cart, rom, sram, scc: FlatMapper(cart),
-    "Normal":       lambda cart, rom, sram, scc: FlatMapper(cart),
+    "Normal":       lambda cart, rom, sram, scc: FixedPageMapper(
+        rom, base=guess_plain_rom_base(rom)
+    ),
     "ASCII8":       lambda cart, rom, sram, scc: Ascii8Mapper(rom),
     "ASCII8SRAM2":  lambda cart, rom, sram, scc: Ascii8Sram2Mapper(rom, sram=sram),
     "ASCII8SRAM8":  lambda cart, rom, sram, scc: Ascii8Sram8Mapper(rom, sram=sram),
@@ -123,9 +127,11 @@ _MAPPER_BUILDERS: dict[
     "Majutsushi":   lambda cart, rom, sram, scc: MajutsushiMapper(rom),
     "R-Type":       lambda cart, rom, sram, scc: RTypeMapper(rom),
     "KonamiSCC":    lambda cart, rom, sram, scc: KonamiSCCMapper(rom, scc=_require_scc(scc)),
-    # "Page2" (MSX slot page 2, 0x8000-0xBFFF) and "0x8000" are distinct
-    # ROM-DB mapper names for the same fixed-window layout -- not a duplicate.
-    "Page2":        lambda cart, rom, sram, scc: FixedPageMapper(rom, base=0x8000),
+    # "Page2" shows only the 16 KB page 0x8000-0xBFFF (an 8 KB ROM repeats at
+    # 0xA000); "0x8000" shows the whole ROM from 0x8000 on, unmirrored.
+    "Page2":        lambda cart, rom, sram, scc: FixedPageMapper(
+        page2_rom_image(rom), base=0x8000
+    ),
     "0x4000":       lambda cart, rom, sram, scc: FixedPageMapper(rom, base=0x4000),
     "0x8000":       lambda cart, rom, sram, scc: FixedPageMapper(rom, base=0x8000),
     "KoeiSRAM32":   lambda cart, rom, sram, scc: KoeiSRAM32Mapper(rom, sram=sram),
@@ -278,8 +284,8 @@ def _disks_by_drive(config: MachineConfig, drive_count: int) -> dict[int, DiskMo
 
 
 def _check_rtc_initial_time(start: RtcTime) -> None:
-    """Reject an RTC start time that a state load would reject, so a built
-    machine can always load its own saved state."""
+    """Reject an RTC start time that is not a real calendar date and time,
+    since the RTC's counters start from it."""
     fields = [start.year, start.month, start.day, start.hour, start.minute, start.second]
     try:
         check_start(fields, "MachineConfig.rtc_initial_time")
@@ -570,7 +576,7 @@ def _wire_flat_overlay(
         if scc is not None:
             raise MachineLoadError(
                 f"{spec.machine_id}: cannot combine a KonamiSCC cartridge mapper "
-                "(or another slot's scc_plus extension) with --extension scc_plus: "
+                "(or another slot's scc_plus extension) with an scc_plus extension: "
                 "real hardware never has two SCC chips attached at once, and "
                 "Machine has a single scc field"
             )
@@ -747,8 +753,9 @@ def _resolve_shared_scc(
 def _is_majutsushi_mapper(mapper: Mapper) -> TypeGuard[MajutsushiMapper]:
     """True if `mapper` is the one DAC-equipped mapper kind this codebase
     models (Majutsushi). Narrows the concrete type from a closed `kind`
-    comparison instead of `isinstance`, matching this file's `_is_*_shape`
-    TypeGuard convention (see `_is_rom_entry_shape` and friends above) for
+    comparison instead of `isinstance`, matching the `_is_*_shape`
+    TypeGuard convention of host/machine_config.py (`_is_rom_entry_shape`
+    and friends) for
     the identical "check the discriminant, then need the narrowed type"
     shape."""
     return mapper.kind == MapperKind.MAJUTSUSHI
@@ -1083,6 +1090,7 @@ def _build_msx2(
         ram_mapper = RamMapper(size_kb=spec.ram_mapper_size_kb) if spec.has_ram_mapper else None
         ram_bytes = bytearray(32768)
         flat_ram_subslot = None
+    ram_mapper_subslot = spec.ram_mapper_subslot if ram_mapper is not None else None
 
     fdc_device = _build_fdc(config) if spec.fdc is not None else None
     slot0_ram, slot0_ram_page = _slot0_ram_buffer(spec)
@@ -1097,6 +1105,7 @@ def _build_msx2(
         sub_slot_enabled=True,
         ram_mapper=ram_mapper,
         flat_ram_subslot=flat_ram_subslot,
+        ram_mapper_subslot=ram_mapper_subslot,
         sub_rom_subslot=spec.sub_rom_subslot,
         fdc=fdc_device,
         fdc_subslot=spec.fdc_subslot,

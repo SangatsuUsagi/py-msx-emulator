@@ -172,6 +172,21 @@ def test_fifth_sprite_sets_status_flag(flavor: RendererFlavor) -> None:
     assert (vdp.status & 0x1F) == 4, "bits 4:0 should hold the 5th sprite index (4)"
 
 
+def test_topmost_overflowing_line_gives_fifth_sprite_index(flavor: RendererFlavor) -> None:
+    # Sprites 0-4 on line 100, sprites 5-9 on line 10: the index is the 5th
+    # sprite on the topmost overflowing line (9), not the first in SAT order (4).
+    vdp = make_sprite_vdp(flavor)
+    for i in range(5):
+        _sat_entry(vdp, i, 99, i * 8, 0, 0x0F)
+        _sat_entry(vdp, 5 + i, 9, i * 8, 0, 0x0F)
+    _sat_entry(vdp, 10, 0xD0, 0, 0, 0)
+
+    flavor.render_frame(vdp)
+
+    assert vdp.status & 0x40
+    assert (vdp.status & 0x1F) == 9
+
+
 def test_four_sprites_no_fifth_flag(flavor: RendererFlavor) -> None:
     vdp = make_sprite_vdp(flavor)
     for i in range(4):

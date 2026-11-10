@@ -405,7 +405,7 @@ class VDP:
         if port == 0x98:
             self.vram[self.addr] = value
             # The write also refills the read-ahead buffer: verified on a real
-            # SONY HB-10 (extras/HB-10/RDBUF.BAS, 2026-10-08), as on the V9938
+            # SONY HB-10 (2026-10-08), as on the V9938
             # and in openMSX.
             self.read_buf = value
             self.addr = (self.addr + 1) & 0x3FFF

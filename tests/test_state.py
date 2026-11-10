@@ -337,7 +337,7 @@ def test_mapper_kind_mismatch_raises_value_error(saves_dir):
     assert "konami" in str(exc_info.value)
 
 
-# --- mapper2_kind (slot 2, openspec/changes/generalize-slot2-mapper-state) --
+# --- mapper2_kind (slot 2, machine-state "Slot 2 mapper state save and restore") --
 
 def test_snapshot_persists_mapper2_kind(saves_dir):
     import json

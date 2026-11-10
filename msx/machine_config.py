@@ -9,7 +9,8 @@ file is read. The document holds no host path. Each ROM is a reference
 the debugger), and the image itself travels beside the document, keyed by
 SHA1. Run inputs (initial SRAM/CMOS images, disks, the RTC start time) are
 not part of it. msx/machine_config.schema.json states the same layout
-language-neutrally; see openspec/changes/archive/2026-10-25-portable-machine-config.
+language-neutrally; see machine-loader "The document layout is published as
+a JSON Schema".
 """
 from __future__ import annotations
 
@@ -47,15 +48,17 @@ from msx.snapshot_schema import (
 
 _T = TypeVar("_T")
 
-# Version 1: the first MachineConfig document (openspec/changes/archive/
-#   2026-10-25-portable-machine-config).
+# Version 1: the first MachineConfig document.
 # Version 2: machine.printer_port added.
-# Version 3: machine.cassette_port added (openspec/changes/add-cassette-playback).
-MACHINE_CONFIG_FORMAT_VERSION: int = 3
+# Version 3: machine.cassette_port added.
+# Version 4: machine.ram_mapper_subslot added.
+MACHINE_CONFIG_FORMAT_VERSION: int = 4
 # The oldest version the parser accepts (machine-loader "build_machine checks
 # the document and its ROM images"). A key that a later version adds has a
 # default for an older document: version 1 has no printer_port, so its form
-# is none, and versions 1 and 2 have no cassette_port, so the machine has none.
+# is none, versions 1 and 2 have no cassette_port, so the machine has none,
+# and versions 1 to 3 have no ram_mapper_subslot, so the mapper has no
+# sub-slot (Memory's legacy slot-3 dispatch).
 MACHINE_CONFIG_MIN_FORMAT_VERSION: int = 1
 
 _SHA1_HEX_LEN = 40
@@ -250,6 +253,7 @@ def _machine_object(
         "ram_mapper_size_kb": spec.ram_mapper_size_kb,
         "flat_ram_subslot": spec.flat_ram_subslot,
         "flat_ram_size_kb": spec.flat_ram_size_kb,
+        "ram_mapper_subslot": spec.ram_mapper_subslot,
         "fdc": fdc,
         "fdc_subslot": spec.fdc_subslot,
         "io_device": io_device,
@@ -308,8 +312,8 @@ _MACHINE_KEYS = frozenset({
     "ppi_control_read", "printer_port", "cassette_port", "has_v9938", "has_rtc", "main_rom",
     "logo_rom",
     "slot0_ram", "ram_size_kb", "sub_rom", "sub_rom_subslot", "has_ram_mapper",
-    "ram_mapper_size_kb", "flat_ram_subslot", "flat_ram_size_kb", "fdc", "fdc_subslot",
-    "io_device", "device_io_ports",
+    "ram_mapper_size_kb", "flat_ram_subslot", "flat_ram_size_kb", "ram_mapper_subslot",
+    "fdc", "fdc_subslot", "io_device", "device_io_ports",
 })
 _ROM_KEYS = frozenset({"name", "size", "sha1", "pages"})
 _SLOT0_RAM_KEYS = frozenset({"size_kb", "page"})
@@ -424,8 +428,21 @@ def _cassette_port(obj: dict[str, object], label: str) -> bool:
     return check_bool(obj["cassette_port"], f"{label}.cassette_port")
 
 
+def _ram_mapper_subslot(obj: dict[str, object], label: str) -> int | None:
+    if "ram_mapper_subslot" not in obj:  # format version 1 to 3
+        return None
+    subslot = check_optional_int(
+        obj["ram_mapper_subslot"], f"{label}.ram_mapper_subslot", 0, _SUBSLOTS - 1
+    )
+    if subslot is not None and obj["has_ram_mapper"] is not True:
+        raise SchemaError(f"{label}.ram_mapper_subslot: set without has_ram_mapper")
+    return subslot
+
+
 def _parse_machine(value: object, roms: dict[str, RomRef], version: int) -> MachineSpec:
     keys = _MACHINE_KEYS
+    if version < 4:
+        keys = keys - {"ram_mapper_subslot"}
     if version < 3:
         keys = keys - {"cassette_port"}
     if version < 2:
@@ -514,6 +531,7 @@ def _parse_machine(value: object, roms: dict[str, RomRef], version: int) -> Mach
         flat_ram_size_kb=check_int(
             obj["flat_ram_size_kb"], f"{label}.flat_ram_size_kb", 0, _MAX_RAM_KB
         ),
+        ram_mapper_subslot=_ram_mapper_subslot(obj, label),
         sub_rom_subslot=check_int(
             obj["sub_rom_subslot"], f"{label}.sub_rom_subslot", 0, _SUBSLOTS - 1
         ),
@@ -603,7 +621,8 @@ def parse_machine_config(document: bytes) -> ParsedMachineConfig:
 
     Raises:
         MachineLoadError: For anything malformed, naming the field; for a
-            format version outside 1-2, naming the version.
+            format version outside MACHINE_CONFIG_MIN_FORMAT_VERSION to
+            MACHINE_CONFIG_FORMAT_VERSION, naming the version.
     """
     try:
         decoded = decode_strict(document)

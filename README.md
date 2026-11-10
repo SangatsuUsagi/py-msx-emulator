@@ -10,7 +10,7 @@ A functionally accurate MSX1/MSX2 emulator, written in pure Python 3.10+ and dri
 
 Every hardware component is pure Python. A machine-readable specification defines each component before its implementation, and these specs drive the test suite. See [Spec-driven architecture](#spec-driven-architecture) for details. The component wiring is explicit: `build_machine()` connects the components by hand, with no reflection or dependency injection. The only platform-specific dependency is pysdl2, for the display and audio frontend. [`docs/technical-implementation.md`](docs/technical-implementation.md) describes the internals.
 
-The core (`msx/`) reads no file and no host clock. Code outside it uses the machine only through the core API (`msx/core_api.py`). `include/msx_core.h` is the C form of that API, at ABI version 1.2, so that a core in another language can replace the Python core. See [Porting the core](docs/technical-implementation.md#porting-the-core).
+The core (`msx/`) reads no file and no host clock. Code outside it uses the machine only through the core API (`msx/core_api.py`). `include/msx_core.h` is the C form of that API, at ABI version 1.3, so that a core in another language can replace the Python core. See [Porting the core](docs/technical-implementation.md#porting-the-core).
 
 The emulator needs BIOS ROMs, which the repository does not include. The free [C-BIOS](https://cbios.sourceforge.net/) works for the generic machines. [QUICK_START.md](QUICK_START.md) explains the setup.
 
@@ -209,6 +209,7 @@ MSX1 uses a 4-page × 4-slot dispatch. Slot 0 holds the BIOS ROM, slot 1 a cartr
 | Slot 2 | Second cartridge ROM, with the mapper that `--mapper2` selects. Open bus (0xFF on read, writes ignored) when no slot 2 ROM is present. `--extension2` expands it into sub-slots, see [`docs/README_extension.md`](docs/README_extension.md#slot-model) |
 | Slot 3 (MSX1) | 32 KB RAM at 0x8000-0xFFFF by default. Each machine sets the size (64 KB across all pages on `hb_10_64k`, unpopulated open bus on `hb_10`) |
 | Slot 3 (MSX2) | Expanded into 4 secondary slots: sub-ROM in 3-0, RAM mapper in 3-2 |
+| Known limitations | All RAM starts with every byte 0x00 at power-on: main RAM, the RAM mapper, and cartridge SRAM with no save file. A real RAM chip powers on with each cell biased toward 0 or 1, in a pattern that stays mostly the same for each chip. The emulator does not reproduce these per-machine patterns as openMSX does. A program that reads work RAM before it writes it can therefore fail. For example, Mahjong Friend (雀フレンド) does not start on `hb_f1xd` |
 
 ### RAM mapper
 
@@ -218,12 +219,12 @@ Main RAM in 16 KB segments, with segment registers at ports 0xFC-0xFF. The stand
 
 ### RTC: RP5C01
 
-A real-time clock at ports 0xB4-0xB5. It includes 26 nibbles of battery-backed CMOS RAM (blocks 2/3) and the 12/24-hour mode encoding (register 10, bit 0).
+A real-time clock at ports 0xB4-0xB5. On a real machine the battery keeps every register of the chip, so the emulator saves all four register blocks (52 nibbles): the clock digits, the alarm and settings block with the 12/24-hour select (register 10, bit 0), and 26 nibbles of CMOS RAM (blocks 2/3).
 
 - Implementation: `msx/rtc.py`
-- CMOS RAM persistence: `saves/sram/rtc_<machine_id>.sram`, one file per machine. Real hardware has one physical RTC and battery per machine, unlike cartridge SRAM. The emulator loads the file on start and saves it on exit if it changed.
-- Clock: starts at the host's local time when the emulator creates the machine, then advances with emulated time only. The emulation is thus the same on every run with the same input. The clock runs at the emulated speed: fast under fast-forward, stopped while paused.
-- Known limitations: setting the clock from the MSX does not change it. There is no alarm or timer output.
+- Register persistence: `saves/sram/rtc_<machine_id>.sram` (52 bytes), one file per machine. Real hardware has one physical RTC and battery per machine, unlike cartridge SRAM. The emulator loads the file on start and saves it on exit if it changed.
+- Clock: starts at the host's local time when the emulator creates the machine, then advances with emulated time only. The saved clock digits are not used, because the emulator does not run the clock while the machine is off. The MSX can set the clock. The emulation is thus the same on every run with the same input. The clock runs at the emulated speed: fast under fast-forward, stopped while paused.
+- Known limitations: there is no alarm or timer output.
 
 ### Cartridge mappers
 
@@ -333,7 +334,7 @@ While a tape is mounted and the motor runs, the frontend runs as fast-forward an
 
 ### Mouse
 
-An optional MSX mouse that follows the host mouse. It connects to a joystick port in place of the physical or keyboard joystick on that port. It reproduces the real protocol. The MSX toggles pin 8 of the port, which is normally the always-high strobe output of the PSG. Each toggle clocks out one 4-bit nibble of signed relative motion, in the order X high, X low, Y high, Y low. A zero-delta alternate cycle follows, so the MSX BIOS mouse detection identifies the device as a mouse, not a trackball. The left and right buttons drive the trigger A/B lines of the port.
+An optional MSX mouse that follows the host mouse. It connects to a joystick port in place of the physical or keyboard joystick on that port. It reproduces the real protocol. The MSX toggles pin 8 of the port, an output that PSG register 15 drives. Each toggle clocks out one 4-bit nibble of signed relative motion, in the order X high, X low, Y high, Y low. A zero-delta alternate cycle follows, so the MSX BIOS mouse detection identifies the device as a mouse, not a trackball. The left and right buttons drive the trigger A/B lines of the port.
 
 | Item | Detail |
 | --- | --- |
@@ -344,7 +345,7 @@ An optional MSX mouse that follows the host mouse. It connects to a joystick por
 - Known limitations:
   - The emulator does not implement the NYYRIKKI/Prodatron extended protocol (higher resolution, wheel, extra buttons).
   - The emulator does not implement absolute positioning.
-  - The emulator does not implement the click-and-hold joystick-emulation mode of the real mouse.
+  - The emulator does not implement the joystick mode that a real mouse enters when its left button is held down at power-on.
 
 ### SDL2 frontend
 

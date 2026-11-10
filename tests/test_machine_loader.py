@@ -13,6 +13,8 @@ from host.machine_config import (
     _parse_slot3_msx2,
     build_machine_from_spec,
     load_device_registry,
+    load_extension_overlay,
+    load_machine_config,
     load_machine_spec,
 )
 from msx.boundary import KeyboardLayout
@@ -188,6 +190,13 @@ def test_load_device_registry_missing_id(tmp_path: Path) -> None:
         "type: io_device\nimplemented: true\n",
     )
     with pytest.raises(MachineLoadError, match="missing required field 'id'"):
+        load_device_registry(config_dir)
+
+
+def test_load_device_registry_not_a_mapping(tmp_path: Path) -> None:
+    config_dir = tmp_path / "config"
+    _write(config_dir / "devices" / "mydev.yaml", "- id: mydev\n")
+    with pytest.raises(MachineLoadError, match="expected a YAML mapping at top level"):
         load_device_registry(config_dir)
 
 
@@ -840,7 +849,8 @@ def test_parse_slot3_msx2_flat_ram_last_declared_subslot_wins() -> None:
 
 
 # ---------------------------------------------------------------------------
-# RAM mapper size resolution (openspec/changes/archive/2026-09-09-ram-mapper-configurable-size)
+# RAM mapper size resolution (machine-loader "MachineSpec resolves MSX2 slot 3
+# sub-ROM and RAM mapper")
 # ---------------------------------------------------------------------------
 
 
@@ -865,6 +875,54 @@ def test_parse_slot3_msx2_mapper_standard_non_expanded_honours_declared_size() -
     result = _parse_slot3_msx2(slot3, "test")
     assert result.has_ram_mapper is True
     assert result.ram_mapper_size_kb == 512
+
+
+def test_parse_slot3_msx2_records_the_mapper_subslot() -> None:
+    # machine-loader "Mapper RAM sub-slot still resolved".
+    slot3 = {
+        "expanded": True,
+        "secondary": {2: {"type": "ram", "mapper": "standard", "size_kb": 128}},
+    }
+    result = _parse_slot3_msx2(slot3, "test")
+    assert result.has_ram_mapper is True
+    assert result.ram_mapper_subslot == 2
+    assert result.flat_ram_subslot is None
+
+
+def test_parse_slot3_msx2_non_expanded_mapper_has_no_subslot() -> None:
+    # machine-loader "A non-expanded mapper slot 3 records no mapper sub-slot".
+    result = _parse_slot3_msx2({"mapper": "standard", "size_kb": 128}, "test")
+    assert result.has_ram_mapper is True
+    assert result.ram_mapper_subslot is None
+
+
+def test_parse_slot3_msx2_mapper_and_sub_rom_in_one_subslot_rejected() -> None:
+    slot3 = {
+        "expanded": True,
+        "secondary": {0: {
+            "type": "ram", "mapper": "standard", "size_kb": 128,
+            "content": [{"rom": {"file": "sub.rom", "size_kb": 16, "pages": [0]}}],
+        }},
+    }
+    with pytest.raises(
+        MachineLoadError, match="RAM mapper and SUB ROM both declared in sub-slot 0"
+    ):
+        _parse_slot3_msx2(slot3, "test")
+
+
+def test_parse_slot3_msx2_mapper_and_fdc_in_one_subslot_rejected() -> None:
+    slot3 = {
+        "expanded": True,
+        "secondary": {1: {
+            "type": "ram", "mapper": "standard", "size_kb": 128,
+            "fdc": {
+                "ref": "fdc_wd2793", "controller": "wd2793", "connection_style": "sony",
+                "drives": 1, "rom": {"file": "disk.rom", "size_kb": 16, "pages": [1]},
+            },
+        }},
+    }
+    with pytest.raises(MachineLoadError, match="RAM mapper and fdc both declared in sub-slot 1"):
+        _parse_slot3_msx2(slot3, "test")
 
 
 def test_parse_slot3_msx2_mapper_standard_invalid_size_rejected() -> None:
@@ -944,7 +1002,7 @@ def test_slot3_multiple_violations_reports_sub_rom_out_of_range_first() -> None:
 
 # ---------------------------------------------------------------------------
 # _parse_fdc: drives must be positive, not silently clamped
-# (openspec/changes/archive/2026-09-01-machine-loader-validation-gaps)
+# (machine-loader "Zero or negative drive count is rejected")
 # ---------------------------------------------------------------------------
 
 _FDC_ROM = {"rom": {"file": "disk.rom", "size_kb": 16, "pages": [1]}}
@@ -966,7 +1024,7 @@ def test_parse_fdc_rejects_negative_drives() -> None:
 # ---------------------------------------------------------------------------
 # flat RAM colliding with SUB ROM's or the FDC's sub-slot is rejected;
 # SUB ROM and FDC sharing a sub-slot (HB-F1XD's real layout) remains allowed
-# (openspec/changes/archive/2026-09-01-machine-loader-validation-gaps)
+# (machine-loader "Loader resolves MSX2 slot 3 sub-slot layout")
 # ---------------------------------------------------------------------------
 
 
@@ -1057,7 +1115,7 @@ def test_build_machine_logo_override_bypasses_disk(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # Real config/machines/cbios_msx2*.yaml keep their pre-existing 128 KB RAM
 # mapper resolution unchanged now that size_kb is configurable
-# (openspec/changes/archive/2026-09-09-ram-mapper-configurable-size)
+# (machine-loader "mapper: standard sub-slot defaults to 128 KB")
 # ---------------------------------------------------------------------------
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -1080,7 +1138,8 @@ def test_real_cbios_msx2_machines_resolve_128kb_ram_mapper(machine_id: str) -> N
 
 
 # ---------------------------------------------------------------------------
-# Machine-level io_device (openspec/changes/add-machine-io-device): a global
+# Machine-level io_device (machine-loader "Machine YAML declares a
+# machine-level global I/O device"): a global
 # I/O device (kanji_rom) declared directly on a machine's own YAML, decoupled
 # from --extension's overlay-only io_device (see tests/test_cli_hbi_j1.py for
 # the overlay-side coverage of the same device kind).
@@ -1329,3 +1388,115 @@ def test_build_machine_msx2_slot0_ram_entry_reaches_memory(tmp_path: Path) -> No
     assert machine.memory.slot0_ram is not None
     assert len(machine.memory.slot0_ram) == 16 * 1024
     assert machine.memory.slot0_ram_page == 3
+
+
+# ---------------------------------------------------------------------------
+# Machine file shape checks (machine-config-loader RejectMachineFileNotAMapping,
+# RejectMachineIdFilenameMismatch, RejectUnsupportedGeneration,
+# RejectRomEntryWithoutFile)
+# ---------------------------------------------------------------------------
+
+
+def test_load_machine_spec_not_a_mapping(tmp_path: Path) -> None:
+    config_dir, registry = _full_registry(tmp_path)
+    _write(config_dir / "machines" / "test_msx1.yaml", "- schema_version: 1\n")
+    with pytest.raises(MachineLoadError, match="expected a YAML mapping at top level"):
+        load_machine_spec("test_msx1", config_dir, registry, tmp_path)
+
+
+def test_load_machine_spec_id_filename_mismatch(tmp_path: Path) -> None:
+    config_dir, registry = _full_registry(tmp_path)
+    _write(
+        config_dir / "machines" / "other.yaml",
+        _msx1_machine_yaml().replace("id: test_msx1", "id: test_msx1_x"),
+    )
+    with pytest.raises(MachineLoadError, match="does not match filename stem 'other'"):
+        load_machine_spec("other", config_dir, registry, tmp_path)
+
+
+def test_load_machine_spec_unsupported_generation(tmp_path: Path) -> None:
+    config_dir, registry = _full_registry(tmp_path)
+    _write(
+        config_dir / "machines" / "test_msx1.yaml",
+        _msx1_machine_yaml().replace("generation: msx1", "generation: msx3"),
+    )
+    with pytest.raises(MachineLoadError, match="unsupported generation 'msx3'"):
+        load_machine_spec("test_msx1", config_dir, registry, tmp_path)
+
+
+def test_load_machine_spec_rom_entry_without_file(tmp_path: Path) -> None:
+    config_dir, registry = _full_registry(tmp_path)
+    _write(config_dir / "machines" / "test_msx1.yaml", _msx1_machine_yaml(main_file='""'))
+    with pytest.raises(MachineLoadError, match="ROM entry missing required field 'file'"):
+        load_machine_spec("test_msx1", config_dir, registry, tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# machine-loader "The host checks its document with the core parser"
+# ---------------------------------------------------------------------------
+
+
+def test_a_yaml_value_outside_the_document_bounds_is_rejected_by_the_host(
+    tmp_path: Path,
+) -> None:
+    config_dir, registry = _full_registry(tmp_path)
+    _write(
+        config_dir / "machines" / "test_msx1.yaml",
+        _msx1_machine_yaml().replace(
+            "clock_mhz: 3.579545", "clock_mhz: 3.579545\n      m1_wait_states: 16"
+        ),
+    )
+    spec = load_machine_spec("test_msx1", config_dir, registry, tmp_path)
+    with pytest.raises(MachineLoadError, match="machine 'Test MSX1': .*m1_wait_states"):
+        load_machine_config(spec, bios_override=_FAKE_ROM_32K)
+
+
+# ---------------------------------------------------------------------------
+# Expanded overlay shape checks (load_extension_overlay)
+# ---------------------------------------------------------------------------
+
+
+def _write_expanded_overlay(tmp_path: Path, body: str) -> Path:
+    config_dir = tmp_path / "config"
+    _write(
+        config_dir / "extensions" / "bad.yaml",
+        "schema_version: 1\nid: bad\noverlay: true\nshape: expanded\nslot: 2\n" + body,
+    )
+    return config_dir
+
+
+def test_expanded_overlay_subslots_without_an_integer_key_rejected(tmp_path: Path) -> None:
+    # machine-loader "A subslots mapping with no sub-slot index is rejected".
+    config_dir = _write_expanded_overlay(tmp_path, "subslots:\n  a: {device: ram_mapper}\n")
+    with pytest.raises(MachineLoadError, match="missing required 'subslots' mapping"):
+        load_extension_overlay("bad", config_dir, tmp_path)
+
+
+def test_expanded_overlay_subslot_not_a_mapping_rejected(tmp_path: Path) -> None:
+    config_dir = _write_expanded_overlay(tmp_path, "subslots:\n  0: ram_mapper\n")
+    with pytest.raises(MachineLoadError, match="subslot 0: expected a YAML mapping"):
+        load_extension_overlay("bad", config_dir, tmp_path)
+
+
+def test_expanded_overlay_subslot_without_device_rejected(tmp_path: Path) -> None:
+    config_dir = _write_expanded_overlay(tmp_path, "subslots:\n  0: {size_kb: 512}\n")
+    with pytest.raises(MachineLoadError, match="subslot 0: missing required field 'device'"):
+        load_extension_overlay("bad", config_dir, tmp_path)
+
+
+def test_expanded_overlay_io_device_not_a_mapping_rejected(tmp_path: Path) -> None:
+    config_dir = _write_expanded_overlay(
+        tmp_path,
+        "subslots:\n  0: {device: ram_mapper, size_kb: 512}\nio_device: kanji_rom\n",
+    )
+    with pytest.raises(MachineLoadError, match="io_device: expected a YAML mapping"):
+        load_extension_overlay("bad", config_dir, tmp_path)
+
+
+def test_expanded_overlay_io_device_without_device_rejected(tmp_path: Path) -> None:
+    config_dir = _write_expanded_overlay(
+        tmp_path,
+        "subslots:\n  0: {device: ram_mapper, size_kb: 512}\nio_device: {rom: {file: k.rom}}\n",
+    )
+    with pytest.raises(MachineLoadError, match="io_device: missing required field 'device'"):
+        load_extension_overlay("bad", config_dir, tmp_path)

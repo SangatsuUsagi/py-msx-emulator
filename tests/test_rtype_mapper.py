@@ -131,12 +131,20 @@ class TestRTypeBankMask:
 
 
 class TestRTypeOOB:
-    def test_oob_bank_read_returns_0xff(self):
-        # 4-page ROM; write bank 10 (OOB for this ROM)
+    def test_oob_bank_is_masked_to_rom_size(self):
+        # 4-page ROM; bank 10 is out of range, so openMSX's
+        # RomBlocks::setRom masks it: 10 & (4 - 1) == page 2.
         m = RTypeMapper(rom=_ROM_4P)
         m.write(0x4000, 0x0A)  # bit 4 clear → 0x0A & 0x1F = 10
         assert m._bank == 10
-        assert m.read(0x8000) == 0xFF  # OOB → 0xFF
+        assert m.read(0x8000) == _ROM_4P[2 * 0x4000]
+
+    def test_128k_rom_masks_switchable_bank(self):
+        # 8 pages of 16 KB, each page filled with its index.
+        rom = bytes(p for p in range(8) for _ in range(16384))
+        m = RTypeMapper(rom=rom)
+        m.write(0x4000, 0x0A)  # page 10 is out of range → 10 & 7 == 2
+        assert m.read(0x8000) == 2
 
     def test_single_page_rom_fixed_and_switchable_same(self):
         rom = bytes([0x42] * 16384)

@@ -263,7 +263,7 @@ def test_data_port_read_returns_buffered_byte_not_live_vram() -> None:
 
 
 def test_data_port_write_refills_read_buffer() -> None:
-    # Real SONY HB-10, extras/HB-10/RDBUF.BAS: IN1 5A IN2 33 3001 5A.
+    # Real SONY HB-10 (2026-10-08): IN1 5A IN2 33 3001 5A.
     vdp = make_vdp()
     for i, v in enumerate((0x11, 0x22, 0x33, 0x44)):
         vdp.vram[0x3000 + i] = v

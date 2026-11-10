@@ -428,15 +428,15 @@ MSX2 のデフォルトの配置：
 
 | 層 | ファイル | 役割 |
 | --- | --- | --- |
-| ディスクイメージ | `disk_image.py`（`DskDiskImage`） | host がファイルから読んだバイト列で作った `*.dsk` のセクタイメージを持ちます。ジオメトリは FAT12 の BPB（BIOS Parameter Block：セクタあたりのバイト数、総セクタ数、トラックあたりのセクタ数、ヘッド数）から求めます。書き込みはバッファにためてイメージを dirty にします。`host/media.py` が、終了時、ステートセーブの前、ディスクをドライブから外すときに、dirty のイメージをファイルへ書き戻します |
+| ディスクイメージ | `disk_image.py`（`DskDiskImage`） | host がファイルから読んだバイト列で作った `*.dsk` のセクタイメージを持ちます。ジオメトリは openMSX と同じ方法で求めます。720 KB のイメージは常に 9 セクタ/トラック・2 面です。それ以外では、ブートセクタがジャンプ命令で始まれば BPB（BIOS Parameter Block）のトラックあたりのセクタ数とヘッド数を、そうでなければ FAT のメディアバイトを使います。どれも使えないときは 9 セクタ/トラックで、360 KB のイメージなら 1 面、それ以外は 2 面とします。書き込みはバッファにためてイメージを dirty にします。`host/media.py` が、終了時、ステートセーブの前、ディスクをドライブから外すときに、dirty のイメージをファイルへ書き戻します |
 | ドライブ | `disk_drive.py`（`DiskDrive`） | 物理ドライブ 1 台。マウント中のイメージを持ち、ヘッドの位置を追い、セクタを読み書きします |
-| コントローラ | `wd2793.py`（`WD2793`）、`tc8566af.py`（`TC8566AF`） | FDC チップ。`WD2793`：Type I–IV コマンドデコード、ステータスレジスタ、データ/トラック/セクタレジスタ、`abort()`。`TC8566AF`（uPD765 系）：コマンド/実行/結果フェーズモデル、Main Status Register、非 DMA 転送、直接アドレス指定できるトラック/セクタレジスタは持ちません |
-| インターフェース | `interface.py` | コントローラとメモリバスの接続方式。どちらも DISK ROM を 0x4000〜0x7FFF にマップします。`SonyPhilipsInterface`（openMSX の PhilipsFDC にあたる）は WD2793 のレジスタを 0x7FF8〜0x7FFF に置き、ディスク交換ビットを使います。`TC8566AFInterface` は 2 つの制御レジスタ、Main Status Register、Data Register を 0x7FF8〜0x7FFB に置きます。実行中のマウントと取り出しを行う `swap()` は両方で共通 |
+| コントローラ | `wd2793.py`（`WD2793`）、`tc8566af.py`（`TC8566AF`） | FDC チップ。`WD2793`：Type I–IV コマンドデコード、ステータスレジスタ、データ/トラック/セクタレジスタ、`abort()`。`TC8566AF`（uPD765 系）：コマンド/実行/結果フェーズモデル、Main Status Register、非 DMA 転送、直接アドレス指定できるトラック/セクタレジスタは持ちません。openMSX と同じく、ドライブごとのシリンダ位置（PCN）をヘッドとは別に数えます。ドライブは、モーターが回っている間だけ Track 0 と Write Protected を返します |
+| インターフェース | `interface.py` | コントローラとメモリバスの接続方式。どちらも openMSX と同じく 0x4000〜0xBFFF を受け持ちます。DISK ROM は 0x4000〜0x7FFF にだけ見え、レジスタは 0xBFF8〜0xBFFF にも現れます。`SonyPhilipsInterface`（openMSX の PhilipsFDC にあたる）は WD2793 のレジスタを 0x7FF8〜0x7FFF に置き、ディスク交換ビットを使います。`TC8566AFInterface` は 2 つの制御レジスタ、Main Status Register、Data Register を 0x7FF8〜0x7FFB に置き、0x7FF0〜0x7FF7 は 0xFF を読みます。実行中のマウントと取り出しを行う `swap()` は両方で共通 |
 
 マシンのコントローラと接続方式は、マシン YAML の `fdc:` ブロックで決まります。同梱のフロッピー付きの 2 機種も、このデータが違うだけです。
 
 - Sony HB-F1XD（`hb_f1xd`）は、WD2793 と DISK ROM をスロット 3 のサブスロット 0 に置き、サブスロット 3 に 64 KB のフラットな RAM を置きます。
-- Panasonic FS-A1F（`fs_a1f`）は TC8566AF を使い、4 つのセカンダリスロットに役割を分けます。サブスロット 0 が RAM、1 が SUB ROM、2 が FDC になります。このマシンの定義は公開された技術資料から作ったもので、実機では検証していません。
+- Panasonic FS-A1F（`fs_a1f`）は TC8566AF を使い、4 つのセカンダリスロットに役割を分けます。サブスロット 0 が 64 KB の RAM マッパー、1 が SUB ROM、2 が FDC になります。このマシンの定義は公開された技術資料から作ったもので、実機では検証していません。
 
 `--fdd1`/`--fdd2` でドライブ A/B にイメージをマウントします。`--fdd1` には複数のイメージを指定できます。実行中にディスクを交換する方法は 3 つあり、どれも `host/media.py` の `swap_disk()` を通ります。`swap_disk()` は、外す側のイメージが dirty ならまずファイルへ書き戻し、それから `Machine.mount_disk()` 経由でフロッピーインターフェースの `swap()` を呼びます。成功すると、3 つの方法が共有する `DiskFiles` の表に新しいファイルを記録します。
 
@@ -560,7 +560,7 @@ vram_kb: 128 # 説明のためだけ。上の注記を参照
   secondary:
     0:
       content:
-        - rom: { file: cbios_sub.rom, size_kb: 32, pages: [0, 1], sha1: null }
+        - rom: { file: cbios_sub.rom, size_kb: 16, pages: [0], sha1: null }
     2:
       type: ram
       mapper: standard
@@ -806,12 +806,12 @@ io_device:
 マシンの定義は、2 つの層を経てコアに届きます。
 
 1. **手で書く YAML**（`config/machines`、`config/devices`、`config/extensions`）。ハードウェアについてのコメントを残せます。読むのは host だけです（[マシンと拡張の YAML スキーマ](#マシンと拡張の-yaml-スキーマ) を参照）。
-2. **MachineConfig の文書**。`load_machine_config()` が YAML とコマンドラインの指定から作ります。文書は RFC 8785（JCS）で正規化した JSON（UTF-8、キーはソート済み、空白なし、整数のみ）で、`format_version` は `3` です。書き出すのは 3 だけですが、パーサーは形式 1 と 2 も読みます。形式 1 には `printer_port` がなく、その場合の形式は `none` です。形式 1 と 2 には `cassette_port` がなく、その場合のマシンにはカセットポートがありません。後の形式で追加するキーには、古い文書のための既定値を決め、ABI の minor を上げます。major が同じコアは、古い形式をすべて読み続けます。解決済みのマシン、スロットごとのカートリッジとそのマッパー（`auto` にはならない）、拡張オーバーレイを持ちます。エンコードと解析は `msx/machine_config.py` が行い、形は `msx/machine_config.schema.json`（JSON Schema draft 2020-12）に書いてあります。スキーマを読むのはテストで、コアは読みません。`tests/vectors/canonical_json.json` には、入力とその正規形と SHA-256、読み込みで拒否する入力、base64 のバイト列を載せてあります。コアを別の言語で実装するときは、このファイルで自分の書き出しと読み込みを確かめられます。
+2. **MachineConfig の文書**。`load_machine_config()` が YAML とコマンドラインの指定から作ります。文書は RFC 8785（JCS）で正規化した JSON（UTF-8、キーはソート済み、空白なし、整数のみ）で、`format_version` は `4` です。書き出すのは 4 だけですが、パーサーは形式 1 から 3 も読みます。形式 1 には `printer_port` がなく、その場合の形式は `none` です。形式 1 と 2 には `cassette_port` がなく、その場合のマシンにはカセットポートがありません。形式 1 から 3 には `ram_mapper_subslot` がなく、その場合の RAM マッパーは、slot 3 のサブスロットのうちほかの役割が使わないすべてに現れます。後の形式で追加するキーには、古い文書のための既定値を決め、ABI の minor を上げます。major が同じコアは、古い形式をすべて読み続けます。解決済みのマシン、スロットごとのカートリッジとそのマッパー（`auto` にはならない）、拡張オーバーレイを持ちます。エンコードと解析は `msx/machine_config.py` が行い、形は `msx/machine_config.schema.json`（JSON Schema draft 2020-12）に書いてあります。スキーマを読むのはテストで、コアは読みません。`tests/vectors/canonical_json.json` には、入力とその正規形と SHA-256、読み込みで拒否する入力、base64 のバイト列を載せてあります。コアを別の言語で実装するときは、このファイルで自分の書き出しと読み込みを確かめられます。
 
 文書の中の ROM は、どれも `{name, size, sha1, pages}` の参照で表します。`name` はディレクトリを含まないファイル名で、表示用のラベルにすぎません。`sha1` は host が読んだバイト列の SHA1 です。イメージは、その SHA1 をキーにして `MachineConfig.roms` で渡します。解析は厳密で、次のものを拒否します。
 
 - 知らないキーや欠けたキー、型や範囲の誤り、浮動小数点数、重複したキー
-- 1、2、3 以外の `format_version`
+- 1 から 4 以外の `format_version`
 - 閉じた集合にない名前（マッパー、FDC のコントローラ、接続方式、その 2 つの組、フラットな拡張のデバイス、サブスロットのデバイス、I/O のデバイス）
 - ROM が必要なのに持たないデバイス、`size_kb` のない `ram_mapper`
 - ない ROM イメージや、サイズか SHA1 が参照と違う ROM イメージ
@@ -889,7 +889,7 @@ SDL2 フロントエンド（`frontend/sdl2_frontend.py`）も同じ形で動き
 
 ネイティブのコアが実装するコア API の C の形は、`include/msx_core.h` にあります。`CoreApi` のメンバーごとに `msx_core_<member>` の関数が 1 つ、境界のレコードごとに構造体が 1 つあり、定数は `msx/boundary.py` と同じ値を持ちます。名前と定数が Python のコードと同じであることは、`tests/test_core_c_header.py` が確かめます。フレーム出力の映像と音声は、次の `step_frame`、`reset`、`load_state` まで有効です。コアが返すそれ以外のバイト列は、同じコアに対する次の呼び出しまで有効です。渡した入力は呼び出しの間だけ読まれます。1 つのコアは、一度に 1 つのスレッドからだけ使います。C の各型は、コアがマスクする値、範囲に収める値、拒否する値のどれも表せる幅を持ちます。マウスの移動量は `int32_t`、フレームのブレークポイントは `int64_t` です。`msx_core_create` は呼び出し側が渡したバッファにメッセージを書くので、コアはグローバルな状態を持ちません。host は音声のレートとフレームの高さを `msx/boundary.py`（`AUDIO_SAMPLE_RATE`、`OUTPUT_HEIGHT`）から取ります。MSX のキー名（`host/key_names.py`）とカートリッジの SRAM のサイズ（`host/machine_config.py`）は、コアのどのモジュールも使わないので、host が持ちます。
 
-このヘッダの ABI バージョンは 1.2 です。`MSX_CORE_ABI_VERSION_MAJOR` と `MSX_CORE_ABI_VERSION_MINOR` がそれぞれの値で、`msx_core_abi_version()` は `(major << 16) | minor` を返します。関数か定数を追加したら minor を上げます。既存の宣言かマクロの値を変更または削除したら major を上げ、minor を 0 に戻します。ネイティブのコアがこのヘッダを実装するまで major は 1 のままなので、それまでは基準ファイルを更新するだけです。コメントだけの変更では何も変わりません。host は、major が異なるコアと、minor が自分のビルド時より小さいコアを拒否します。C や Zig の host は、ヘッダの `MSX_CORE_ABI_COMPATIBLE(v)` でこの判定をします。このマクロは host の側で評価するので、基準ファイルには入りません。ネイティブのコアを読み込む host はまだないので、このマクロを使う host もまだありません。Python のバインディングにも同じ判定が必要です。host は、コアが返した定数の値を知らなくても動作を続けます。`tests/msx_core_abi_baseline.txt` は宣言とマクロの値をバージョンと一緒に記録しています。`tests/test_core_c_header.py` は、基準ファイルがヘッダと一致するまで失敗し、メッセージで変更の種類を示します。
+このヘッダの ABI バージョンは 1.3 です。`MSX_CORE_ABI_VERSION_MAJOR` と `MSX_CORE_ABI_VERSION_MINOR` がそれぞれの値で、`msx_core_abi_version()` は `(major << 16) | minor` を返します。関数か定数を追加したら minor を上げます。既存の宣言かマクロの値を変更または削除したら major を上げ、minor を 0 に戻します。ネイティブのコアがこのヘッダを実装するまで major は 1 のままなので、それまでは基準ファイルを更新するだけです。コメントだけの変更では何も変わりません。host は、major が異なるコアと、minor が自分のビルド時より小さいコアを拒否します。C や Zig の host は、ヘッダの `MSX_CORE_ABI_COMPATIBLE(v)` でこの判定をします。このマクロは host の側で評価するので、基準ファイルには入りません。ネイティブのコアを読み込む host はまだないので、このマクロを使う host もまだありません。Python のバインディングにも同じ判定が必要です。host は、コアが返した定数の値を知らなくても動作を続けます。`tests/msx_core_abi_baseline.txt` は宣言とマクロの値をバージョンと一緒に記録しています。`tests/test_core_c_header.py` は、基準ファイルがヘッダと一致するまで失敗し、メッセージで変更の種類を示します。
 
 Python のコードは、`allium/core-frontend.allium` にある言語に依存しない契約と、次の点で違います（同ファイルの _Status_ のコメントに一覧がある）。
 

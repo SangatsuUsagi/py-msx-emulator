@@ -1,8 +1,8 @@
 """A single floppy disk drive: head position, side, and geometry mapping.
 
 Translates the FDC's (track, side, sector) request into a logical sector number
-(LSN) for the mounted image, using the mounted image's geometry (derived from its
-boot-sector BPB, falling back to 720 KB 2DD). The LSN ordering interleaves sides
+(LSN) for the mounted image, using the mounted image's geometry (see
+msx/fdc/disk_image.py). The LSN ordering interleaves sides
 within a cylinder (MSX-DOS ``.dsk`` layout):
 ``LSN = (track * sides + side) * sectors_per_track + (sector - 1)``.
 """
@@ -26,6 +26,15 @@ from msx.snapshot_schema import (
     check_optional_int,
     check_optional_str,
 )
+
+# Highest head position: openMSX RealDrive's MAX_TRACK. A step-in at this
+# track leaves the head where it is.
+MAX_TRACK: int = 85
+
+# Sector IDs on every track: 1..9. openMSX builds the raw track of a
+# sector-based image with nine ID fields whatever the geometry, so sector 9
+# of an 8-sector image still resolves (to the next side's first sector).
+MAX_SECTOR_ID: int = 9
 
 # MSX FORMAT writes each sector's data as E5h (MSX Computing, August 1985,
 # "Peripherals").
@@ -68,7 +77,9 @@ class DiskDrive:
         self.image = image
         self.track = 0          # physical head position
         self.side = 0           # selected side (0 or 1)
-        self.disk_changed = False  # set on a media swap; consumed by a status read
+        # Set at power-on and on every mount/swap; consumed by a status read.
+        # openMSX's DiskChanger starts with an eject, which sets its flag.
+        self.disk_changed = True
 
     @property
     def has_disk(self) -> bool:
@@ -80,6 +91,16 @@ class DiskDrive:
 
     def mount(self, image: DskDiskImage | None) -> None:
         self.image = image
+        self.disk_changed = True
+
+    def step(self, inward: bool) -> None:
+        """Move the head one track in (toward MAX_TRACK) or out (toward 0),
+        stopping at either end."""
+        if inward:
+            if self.track < MAX_TRACK:
+                self.track += 1
+        elif self.track > 0:
+            self.track -= 1
 
     def _geometry(self) -> tuple[int, int]:
         """(sectors_per_track, sides) from the mounted image, or the 2DD default."""
@@ -88,8 +109,12 @@ class DiskDrive:
         return FALLBACK_SECTORS_PER_TRACK, FALLBACK_SIDES
 
     def lsn(self, track: int, side: int, sector: int) -> int:
-        """Logical sector number for (track, side, 1-based sector)."""
+        """Logical sector number for (track, side, 1-based sector), or -1 when
+        the sector number is outside 1..MAX_SECTOR_ID (no such sector ID on
+        the track)."""
         spt, sides = self._geometry()
+        if sector < 1 or sector > MAX_SECTOR_ID:
+            return -1
         return (track * sides + side) * spt + (sector - 1)
 
     def read_sector(self, track: int, side: int, sector: int) -> bytes | None:
@@ -118,10 +143,10 @@ class DiskDrive:
         """
         if self.image is None or self.image.write_protected:
             return False
-        spt, _ = self._geometry()
+        spt, sides = self._geometry()
         blank = bytes([fill & 0xFF]) * SECTOR_SIZE
-        for sector in range(1, spt + 1):
-            lsn = self.lsn(track, side, sector)
+        first = (track * sides + side) * spt
+        for lsn in range(first, first + spt):
             if 0 <= lsn < self.image.num_sectors:
                 self.image.write_sector(lsn, blank)
         return True

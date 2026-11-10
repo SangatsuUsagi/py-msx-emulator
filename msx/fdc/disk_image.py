@@ -11,10 +11,15 @@ import hashlib
 
 SECTOR_SIZE: int = 512
 
-# Fallback geometry when the boot sector holds no recognised MSX-DOS BPB
-# (e.g. a blank/unformatted image): 720 KB 2DD, 9 sectors/track, 2 sides.
+# Geometry assumed with no image mounted: 720 KB 2DD, 9 sectors/track,
+# 2 sides.
 FALLBACK_SECTORS_PER_TRACK: int = 9
 FALLBACK_SIDES: int = 2
+# A 720 KB (2DD) image is always read as 9 sectors, 2 sides, whatever its
+# boot sector says (openMSX SectorBasedDisk::detectGeometry).
+_SECTORS_2DD: int = 1440
+# A 360 KB image with no usable boot sector or FAT media byte is 1 side.
+_SECTORS_1DD: int = 720
 
 
 class DskDiskImage:
@@ -41,26 +46,30 @@ class DskDiskImage:
         self.sectors_per_track, self.sides = self._read_geometry()
 
     def _read_geometry(self) -> tuple[int, int]:
-        """Derive (sectors_per_track, sides) from the FAT12 boot-sector BPB.
-
-        BPB fields (little-endian): 0x0B bytes/sector, 0x13 total sectors,
-        0x18 sectors/track, 0x1A number of heads. Falls back to 720 KB 2DD when
-        the boot sector is not a recognised MSX-DOS BPB (e.g. a blank image),
-        validated by a 512-byte sector size, sane geometry, and a total-sector
-        count that matches the file size.
+        """Derive (sectors_per_track, sides) as openMSX's Disk::detectGeometry
+        does (the MSX Red Book method): a 720 KB image is always 9/2; else a
+        boot sector starting with an 8086 jump (0xE9/0xEB) gives the BPB's
+        0x18 sectors/track and 0x1A heads (both little-endian, each 1-255);
+        else a FAT media byte (LSN 1, byte 0) of 0xF8 or more gives 8 or 9
+        sectors (bit 1) and 1 or 2 sides (bit 0); else 9 sectors, and 1 side
+        only for a 360 KB image.
         """
+        if self.num_sectors == _SECTORS_2DD:
+            return 9, 2
         d = self._data
-        if len(d) >= SECTOR_SIZE:
-            bytes_per_sector = d[0x0B] | (d[0x0C] << 8)
-            total = d[0x13] | (d[0x14] << 8)
+        if d[0] == 0xE9 or d[0] == 0xEB:
             spt = d[0x18] | (d[0x19] << 8)
             heads = d[0x1A] | (d[0x1B] << 8)
-            if (bytes_per_sector == SECTOR_SIZE
-                    and 1 <= spt <= 63
-                    and heads in (1, 2)
-                    and total == self.num_sectors):
+            if 1 <= spt <= 255 and 1 <= heads <= 255:
                 return spt, heads
-        return FALLBACK_SECTORS_PER_TRACK, FALLBACK_SIDES
+        elif self.num_sectors > 1:
+            media = d[SECTOR_SIZE]
+            if media >= 0xF8:
+                spt = 8 if media & 0x02 else 9
+                sides = 2 if media & 0x01 else 1
+                return spt, sides
+        sides = 1 if self.num_sectors == _SECTORS_1DD else 2
+        return 9, sides
 
     @property
     def num_sectors(self) -> int:

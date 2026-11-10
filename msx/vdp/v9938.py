@@ -217,8 +217,8 @@ _ARG_MXD = 0x20  # destination in expansion RAM
 # TR re-assert delay after each HMMC/LMMC byte (calibrated from an openMSX log).
 _TR_REASSERT_CYCLES: int = 8
 # CE duration per unit (T-states per byte for HMMV/HMMM/YMMM, per dot for
-# LMMV/LMMM), measured on a real SONY HB-F1XD (extras/HB-F1XD/CMDTIME.BAS,
-# 2026-10-07: 20 full-page commands in SCREEN 5 with display and sprites on,
+# LMMV/LMMM), measured on a real SONY HB-F1XD (2026-10-07:
+# 20 full-page commands in SCREEN 5 with display and sprites on,
 # BASIC overhead taken out). That is the slowest case; the real chip is faster
 # with less display/sprite VRAM traffic, which is not modelled.
 _HMMV_CYCLES_PER_BYTE: int = 10
@@ -557,8 +557,8 @@ class V9938:
 
         On the wrap, M4/M5 modes carry into R#14 (R#14 itself increments) and
         A16-A14; the MSX1-compatible modes stay in the current 16 KB bank.
-        Confirmed on a real SONY HB-F1XD (extras/HB-F1XD/VRAMWRAP.BAS,
-        2026-10-07): SCREEN 1 wraps 0x3FFF -> 0x0000, SCREEN 5 carries to
+        Confirmed on a real SONY HB-F1XD (2026-10-07):
+        SCREEN 1 wraps 0x3FFF -> 0x0000, SCREEN 5 carries to
         0x4000 and a later address setup without R#14 lands at 0x4010.
         openMSX executeCpuVramAccess agrees; the M4/M5 test for the modes
         not run on the hardware (GRAPHIC 3, TEXT 2, GRAPHIC 5-7) follows it.
@@ -649,7 +649,7 @@ class V9938:
 
         R#0 also selects the screen mode. Leaving the bitmap modes does NOT
         abort a command in progress: confirmed on a real SONY HB-F1XD
-        (extras/HB-F1XD/CMDABRT.BAS, 2026-10-07: CE still 1 right after R#0
+        (2026-10-07: CE still 1 right after R#0
         selects GRAPHIC 1 during an HMMV, and the page is filled after the
         return to SCREEN 5). openMSX aborts it (updateDisplayMode) instead.
         Whether the real command pauses outside the bitmap modes is not
@@ -901,7 +901,7 @@ class V9938:
         if port == 0:
             self.vram[self._addr] = value
             # A data-port write also refills the read-ahead buffer: confirmed
-            # on a real SONY HB-F1XD (extras/HB-10/RDBUF.BAS, 2026-10-07: IN
+            # on a real SONY HB-F1XD (2026-10-07: IN
             # after OUT returns the written byte); openMSX agrees.
             self._read_buf = value
             addr = self._addr + 1
@@ -1084,7 +1084,7 @@ class V9938:
         if sel == 6:
             # S#6 = 1 1 1 1 1 1 EO Y8: bit 1 is the display field, the same EO
             # as S#2 bit 1. A real HB-F1XD reports it with R#8 LP clear
-            # (extras/HB-F1XD/S6EO.BAS), as the data book's status-register
+            # (2026-10-05), as the data book's status-register
             # summary shows; its sprite-collision section, the Handbook and
             # openMSX give collision Y bit 9 there, which would always be 0.
             return ((self.collision_y >> 8) & 0x01) | (self._status2 & _S2_EO) | 0xFC
@@ -1221,7 +1221,8 @@ class V9938:
 
         self._cmd_active = False
         # A delay left by an overridden HMMC/LMMC must not re-assert TR in the
-        # middle of this command (tick() only runs while a command is active).
+        # middle of this command (tick() re-asserts TR only while a command is
+        # active).
         self._tr_delay = 0
         self._status2 &= ~_S2_CE  # completion leaves TR alone (openMSX commandDone)
 
@@ -1265,8 +1266,8 @@ class V9938:
         # The sampled dot lands in the colour register, where S#7 reads it.
         # An MXS source (absent expansion RAM) reads as the all-ones dot value:
         # on a real SONY HB-F1XD the value is masked to the dot width but its
-        # low bits are not stable (VDPCMD.BAS / VDPCMD2.BAS, SCREEN 5: 0x00,
-        # 0x0F, 0x0D), so this fixed value matches the POINT result seen there.
+        # low bits are not stable (SCREEN 5, 2026-10-07: 0x00, 0x0F, 0x0D),
+        # so this fixed value matches one of the POINT results.
         # openMSX gives an unmasked 0xFF.
         self.cmd_regs[12] = (0xFF if src_ext else self._vram_pixel_read(sx, sy)) & px_mask
 
@@ -1606,7 +1607,7 @@ class V9938:
                 self._tr_delay = 0
                 self._complete_command()
                 # The completing byte leaves TR set: confirmed on a real SONY
-                # HB-F1XD (extras/HB-F1XD/VDPCMD2.BAS line 4, 2026-10-07: a
+                # HB-F1XD (2026-10-07: a
                 # 2-byte HMMC reads TR/CE 80 after its last byte, 00 after an
                 # idle R#44 write); openMSX agrees.
                 self._status2 |= _S2_TR
@@ -1632,7 +1633,7 @@ class V9938:
             # LMCM completes once its last dot is staged; TR stays 1, and the
             # S#7 read that then takes the dot runs with no command active, so
             # it clears TR. Confirmed on a real SONY HB-F1XD
-            # (extras/HB-F1XD/VDPCMD2.BAS, 2026-10-07: TR/CE 81 after the
+            # (2026-10-07: TR/CE 81 after the
             # start, then 81 81 80 00 over the four reads of a four-dot LMCM);
             # openMSX executeLmcm agrees.
             self._complete_command()

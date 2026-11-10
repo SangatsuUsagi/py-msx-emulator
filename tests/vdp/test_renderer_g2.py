@@ -101,8 +101,8 @@ def test_g2_full_pixel_count(flavor: RendererFlavor) -> None:
 def test_g2_pattern_band_aliasing_r4_zero(flavor: RendererFlavor) -> None:
     # R4[1:0]=0 collapses all 3 band pattern tables onto band0 (0x0000-0x07FF).
     # Writing patterns only to band0 must render correctly for band1 and band2 rows.
-    # This is the exact scenario a real ROM hit (logs/msx-21-hb-f1xd-select-
-    # screen-text-missing.md): band1/2 mirroring onto band0, missing from the
+    # This is the exact scenario a real ROM's menu screen hit (its text
+    # rendered blank): band1/2 mirroring onto band0, missing from the
     # V9938 renderer despite this TMS9918A test already covering it.
     vdp = make_g2_vdp(flavor)
     vdp.regs[4] = 0x00   # R4[1:0]=0b00 → all bands alias to band0 patterns

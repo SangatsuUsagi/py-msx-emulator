@@ -1,7 +1,9 @@
 """FDC connection-style layer: memory-mapped register decode + DISK ROM.
 
 `FloppyDisk` owns a controller and a list of drives and exposes `read_mem` /
-`write_mem` over the DISK-ROM address window (page 1, 0x4000-0x7FFF). Concrete
+`write_mem` over its 32 KB window, 0x4000-0xBFFF (openMSX maps the interface
+at base 0x4000, size 0x8000): the registers repeat at the top of both pages,
+and the DISK ROM is visible in page 1 only. Concrete
 subclasses implement a machine's "connection style" — how the CPU-visible
 addresses map onto controller registers. `SonyPhilipsInterface` is the style used
 by the Sony HB-F1XD (openMSX connection style "Sony", implemented by PhilipsFDC).
@@ -153,6 +155,16 @@ class FloppyDiskState(Generic[S]):
         # The active drive is tracked solely via self.controller.drive.
         self.controller.drive = self.drives[0]
 
+    def read_rom(self, addr: int) -> int:
+        """DISK ROM byte at a non-register address: visible in 0x4000-0x7FFF
+        only, 0xFF elsewhere in the window (openMSX MSXFDC's ROM
+        visibility)."""
+        rom = self.disk_rom
+        reg = addr & 0x3FFF
+        if rom is not None and 0x4000 <= addr < 0x8000 and reg < len(rom):
+            return rom[reg]
+        return 0xFF
+
     def mount(self, image: DskDiskImage | None, drive: int = 0) -> None:
         """Mount (or unmount with None) an image into a drive."""
         self.drives[drive].mount(image)
@@ -168,8 +180,7 @@ class FloppyDiskState(Generic[S]):
         """
         target = self.drives[drive]
         outgoing = target.image
-        target.mount(image)
-        target.disk_changed = True
+        target.mount(image)  # also sets disk_changed
         # Only abort a transfer on the drive actually connected to the
         # controller -- swapping a *different* drive's disk on a multi-drive
         # machine must not disturb an in-progress transfer on the selected one.
@@ -260,10 +271,7 @@ class FloppyDiskBase(abc.ABC, Generic[S, C]):
       `.drive` vs TC8566AFInterface's TC8566AF, which owns all drives
       directly) -- read_mem(addr) -> int / write_mem(addr, value) -> None /
       reset() -> None hold unchanged across both, confirmed against openMSX's
-      own TC8566AF-based connection style (TurboRFDC) too. See
-      openspec/changes/archive/2026-08-21-add-tc8566af-fdc/design.md for the
-      full comparison (including its post-archive addendum recording this
-      split's actual implementation).
+      own TC8566AF-based connection style (TurboRFDC) too.
       `self.state.controller`'s static type is `FdcController[S]` (not
       WD2793-specific), so TC8566AFInterface no longer needs `typing.cast` to
       construct one -- only `_ctrl()`'s narrowing back to the concrete
@@ -408,8 +416,8 @@ class SonyPhilipsInterface(FloppyDiskBase[WD2793State, SonyPhilipsConnectionStat
     Qiita.md").
 
     Registers are decoded from ``addr & 0x3FFF`` and appear at 0x?FF8-0x?FFF;
-    in the DISK-ROM page that is 0x7FF8-0x7FFF. The DISK ROM is visible at
-    0x4000-0x7FFF everywhere else in the page.
+    in the DISK-ROM page that is 0x7FF8-0x7FFF, mirrored at 0xBFF8-0xBFFF.
+    The DISK ROM is visible at 0x4000-0x7FFF everywhere else in page 1.
     """
 
     kind: ClassVar[FdcKind] = FdcKind.WD2793_SONY
@@ -460,10 +468,7 @@ class SonyPhilipsInterface(FloppyDiskBase[WD2793State, SonyPhilipsConnectionStat
         reg = addr & 0x3FFF
         if REG_STATUS_CMD <= reg <= REG_CONTROL_STATUS:
             return self._read_reg(reg)
-        rom = self.state.disk_rom
-        if rom is not None and reg < len(rom):
-            return rom[reg]
-        return 0xFF
+        return self.state.read_rom(addr)
 
     def write_mem(self, addr: int, value: int) -> None:
         reg = addr & 0x3FFF
@@ -548,6 +553,7 @@ class SonyPhilipsInterface(FloppyDiskBase[WD2793State, SonyPhilipsConnectionStat
 # "R7FF8" register set from openMSX's TurboRFDC.cc (the 0x7FF8-based
 # register window also matches references/docs/"Floppy Disk Access Low-Level
 # I_O (TC8566AF Edition) #MSX - Qiita.md").
+TC_REG_WINDOW: int = 0x3FF0    # 0x3FF0-0x3FF7 read 0xFF, never DISK ROM
 TC_REG_CONTROL0: int = 0x3FF8  # write-only
 TC_REG_CONTROL1: int = 0x3FF9  # write-only
 TC_REG_STATUS: int = 0x3FFA    # read-only Main Status Register
@@ -560,13 +566,14 @@ _TC_RESERVED: dict[int, int] = {0x3FFC: 0xFC, 0x3FFD: 0xFC, 0x3FFE: 0xFF, 0x3FFF
 class TC8566AFInterface(FloppyDiskBase[TC8566AFState, TC8566AFConnectionState]):
     """TC8566AF connection style (Panasonic FS-A1F).
 
-    Registers are decoded from ``addr & 0x3FFF`` and appear at 0x?FF8-0x?FFF;
-    in the DISK-ROM page that is 0x7FF8-0x7FFF. The DISK ROM is visible at
-    0x4000-0x7FFF everywhere else in the page, same as SonyPhilipsInterface.
+    Registers are decoded from ``addr & 0x3FFF`` and appear at 0x?FF8-0x?FFF,
+    0x?FF0-0x?FF7 read 0xFF; in the DISK-ROM page that is 0x7FF0-0x7FFF,
+    mirrored at 0xBFF0-0xBFFF. The DISK ROM is visible at 0x4000-0x7FFF
+    everywhere else in page 1, same as SonyPhilipsInterface.
     Unlike SonyPhilipsInterface's WD2793, the TC8566AF controller owns all
     drives directly (Control Register 0 addresses one of them) rather than
     being handed a single externally-swapped "current drive" reference -- see
-    openspec/changes/archive/2026-08-21-add-tc8566af-fdc/design.md.
+    openspec/specs/fdc-tc8566af/spec.md.
     """
 
     kind: ClassVar[FdcKind] = FdcKind.TC8566AF
@@ -601,22 +608,19 @@ class TC8566AFInterface(FloppyDiskBase[TC8566AFState, TC8566AFConnectionState]):
 
     def read_mem(self, addr: int) -> int:
         reg = addr & 0x3FFF
-        if TC_REG_CONTROL0 <= reg <= TC_REG_DATA or reg in _TC_RESERVED:
-            # The whole 0x3FF8-0x3FFF register window (including the two
-            # write-only control registers, which have no read behaviour) is
-            # never DISK ROM, matching openMSX TurboRFDC::peekMem's default
-            # 0xFF for undefined offsets in this region.
+        if reg >= TC_REG_WINDOW:
+            # The whole 0x3FF0-0x3FFF window (including the two write-only
+            # control registers, which have no read behaviour) is never DISK
+            # ROM, matching openMSX TurboRFDC::peekMem's default 0xFF for
+            # undefined offsets in this region.
             if reg == TC_REG_STATUS:
                 return self._ctrl().read_main_status()
             if reg == TC_REG_DATA:
                 return self._ctrl().read_data()
             if reg in _TC_RESERVED:
                 return _TC_RESERVED[reg]
-            return 0xFF  # TC_REG_CONTROL0 / TC_REG_CONTROL1: write-only
-        rom = self.state.disk_rom
-        if rom is not None and reg < len(rom):
-            return rom[reg]
-        return 0xFF
+            return 0xFF  # 0x3FF0-0x3FF7, and the write-only control registers
+        return self.state.read_rom(addr)
 
     def write_mem(self, addr: int, value: int) -> None:
         reg = addr & 0x3FFF

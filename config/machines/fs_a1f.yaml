@@ -9,29 +9,23 @@ cpu:
   clock_mhz: 3.579545
   m1_wait_states: 1 # MSX inserts 1 wait per M1 (opcode fetch)
 
-# Panasonic FS-A1F. Slot 3 now matches real hardware's actual layout
-# (openMSX's references/openMSX/share/machines/Panasonic_FS-A1F.xml): four
-# independent secondary slots -- 0 = 64 KB flat RAM, 1 = SUB ROM (16 KB,
+# Panasonic FS-A1F. Slot 3 follows openMSX's machine description
+# (references/openMSX/share/machines/Panasonic_FS-A1F.xml); not verified on
+# real hardware. Four independent secondary slots -- 0 = 64 KB memory
+# mapper RAM (ports 0xFC-0xFF), 1 = SUB ROM (16 KB,
 # page 0), 2 = the TC8566AF FDC (`<io_regs>7FF8</io_regs>`) + its DISK ROM
-# window (page 1). RESOLVED (was PROVISIONAL, SUB ROM and the FDC combined
-# in sub-slot 0 like hb_f1xd.yaml, until msx/memory.py's slot-3 dispatch
-# generalised its `sub0_rom`/`if sub == 0` hard-coding to configurable
-# per-role sub-slot indices) by openspec/changes/parameterize-subslot-index.
+# window (pages 1-2, as openMSX's `<mem base="0x4000" size="0x8000"/>`: the
+# DISK ROM shows in page 1 only, and page 2 shows only the registers at
+# 0xBFF8-0xBFFF). msx/memory.py resolves each role (SUB ROM, FDC, RAM mapper)
+# from its own sub-slot index (openspec/specs/memory-slot-bus/spec.md).
 #
-# Two things real hardware has that this machine still does not model, both
-# unrelated to the slot-index generalisation above and each its own
-# separate follow-up if ever needed (neither is needed to exercise the FDC,
-# this machine's actual purpose):
+# Two things real hardware has that this machine does not model, neither
+# needed to exercise the FDC (this machine's actual purpose):
 #   - Sub-slot 1's second ROM device, the Kanji Driver ROM (32 KB, pages
-#     1-2) -- this codebase has no Kanji rendering device to pair it with,
-#     and no support for a second ROM device sharing one sub-slot's
-#     remaining pages alongside SUB ROM.
+#     1-2): the loader cannot place a second ROM device in the pages a
+#     sub-slot's SUB ROM leaves free.
 #   - Sub-slot 3, the bundled "A1 Cockpit" software ROM -- left undeclared
 #     (open bus) entirely, not merely relocated.
-#   - The FDC's real DISK ROM window is pages 1-2 (32 KB), mirrored from a
-#     16 KB slice of the combined mask ROM; this machine keeps the existing
-#     single-page (page 1, 16 KB, non-mirrored) shape every other FDC
-#     machine in this codebase uses.
 #
 # Real hardware ships all four ROM images (BASIC/SUB/DISK/Kanji driver,
 # plus Cockpit) concatenated in one 128 KB mask ROM (openMSX:
@@ -57,6 +51,7 @@ slots:
         0:
           type: ram
           size_kb: 64
+          mapper: standard
         1:
           content:
             - rom:
@@ -88,5 +83,6 @@ builtin_devices:
     # Port decode (openMSX; not verified on a real FS-A1F).
     overrides: { form: s1985 }
   - ref: rtc_rp5c01
+  - ref: memory_mapper_standard
 
 default_extensions: []

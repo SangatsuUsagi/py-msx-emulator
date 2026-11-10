@@ -23,7 +23,7 @@ import itertools
 import json
 import os
 import socket
-from typing import Any
+from typing import Any, BinaryIO
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ImageContent, TextContent
@@ -70,11 +70,12 @@ def _rpc(method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         ) from exc
 
     try:
-        _readline(sock)  # drain the connection banner
+        reader = sock.makefile("rb")
+        _readline(reader)  # drain the connection banner
         sock.sendall((json.dumps(payload) + "\n").encode())
         # Skip any server-push notifications (no "id") until our response arrives.
         while True:
-            resp = json.loads(_readline(sock))
+            resp = json.loads(_readline(reader))
             if "notification" not in resp:
                 break
     finally:
@@ -87,14 +88,11 @@ def _rpc(method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
     return result
 
 
-def _readline(sock: socket.socket) -> bytes:
-    buf = b""
-    while not buf.endswith(b"\n"):
-        chunk = sock.recv(4096)
-        if not chunk:
-            break
-        buf += chunk
-    return buf.strip()
+def _readline(reader: BinaryIO) -> bytes:
+    """One frame: the next newline-terminated line. A buffered reader keeps
+    a second frame that arrived in the same recv (a push notification
+    followed by the response) for the next call."""
+    return reader.readline().strip()
 
 
 def _norm_addr(address: str) -> str:

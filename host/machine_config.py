@@ -7,8 +7,8 @@ PORT-LIBRARY-NOTE: this file's `yaml.safe_load()` -> `dict[str, Any]` ->
   hand-rolled isinstance/.get() validation into typed dataclasses (MachineSpec
   et al.) used to be the largest source of `Any` in this codebase (same
   pattern, at smaller scale, still applies to host/app_config.py and
-  host/romdb.py). RESOLVED for this file by
-  openspec/changes/archive/2026-08-22-typed-machine-loader-yaml: every raw YAML mapping this
+  host/romdb.py). RESOLVED for this file (machine-loader "YAML-to-dataclass
+  boundary is statically typed"): every raw YAML mapping this
   file validates is now typed via `TypedDict` (`RomEntryYaml`,
   `DeviceEntryYaml`, `MachineEntryYaml`, etc.) with `TypeGuard`-returning
   `_is_<thing>_shape` narrowing functions, so a field read off an
@@ -86,6 +86,7 @@ from msx.machine_config import (
     SUBSLOT_DEVICES_REQUIRING_ROM,
     SUBSLOT_DEVICES_REQUIRING_SIZE,
     encode_machine_config,
+    parse_machine_config,
 )
 from msx.machine_loader import create_machine
 from msx.machine_spec import (
@@ -160,6 +161,7 @@ class _Slot3Msx2:
     sub_rom_subslot: int = 0
     has_ram_mapper: bool = False
     ram_mapper_size_kb: int = _DEFAULT_RAM_MAPPER_KB
+    ram_mapper_subslot: int | None = None
     flat_ram_subslot: int | None = None
     flat_ram_size_kb: int = _DEFAULT_FLAT_RAM_KB
     fdc: FdcDef | None = None
@@ -176,8 +178,8 @@ class RomEntryYaml(TypedDict, total=False):
 
 def _is_rom_entry_shape(data: object) -> TypeGuard[RomEntryYaml]:
     """True if `data` is a dict (rom: block shape). `file`'s presence is
-    still checked by `_parse_rom_entry` itself, not guaranteed here -- see
-    openspec/changes/archive/2026-08-22-typed-machine-loader-yaml/design.md Decision 2."""
+    still checked by `_parse_rom_entry` itself, not guaranteed here -- this
+    file's parsers check each field inline where they read it."""
     return isinstance(data, dict)
 
 
@@ -597,7 +599,9 @@ def _parse_slot3_msx2(slot3: Slot3Msx2Yaml, machine_id: str) -> _Slot3Msx2:
             flat (non-mapper) RAM sub-slot are both declared -- these are
             mutually exclusive MSX2 slot 3 RAM strategies (see
             allium/slots.allium's SlotThreeStrategyIsExclusive invariant and
-            Memory.__post_init__'s corresponding construction-time check).
+            Memory.__post_init__'s corresponding construction-time check) --
+            or if the flat RAM or the RAM mapper shares its sub-slot with
+            the SUB ROM or the fdc.
     """
     result = _Slot3Msx2()
     if slot3.get("expanded"):
@@ -624,6 +628,7 @@ def _parse_slot3_msx2(slot3: Slot3Msx2Yaml, machine_id: str) -> _Slot3Msx2:
                     result.fdc_subslot = sub_idx
             if sub_val.get("mapper") == "standard":
                 result.has_ram_mapper = True
+                result.ram_mapper_subslot = sub_idx
                 result.ram_mapper_size_kb = int(sub_val.get("size_kb", _DEFAULT_RAM_MAPPER_KB))
                 _check_ram_mapper_size_kb(
                     f"machine '{machine_id}' slot 3 sub-slot {sub_idx}",
@@ -656,6 +661,8 @@ def _validate_slot3(context: str, result: _Slot3Msx2) -> None:
         _check_subslot_index(context, "fdc", result.fdc_subslot)
     if result.flat_ram_subslot is not None:
         _check_subslot_index(context, "flat RAM", result.flat_ram_subslot)
+    if result.ram_mapper_subslot is not None:
+        _check_subslot_index(context, "RAM mapper", result.ram_mapper_subslot)
     if result.has_ram_mapper and result.flat_ram_subslot is not None:
         raise MachineLoadError(
             f"{context}: RAM mapper and flat RAM sub-slot {result.flat_ram_subslot} "
@@ -673,8 +680,22 @@ def _validate_slot3(context: str, result: _Slot3Msx2) -> None:
             and result.flat_ram_subslot == result.fdc_subslot:
         raise MachineLoadError(
             f"{context}: flat RAM and fdc both declared in sub-slot "
-            f"{result.flat_ram_subslot} -- Memory's write path has no FDC "
-            "guard, so a write to that page would silently land in the flat RAM"
+            f"{result.flat_ram_subslot} -- the flat RAM would answer in the "
+            "FDC sub-slot's other pages"
+        )
+    if result.ram_mapper_subslot is not None and result.sub_rom is not None \
+            and result.ram_mapper_subslot == result.sub_rom_subslot:
+        raise MachineLoadError(
+            f"{context}: RAM mapper and SUB ROM both declared in sub-slot "
+            f"{result.ram_mapper_subslot} -- Memory's write path has no SUB-ROM "
+            "guard, so a write to that page would silently land in the RAM mapper"
+        )
+    if result.ram_mapper_subslot is not None and result.fdc is not None \
+            and result.ram_mapper_subslot == result.fdc_subslot:
+        raise MachineLoadError(
+            f"{context}: RAM mapper and fdc both declared in sub-slot "
+            f"{result.ram_mapper_subslot} -- the RAM mapper would answer in the "
+            "FDC sub-slot's other pages"
         )
 
 
@@ -928,6 +949,7 @@ def load_machine_spec(
         m1_wait_states=m1_wait_states,
         flat_ram_subslot=s3.flat_ram_subslot,
         flat_ram_size_kb=s3.flat_ram_size_kb,
+        ram_mapper_subslot=s3.ram_mapper_subslot,
         sub_rom_subslot=s3.sub_rom_subslot,
         fdc=s3.fdc,
         fdc_subslot=s3.fdc_subslot,
@@ -994,10 +1016,13 @@ def _parse_expanded_extension_overlay(
     rom_base_dir = project_root / rom_base
 
     subslots_raw = raw.get("subslots")
-    if not isinstance(subslots_raw, dict) or not subslots_raw:
+    subslots_by_index: dict[int, Any] = {}
+    if isinstance(subslots_raw, dict):
+        subslots_by_index = _int_keys(cast("dict[Any, Any]", subslots_raw))
+    if not subslots_by_index:
         raise MachineLoadError(f"{path}: expanded overlay missing required 'subslots' mapping")
     subslots: dict[int, ExpandedSubslotDevice] = {}
-    for index, sub_data in _int_keys(cast("dict[Any, Any]", subslots_raw)).items():
+    for index, sub_data in subslots_by_index.items():
         _check_subslot_index(str(path), "extension", index)
         if not _is_expanded_device_shape(sub_data):
             raise MachineLoadError(f"{path}: subslot {index}: expected a YAML mapping")
@@ -1068,8 +1093,8 @@ def load_extension_overlay(
         )
 
     # `slot:` documents which primary slot this overlay YAML's author
-    # targeted/tested -- both slots 1 and 2 are supported placements now
-    # (openspec/changes/archive/2026-09-21-slot1-slot2-symmetrization); it does NOT itself
+    # targeted/tested -- both slots 1 and 2 are supported placements now;
+    # it does NOT itself
     # route the overlay to a slot -- load_machine_config's caller decides that via
     # which of extension_overlay1/extension_overlay2 it passes the resolved
     # overlay through as.
@@ -1380,7 +1405,9 @@ def load_machine_config(
 
     Raises:
         MachineLoadError: If a required ROM file is missing and no override
-            is given, or `spec` has no rom_base_dir to read a ROM file from.
+            is given, `spec` has no rom_base_dir to read a ROM file from, or
+            the core's parser rejects the document (a value outside its
+            bounds).
         OSError: If a disk image cannot be read.
     """
     roms = _load_spec_roms(spec, bios_override, logo_override, extrom_override, disk_rom_override)
@@ -1399,6 +1426,10 @@ def load_machine_config(
         extension_overlay1=carts.extension_overlay1,
         extension_overlay2=carts.extension_overlay2,
     )
+    try:
+        parse_machine_config(document)
+    except MachineLoadError as exc:
+        raise MachineLoadError(f"machine '{spec.name}': {exc}") from exc
     sram_files = _resolve_sram_files(spec, carts)
     return LoadedMachineConfig(
         config=MachineConfig(

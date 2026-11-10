@@ -26,7 +26,7 @@ from frontend.sdl2_keyboard import KEY_MATRIX_INT, SdlKeyboard
 from host.input_state import InputState
 from host.key_names import KEY_NAME_TO_CELL
 from host.media import DiskFiles
-from msx.boundary import FrameOutput, KeyboardLayout, TapeInfo
+from msx.boundary import STOP_BREAKPOINT, FrameOutput, KeyboardLayout, TapeInfo
 from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.interface import SonyPhilipsInterface
 from msx.fdc.wd2793 import WD2793
@@ -1113,6 +1113,61 @@ def test_rpc_pause_also_pauses_the_audio_device(monkeypatch: pytest.MonkeyPatch)
     loop.step()
     assert loop.machine.frames == 0
     assert loop.sdl.pause_calls == [1]
+
+
+class _StoppingMachine(_LoopMachine):
+    """Stops the next step_frame with STOP_BREAKPOINT, inside the frame
+    (no video, no audio) or at a frame breakpoint (the complete frame)."""
+
+    def __init__(self, frame_complete: int) -> None:
+        super().__init__()
+        self.frame_complete = frame_complete
+
+    def step_frame(self, frame_input: InputFrame, render_video: bool) -> FrameOutput:
+        self.frames += 1
+        if not self.frame_complete:
+            return FrameOutput(0, 0, b"", b"", self.frames, STOP_BREAKPOINT, 0)
+        pixels = bytes(256 * 212 * 3)
+        return FrameOutput(
+            256, 212, pixels, b"\x10\x00" * _SAMPLES, self.frames, STOP_BREAKPOINT, 1
+        )
+
+
+def _stopping_loop(
+    monkeypatch: pytest.MonkeyPatch, frame_complete: int
+) -> tuple[_Loop, list[str]]:
+    import frontend.sdl2_frontend as fe
+
+    loop = _Loop(monkeypatch)
+    loop.machine = _StoppingMachine(frame_complete)
+    events: list[str] = []
+    real_present = loop.sdl.SDL_RenderPresent
+
+    def present(renderer: object) -> None:
+        events.append("present")
+        real_present(renderer)
+
+    monkeypatch.setattr(loop.sdl, "SDL_RenderPresent", present)
+    monkeypatch.setattr(fe, "handle_stop", lambda *_a: events.append("stop"))
+    return loop, events
+
+
+def test_a_frame_breakpoint_frame_is_shown_and_played(monkeypatch: pytest.MonkeyPatch) -> None:
+    # app-sdl2-video "The frame that a frame breakpoint stops is displayed".
+    loop, events = _stopping_loop(monkeypatch, frame_complete=1)
+    loop.step()
+    assert len(loop.sdl.queued) == 1
+    assert len(loop.state.rgb_buf) == 256 * 212 * 3
+    assert events == ["present", "stop"]
+    assert loop.timer.ticks == 0           # no pacing across the REPL
+
+
+def test_a_break_inside_a_frame_keeps_the_last_picture(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop, events = _stopping_loop(monkeypatch, frame_complete=0)
+    loop.step()
+    assert loop.sdl.queued == []
+    assert loop.state.rgb_buf == b""
+    assert events == ["stop"]
 
 
 def test_pause_action_does_not_resume_an_rpc_pause(monkeypatch: pytest.MonkeyPatch) -> None:

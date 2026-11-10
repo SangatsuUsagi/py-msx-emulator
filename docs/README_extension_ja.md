@@ -128,8 +128,8 @@ RAM 拡張と、MSX-DOS2 カーネル ROM を同一のスロットフラグメ�
 > `MSXDOS2.SYS` と `COMMAND2.COM` を含むフロッピーディスクイメージが必要です。
 > `cbios_*`
 > マシンにはフロッピーディスクコントローラが一切ないため MSX-DOS2 は起動しません — 代わりに
-> `--machine hb_f1xd` または
-> `fs_a1f`（どちらもコントローラを備えています）を使用してください。`MSXDOS2.SYS`/`COMMAND2.COM`
+> `--machine hb_f1xd`（コントローラを備え、スロット 3 に RAM マッパーがない）を使用してください。
+> `fs_a1f` もコントローラを備えていますが、スロット 3 の RAM マッパーと衝突するため、この拡張は使えません。`MSXDOS2.SYS`/`COMMAND2.COM`
 > はこのプロジェクトには**含まれません**です。これは以下の
 > [msxdos2_512k_kanjirom](#msxdos2_512k_kanjirom--漢字フォント-rom) と
 > [msxdos2_512k_viewfont](#msxdos2_512k_viewfont--view-フォント-rom)

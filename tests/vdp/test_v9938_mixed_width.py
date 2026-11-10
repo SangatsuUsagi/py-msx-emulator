@@ -233,6 +233,23 @@ def test_sat_key_ignores_r11_above_its_low_two_bits(monkeypatch) -> None:
     assert [(y0, y1) for _, y0, y1, *_ in calls] == [(0, 192)]
 
 
+def test_bl_change_under_one_sat_gets_its_own_sprite_pass(monkeypatch) -> None:
+    # BL cleared for lines [64, 96): three passes, the middle one with BL=0.
+    calls = _spy_sprite_passes(monkeypatch)
+    render_frame(_banded(_G4, [(63, 1, 0x00), (95, 1, 0x40)]))
+    assert [(regs[1] & 0x40, y0, y1) for regs, y0, y1, *_ in calls] == [
+        (0x40, 0, 64),
+        (0x00, 64, 96),
+        (0x40, 96, 192),
+    ]
+
+
+def test_ie0_change_does_not_split_the_sprite_pass(monkeypatch) -> None:
+    calls = _spy_sprite_passes(monkeypatch)
+    render_frame(_banded(_G4, [(95, 1, 0x60)]))
+    assert [(y0, y1) for _, y0, y1, *_ in calls] == [(0, 192)]
+
+
 def test_sat_switch_within_one_run_clips_each_segment(monkeypatch) -> None:
     calls = _spy_sprite_passes(monkeypatch)
     render_frame(_banded(_G4, [(95, 11, 0x01)]))

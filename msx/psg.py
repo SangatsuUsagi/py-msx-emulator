@@ -96,6 +96,9 @@ class PSG:
     latch: int = 0
     _input: InputLines | None = field(default=None, repr=False)
     _mouse: MouseSlot | None = field(default=None, repr=False)
+    # The mouse port's pins 6, 7 and 8 (bits 0-2) at the last register 15
+    # write; -1 before the first write, so that write always reaches the mouse.
+    _mouse_pins: int = field(default=-1, repr=False)
     # The machine's cassette port (attach_cassette), or None with no port.
     _cassette: CassettePort | None = field(default=None, repr=False)
 
@@ -134,7 +137,8 @@ class PSG:
     _env_step: int = field(default=0x1F, init=False, repr=False)   # 5-bit counter 0-31
     _env_attack: int = field(default=0, init=False, repr=False)    # 0x00 or 0x1F
     _env_alternate: bool = field(default=False, init=False, repr=False)
-    _env_hold_flag: bool = field(default=False, init=False, repr=False)
+    # Power-on envelope state is that of R13 shape 0 (_reset_envelope): hold set.
+    _env_hold_flag: bool = field(default=True, init=False, repr=False)
     _env_holding: bool = field(default=False, init=False, repr=False)
     _clk_frac: int = field(default=0, init=False, repr=False)
 
@@ -170,15 +174,31 @@ class PSG:
                     self._regs_base = self.regs[:]
                     self._gen_base = self.snapshot_synth()
                 self._events.append((self._clock.cycle, reg, value))
-            self.regs[reg] = value
+            self._set_reg(reg, value)
             if reg == 13:
                 self._reset_envelope()
             elif reg == 15 and self._mouse is not None:
-                # Pin 8 (mouse nibble-select clock) for the mouse's port:
-                # bit 4 = Joy1, bit 5 = Joy2. Driven on both ports on every
-                # register-15 write, independent of JOY_SELECT (bit 6).
-                pin8_bit = 4 if self._mouse.port == JoystickPort.JOY1 else 5
-                self._mouse.device.write_pin8((value >> pin8_bit) & 1, self._clock.cycle)
+                # The joystick port passes a write to its device only when
+                # the port's output pins change, independent of JOY_SELECT
+                # (bit 6) (openMSX JoystickPort::write).
+                pins = self._mouse_port_pins(value)
+                if pins != self._mouse_pins:
+                    self._mouse_pins = pins
+                    self._mouse.device.write_pin8(pins >> 2, self._clock.cycle)
+
+    def _mouse_port_pins(self, value: int) -> int:
+        """The mouse port's pins 6 and 7 (bits 0-1) and pin 8 (bit 2) in a
+        register 15 value: Joy1 bits 0, 1 and 4; Joy2 bits 2, 3 and 5."""
+        assert self._mouse is not None
+        if self._mouse.port == JoystickPort.JOY1:
+            return (value & 0x03) | ((value >> 2) & 0x04)
+        return ((value >> 2) & 0x03) | ((value >> 3) & 0x04)
+
+    def sync_mouse_pins(self) -> None:
+        """After a state load: take the mouse port's last pins from the
+        loaded register 15."""
+        if self._mouse is not None:
+            self._mouse_pins = self._mouse_port_pins(self.regs[15])
 
     def read_port(self, port: int) -> int:
         if port == 0xA2:
@@ -198,6 +218,29 @@ class PSG:
             return self.regs[self.latch]
         return 0xFF
 
+    def _set_reg(self, reg: int, value: int) -> None:
+        """Store a register value. A tone (R0-R5) or noise (R6) period change
+        takes effect at once: the chip's period counter counts up and is
+        compared with `>=` against the period register (lvd2 AY-3-8910 die
+        model), so the remaining count of this down-counter model moves by
+        the period difference, and a period below the elapsed count ends the
+        half-cycle on the next tick."""
+        if reg <= 5:
+            ch = reg >> 1
+            old = self._tone_period(ch)
+            self.regs[reg] = value
+            self._tone_cnt[ch] = max(1, self._tone_cnt[ch] + self._tone_period(ch) - old)
+        elif reg == 6:
+            old = max(1, self.regs[6] & 0x1F)
+            self.regs[6] = value
+            # The noise counter reloads to 2 * NP (see _step_noise).
+            self._noise_cnt = max(1, self._noise_cnt + 2 * (max(1, value & 0x1F) - old))
+        else:
+            self.regs[reg] = value
+
+    def _tone_period(self, ch: int) -> int:
+        return max(1, ((self.regs[ch * 2 + 1] & 0x0F) << 8) | self.regs[ch * 2])
+
     # --------------------------------------------------------------- reset
 
     def reset(self) -> None:
@@ -212,7 +255,7 @@ class PSG:
         self._env_step = 0x1F
         self._env_attack = 0
         self._env_alternate = False
-        self._env_hold_flag = False
+        self._env_hold_flag = True
         self._env_holding = False
         self._clk_frac = 0
         self.discard_frame_events()
@@ -625,7 +668,7 @@ class PSG:
             if pos > lo:
                 self._render(out, lo, pos)
                 lo = pos
-            self.regs[reg] = val
+            self._set_reg(reg, val)
             if reg == 13:
                 self._reset_envelope()
         if lo < n:

@@ -123,7 +123,7 @@ class Z80:
         not M1 reads (read with _fetch()).
 
         R counts M1 cycles only: confirmed on a real SONY HB-F1XD
-        (extras/HB-10/ZRREG.BAS, 2026-10-07: NOP, LD HL,nn, LD A,(nn),
+        (2026-10-07: NOP, LD HL,nn, LD A,(nn),
         LD (IX+d),n and RLC B add 1 1 1 2 2), as the Z80 documentation and
         references/z80 (on_m1_fetch_cycle vs on_fetch_cycle) say. R is a 7-bit
         refresh counter: bit 7 is kept and only changes via LD R,A.

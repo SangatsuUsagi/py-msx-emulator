@@ -123,7 +123,7 @@ def test_sub_rom_and_fdc_default_to_subslot_0_when_combined() -> None:
 
 
 def test_sub_rom_and_fdc_resolve_to_independent_subslots() -> None:
-    """FS-A1F's real hardware shape: SUB ROM in one secondary slot, the fdc:
+    """The FS-A1F's shape: SUB ROM in one secondary slot, the fdc:
     block in a different one -- each resolves to its own declared index."""
     slot3 = {
         "expanded": True,
@@ -317,3 +317,15 @@ def test_a_disk_of_a_bad_size_is_rejected(tmp_path: Path, size: int) -> None:
     assert result.status == STATUS_BAD_CONFIG
     assert result.machine is None
     assert f"size {size}".encode() in result.error_text
+
+
+def test_fdc_register_read_in_the_page_after_the_configured_page(
+    tmp_path: Path,
+) -> None:
+    _make_roms(tmp_path)
+    machine = build_machine_from_spec(_fdc_spec(tmp_path))
+    mem = machine.memory
+    mem.set_slot_register(0xFF)  # all pages -> slot 3
+    mem.set_sub_slot_reg(0x00)  # all pages -> sub-slot 0
+    assert mem.read(0xBFF8) == mem.read(0x7FF8)  # WD2793 STATUS via page 2
+    assert mem.read(0x8000) == 0xFF  # no DISK ROM in page 2

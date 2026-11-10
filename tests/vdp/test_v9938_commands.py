@@ -214,7 +214,7 @@ def test_hmmc_clears_ce_when_done() -> None:
 
 
 def test_hmmc_tr_after_last_byte_matches_hb_f1xd() -> None:
-    # HB-F1XD VDPCMD2.BAS line 4: TR/CE 81 after the start, 80 after the
+    # Real HB-F1XD (2026-10-07), a 2-byte HMMC: TR/CE 81 after the start, 80 after the
     # second byte and after waiting, 00 after an idle R#44 write; VRAM 12 34.
     vdp = _make_vdp()
     _dispatch_cmd(vdp, cmd_code=0xF, dx=0, dy=0, nx=4, ny=1, clr=0x12)
@@ -545,8 +545,8 @@ def test_lmcm_clears_ce_when_last_dot_is_fetched() -> None:
 
 
 def test_lmcm_tr_ce_sequence_matches_hb_f1xd() -> None:
-    # HB-F1XD VDPCMD2.BAS line 1: TR/CE 81 after the start, then
-    # 81 81 80 00 after each of the four S#7 reads.
+    # Real HB-F1XD (2026-10-07), a four-dot LMCM: TR/CE 81 after the start,
+    # then 81 81 80 00 after each of the four S#7 reads.
     vdp = _make_vdp()
     vdp.vram[0] = 0x12
     vdp.vram[1] = 0x34

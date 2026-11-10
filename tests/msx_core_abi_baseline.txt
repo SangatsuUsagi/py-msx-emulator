@@ -1,4 +1,4 @@
-version 1.2
+version 1.3
 const msx_trace_event *msx_core_drain_trace(msx_core *core, size_t *count);
 int32_t msx_core_abi_version(void);
 int32_t msx_core_apply_input(msx_core *core, const msx_input_frame *frame_input);
@@ -97,7 +97,7 @@ macro MOUSE_LEFT 1
 macro MOUSE_RIGHT 2
 macro OUTPUT_HEIGHT 212
 macro PRINTER_BUFFER_SIZE 4096
-macro RTC_CMOS_SIZE 26
+macro RTC_CMOS_SIZE 52
 macro SLOT_CONTENT_CARTRIDGE 3
 macro SLOT_CONTENT_CARTRIDGE_EMPTY 4
 macro SLOT_CONTENT_EMPTY 0

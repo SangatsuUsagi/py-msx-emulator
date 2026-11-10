@@ -1,11 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "py-msx-emulator MachineConfig document, format 3",
-  "description": "The resolved machine the core is built from: produced by the host from the machine/device/extension YAML, cartridges and mappers (msx/machine_config.py encode_machine_config), written as RFC 8785 (JCS) canonical JSON, integers only. Every property is required; null means the machine has no such part. A RomRef names a ROM image passed beside the document, keyed by its SHA1; `name` is the bare file name, a display label, never a path. Run inputs (initial SRAM/CMOS images, disks, the RTC start time) are not part of the document. Closed sets (mapper, FDC controller / connection style and their pairs, device names) are enums, and the devices that need a ROM or a size say so; the parser in msx/machine_config.py is authoritative. This schema describes format version 3, the only version the encoder writes. The parser also reads format versions 1 and 2: version 1 has no machine.printer_port (the form is none), and versions 1 and 2 have no machine.cassette_port (the machine has none).",
+  "title": "py-msx-emulator MachineConfig document, format 4",
+  "description": "The resolved machine the core is built from: produced by the host from the machine/device/extension YAML, cartridges and mappers (msx/machine_config.py encode_machine_config), written as RFC 8785 (JCS) canonical JSON, integers only. Every property is required; null means the machine has no such part. A RomRef names a ROM image passed beside the document, keyed by its SHA1; `name` is the bare file name, a display label, never a path. Run inputs (initial SRAM/CMOS images, disks, the RTC start time) are not part of the document. Closed sets (mapper, FDC controller / connection style and their pairs, device names) are enums, and the devices that need a ROM or a size say so; the parser in msx/machine_config.py is authoritative. This schema describes format version 4, the only version the encoder writes. The parser also reads format versions 1 to 3: version 1 has no machine.printer_port (the form is none), versions 1 and 2 have no machine.cassette_port (the machine has none), and versions 1 to 3 have no machine.ram_mapper_subslot (the mapper has no sub-slot).",
   "type": "object",
   "properties": {
     "format_version": {
-      "const": 3
+      "const": 4
     },
     "machine": {
       "$ref": "#/$defs/Machine"
@@ -428,6 +428,18 @@
           "minimum": 0,
           "maximum": 64
         },
+        "ram_mapper_subslot": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 3
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "fdc": {
           "anyOf": [
             {
@@ -550,6 +562,7 @@
         "ppi_control_read",
         "printer_port",
         "ram_mapper_size_kb",
+        "ram_mapper_subslot",
         "ram_size_kb",
         "slot0_ram",
         "sub_rom",

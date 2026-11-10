@@ -195,7 +195,7 @@ def test_reset_zeroes_the_counter_independent_of_column_row() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Machine.reset() wiring (openspec/changes/wire-kanji-and-halnote-reset)
+# Machine.reset() wiring (io-kanji-rom "reset() clears the address")
 # ---------------------------------------------------------------------------
 
 def test_machine_reset_zeroes_kanji_address() -> None:

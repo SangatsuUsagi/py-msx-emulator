@@ -58,5 +58,5 @@ def test_a_component_built_alone_keeps_its_own_clock_record() -> None:
     assert ppi.click._events[0][0] == 0
 
     rtc = RTC()
-    assert rtc._elapsed_cycles() == 0
+    assert rtc._uncounted_cycles() == 0
     assert psg._clock is not ppi._clock

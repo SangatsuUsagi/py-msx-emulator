@@ -143,7 +143,7 @@ def test_port_98_address_carries_into_r14_in_graphic4() -> None:
 
 
 def test_address_setup_after_carry_uses_incremented_r14() -> None:
-    # HB-F1XD VRAMWRAP.BAS, SCREEN 5: the A3 write lands at 0x4010.
+    # Real HB-F1XD (2026-10-07), SCREEN 5: the A3 write lands at 0x4010.
     vdp = V9938()
     _set_reg(vdp, 0, _R0_GRAPHIC4)
     _set_write_addr(vdp, 0x3FFF)
@@ -311,7 +311,7 @@ def test_port_98_read_advances_like_write(r0: int, second: int, r14: int) -> Non
 
 
 def test_port_98_write_refills_the_read_buffer() -> None:
-    # HB-F1XD RDBUF.BAS: read setup 0x3000, OUT 0x5A, IN twice -> 5A 33.
+    # Real HB-F1XD (2026-10-07): read setup 0x3000, OUT 0x5A, IN twice -> 5A 33.
     vdp = V9938()
     for i in range(4):
         vdp.vram[0x3000 + i] = (i + 1) * 0x11

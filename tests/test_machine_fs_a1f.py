@@ -34,8 +34,17 @@ def test_loader_resolves_tc8566af_fdc() -> None:
     assert spec.fdc.controller == "tc8566af"
     assert spec.fdc.connection_style == "tc8566af"
     assert spec.fdc.drives == 1
-    assert spec.flat_ram_subslot == 0
-    assert spec.flat_ram_size_kb == 64
+    assert spec.sub_rom_subslot == 1
+    assert spec.fdc_subslot == 2
+
+
+def test_fs_a1f_places_a_64kb_memory_mapper_in_subslot_0() -> None:
+    # machine-loader "fs_a1f places a 64 KB memory mapper in sub-slot 0".
+    spec = _spec()
+    assert spec.has_ram_mapper
+    assert spec.ram_mapper_subslot == 0
+    assert spec.ram_mapper_size_kb == 64
+    assert spec.flat_ram_subslot is None
     assert spec.sub_rom_subslot == 1
     assert spec.fdc_subslot == 2
 
@@ -76,12 +85,11 @@ def test_disk_rom_visible_and_registers_routed() -> None:
     assert mem.read(0x7FFA) & 0x80           # RQM ready, no crash
 
 
-def test_flat_ram_read_write_through_machine_memory() -> None:
-    """fs_a1f's real hardware layout puts the 64 KB flat RAM in sub-slot 0
-    (unlike hb_f1xd's sub-slot 3) -- confirms sub=0 reaches flat RAM through
-    the actual built fs_a1f machine, not just the generic Memory()-level
-    coverage in tests/test_memory_flat_ram.py::
-    test_sub_rom_and_fdc_in_independent_subslots."""
+def test_ram_mapper_read_write_through_machine_memory() -> None:
+    """fs_a1f puts its 64 KB memory mapper in sub-slot 0 (unlike hb_f1xd's
+    flat RAM in sub-slot 3) -- confirms sub=0 reaches the mapper through the
+    actual built fs_a1f machine, and that a bank switch through port 0xFD
+    changes what page 1 shows."""
     spec = _spec()
     machine = build_machine_from_spec(
         spec,
@@ -91,9 +99,15 @@ def test_flat_ram_read_write_through_machine_memory() -> None:
     )
     mem = machine.memory
     mem.set_slot_register(0xFF)  # all pages -> slot 3
-    mem.set_sub_slot_reg(0x00)   # every page -> sub-slot 0 (flat RAM)
+    mem.set_sub_slot_reg(0x00)   # every page -> sub-slot 0 (RAM mapper)
+    machine.io.write_port(0xFD, 1)  # page 1 -> segment 1
     mem.write(0x4000, 0x3C)
+    machine.io.write_port(0xFD, 2)  # page 1 -> segment 2
+    mem.write(0x4000, 0x5A)
+    machine.io.write_port(0xFD, 1)
     assert mem.read(0x4000) == 0x3C
+    machine.io.write_port(0xFD, 2)
+    assert mem.read(0x4000) == 0x5A
 
 
 def test_sub_rom_readable_through_machine_memory() -> None:

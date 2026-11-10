@@ -2,8 +2,7 @@
 slot 3 instead of the real machine's flat 64 KB RAM.
 
 Reuses HB-F1XD's real BIOS/SUB-ROM/FDC configuration verbatim (see
-config/machines/hb_f1xd_256k.yaml's header comment and
-openspec/changes/archive/2026-09-09-hb-f1xd-256-machine/design.md) -- only slot 3's RAM
+config/machines/hb_f1xd_256k.yaml's header comment) -- only slot 3's RAM
 strategy differs. No real HB-F1XD variant with this configuration exists;
 this machine's only purpose is to give MSX-DOS2 the RAM-mapper environment
 it requires. Mirrors tests/test_machine_hb_f1xd.py's structure.
@@ -68,7 +67,7 @@ def test_ram_mapper_read_write_through_machine_memory() -> None:
 
 def test_sub_rom_and_fdc_still_wired_alongside_ram_mapper() -> None:
     """The FDC + RAM mapper coexistence this machine relies on
-    (openspec/changes/archive/2026-09-09-slot3-fdc-ram-mapper-coexistence)."""
+    (memory-slot-bus "FDC composes with a RAM mapper")."""
     spec = _spec()
     machine = build_machine_from_spec(
         spec,

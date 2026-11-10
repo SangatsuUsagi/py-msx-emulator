@@ -16,7 +16,7 @@ Silence comes before each header, so that BASIC has time to process a block.
 
 Usage:
     ./venvs/py-msx-emulator/bin/python tools/bas2wav.py \\
-        extras/HB-10/LDIRWZ.BAS /tmp/LDIRWZ.wav
+        PROGRAM.BAS /tmp/PROGRAM.wav
 """
 
 from __future__ import annotations

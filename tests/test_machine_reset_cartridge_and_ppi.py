@@ -1,8 +1,7 @@
-"""Tests for Machine.reset() wiring added by
-openspec/changes/wire-cartridge-mapper-and-ppi-reset: the two unexpanded
+"""Tests for Machine.reset() wiring (machine-core "Machine reset restores
+power-on state"): the two unexpanded
 top-level cartridge-slot mappers (memory.mapper1/memory.mapper2), and the
-PPI. Both were previously never reset at all -- see that change's design.md
-for the audit that found the gap.
+PPI. Both were previously never reset at all.
 """
 from __future__ import annotations
 

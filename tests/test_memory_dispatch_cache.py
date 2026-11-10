@@ -1,11 +1,10 @@
 """Correctness tests for Memory's per-page dispatch cache.
 
-Covers the scenarios in
-openspec/changes/memory-dispatch-cache/specs/memory-bus/spec.md: routing
+Covers memory-slot-bus "Page-routing cache stays consistent with slot
+state": routing
 must always reflect the current slot_register/sub_slot_reg, for every
 slot-3 RAM strategy (MSX1 flat, legacy RamMapper, data-driven
-flat_ram_subslot). Also includes a differential sweep (task 3.3 of
-openspec/changes/memory-dispatch-cache/tasks.md) against a frozen copy of
+flat_ram_subslot). Also includes a differential sweep against a frozen copy of
 the pre-cache read()/write() decode logic, across every slot_register and
 sub_slot_reg value.
 """
@@ -228,7 +227,7 @@ class _ReferenceMemory:
             if sub == 0:
                 if page == 0 and self.sub0_rom is not None:
                     return self.sub0_rom[addr] if addr < len(self.sub0_rom) else 0xFF
-                if page == 1 and self.fdc is not None:
+                if page in (1, 2) and self.fdc is not None:  # 32 KB FDC window
                     return self.fdc.read_mem(addr)  # type: ignore[attr-defined]
                 return 0xFF
             if sub == flat_sub:
@@ -267,7 +266,7 @@ class _ReferenceMemory:
         flat_sub = self.flat_ram_subslot
         if flat_sub is not None:
             if sub == 0:
-                if page == 1 and self.fdc is not None:
+                if page in (1, 2) and self.fdc is not None:  # 32 KB FDC window
                     self.fdc.write_mem(addr, value)  # type: ignore[attr-defined]
                 return
             if sub == flat_sub:

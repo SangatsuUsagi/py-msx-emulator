@@ -1716,17 +1716,57 @@
     "RtcState": {
       "type": "object",
       "properties": {
-        "start": {
-          "type": "array",
-          "items": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 9999
-          },
-          "minItems": 6,
-          "maxItems": 6
+        "fraction": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16383
         },
-        "elapsed_cycles": {
+        "seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "minutes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "hours": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "day_week": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "days": {
+          "type": "integer",
+          "minimum": -1,
+          "maximum": 255
+        },
+        "months": {
+          "type": "integer",
+          "minimum": -1,
+          "maximum": 255
+        },
+        "years": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "leap_year": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "tick_remainder": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3579544
+        },
+        "uncounted_cycles": {
           "type": "integer",
           "minimum": 0,
           "maximum": 9007199254740991
@@ -1756,7 +1796,7 @@
           "items": {
             "type": "integer",
             "minimum": 0,
-            "maximum": 15
+            "maximum": 255
           },
           "minItems": 52,
           "maxItems": 52
@@ -1764,12 +1804,21 @@
       },
       "required": [
         "addr",
-        "elapsed_cycles",
+        "day_week",
+        "days",
+        "fraction",
+        "hours",
+        "leap_year",
+        "minutes",
         "mode",
+        "months",
         "regs",
         "reset",
-        "start",
-        "test"
+        "seconds",
+        "test",
+        "tick_remainder",
+        "uncounted_cycles",
+        "years"
       ],
       "additionalProperties": false
     },
@@ -1974,6 +2023,14 @@
           "minimum": -9007199254740991,
           "maximum": 9007199254740991
         },
+        "pcn": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
         "phase": {
           "type": "integer",
           "minimum": -9007199254740991,
@@ -2049,6 +2106,7 @@
         "exec_needed",
         "format_fill",
         "last_pcn",
+        "pcn",
         "last_st0",
         "phase",
         "result_buffer",
@@ -2443,6 +2501,9 @@
           "type": "integer",
           "minimum": -9007199254740991,
           "maximum": 9007199254740991
+        },
+        "immediate_irq": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -2450,6 +2511,7 @@
         "command_reg",
         "data_reg",
         "drq",
+        "immediate_irq",
         "index",
         "intrq",
         "mode",

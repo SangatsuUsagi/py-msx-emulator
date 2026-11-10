@@ -133,12 +133,9 @@ def test_sense_interrupt_status_consumes_pending_result(tmp_path: Path) -> None:
     "nothing pending" (ST0_INVALID/0, the power-on/reset default) immediately
     after reporting them, so a second, spurious call with no new SEEK/
     RECALIBRATE in between reports "nothing pending" rather than replaying
-    the same result forever -- matches openMSX's TC8566AF::resultsPhaseRead,
-    which zeroes status0 as soon as its first result byte is read. Without
-    this, a DISK ROM's second-drive probe (RECALIBRATE a nonexistent drive,
-    then poll SENSE INTERRUPT STATUS in a loop) never sees its own
-    acknowledgement take effect and hangs -- the actual FS-A1F boot hang this
-    fix resolved."""
+    the same result forever. The reset value is ST0 = 0x80 per the
+    datasheet; openMSX reports 0x00, an open question in the fdc-tc8566af
+    spec."""
     tc, drive = _ctrl(tmp_path)
     drive.track = 30
     tc.write_data(CMD_RECALIBRATE)

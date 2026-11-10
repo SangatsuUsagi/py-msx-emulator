@@ -92,7 +92,7 @@ def test_port_ab_read_returns_last_mode_set_word() -> None:
 
 def test_port_ab_read_without_control_readback_returns_ff() -> None:
     # S1985 MSX-ENGINE PPI: a real HB-F1XD reads 0xFF at 0xAB
-    # (extras/HB-F1XD/PORTRD.BAS); the mode-set word is still stored.
+    # (2026-10-05); the mode-set word is still stored.
     ppi = make_ppi(control_read=PpiControlRead.OPEN_BUS)
     assert ppi.read_port(0xAB) == 0xFF
     ppi.write_port(0xAB, 0x82)
@@ -101,7 +101,7 @@ def test_port_ab_read_without_control_readback_returns_ff() -> None:
 
 
 
-# --- S3527 bus latch (real HB-10, extras/HB-10/PORTRD1-4.BAS) ---
+# --- S3527 bus latch (real HB-10, 2026-10-08) ---
 
 def make_latch_ppi() -> PPI:
     return make_ppi(control_read=PpiControlRead.BUS_LATCH)
@@ -112,7 +112,7 @@ def test_bus_latch_reads_ff_before_any_access() -> None:
 
 
 def test_bus_latch_returns_inverse_of_port_c_write() -> None:
-    # PORTRD3: 0xAB reads NOT v after OUT &HAA,v, twice in a row.
+    # Real HB-10: 0xAB reads NOT v after OUT &HAA,v, twice in a row.
     for v, expected in ((0x1A, 0xE5), (0x15, 0xEA), (0x00, 0xFF), (0xFF, 0x00),
                         (0x0F, 0xF0), (0xF0, 0x0F), (0x05, 0xFA), (0xAA, 0x55)):
         ppi = make_latch_ppi()
@@ -122,7 +122,7 @@ def test_bus_latch_returns_inverse_of_port_c_write() -> None:
 
 
 def test_bus_latch_follows_each_ppi_access() -> None:
-    # PORTRD4: OUT &HAA,&H15, one access, then the 0xAB read.
+    # Real HB-10: OUT &HAA,&H15, one access, then the 0xAB read.
     ppi = make_latch_ppi()
     cases = (
         (lambda: ppi.read_port(0xAA), 0x15),
@@ -191,7 +191,7 @@ def test_port_ab_mode_word_leaves_port_c_unchanged() -> None:
 
 
 # --- allium/ppi.allium: rows 9-10 are real matrix rows (numeric keypad), not
-# out-of-range like rows 11-15 (see "Rows 9-10" open question) -----------------
+# out-of-range like rows 11-15 ------------------------------------------------
 
 def test_port_aa_row9_reads_matrix_row9() -> None:
     state = InputLines()
@@ -255,8 +255,8 @@ def test_write_control_port_masks_before_decoding() -> None:
     assert ppi.read_port(0xAA) & (1 << 6)
 
 
-# --- allium/ppi.allium: rule Reset (openspec/changes/
-# wire-cartridge-mapper-and-ppi-reset) -----------------------------------
+# --- allium/ppi.allium: rule Reset (io-ppi "PPI reset restores power-on
+# state") ----------------------------------------------------------------
 
 def test_reset_restores_control_word_to_post_reset_default() -> None:
     ppi = make_ppi()

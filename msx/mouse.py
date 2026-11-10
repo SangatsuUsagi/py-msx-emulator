@@ -79,9 +79,9 @@ class MouseDevice:
     """MSX mouse plugged into a joystick port: pin-8-clocked nibble protocol.
 
     Pins 1-4 (normally joystick directions) carry a 4-bit nibble of the
-    signed relative X/Y motion since the last scan round; pin 8 (normally
-    the PSG's always-high strobe output) is toggled by the host to clock
-    through the nibble sequence; pins 6/7 (normally triggers) carry the
+    signed relative X/Y motion since the last scan round; pin 8 (an output
+    of PSG register 15) is toggled by MSX software to clock through the
+    nibble sequence; pins 6/7 (normally triggers) carry the
     left/right mouse button state on every read, independent of phase.
     """
 
@@ -92,7 +92,7 @@ class MouseDevice:
     _cur_y_rel: int = field(default=0, init=False)
     _status: int = field(default=_STATUS_DEFAULT, init=False)
     _last_pin8: int = field(default=0, init=False)
-    # Cycles since the last pin-8 change are _base_age + (cycle - _base_cycle).
+    # Cycles since the last write_pin8 call are _base_age + (cycle - _base_cycle).
     # Two fields, so a restored age above the clock's count needs no base below
     # zero (an unsigned clock in a native core).
     _base_cycle: int = field(default=0, init=False)
@@ -115,10 +115,11 @@ class MouseDevice:
 
     def write_pin8(self, value: int, cycle: int = 0) -> None:
         value &= 1
-        # openMSX refreshes the idle timer on every register-15 write, not
-        # only on a pin-8 level change, so a same-level write after the
-        # timeout still resyncs to PHASE_YLOW2 (Mouse.cc's write() checks
-        # the elapsed time before inspecting the value).
+        # The PSG calls this whenever the port's pins 6, 7 or 8 change, so
+        # the idle timer is refreshed also by a call with the same pin-8
+        # level, and such a call after the timeout still resyncs to
+        # PHASE_YLOW2 (openMSX's Mouse::write checks the elapsed time
+        # before it looks at the value).
         if self._base_age + (cycle - self._base_cycle) > _MOUSE_TIMEOUT_CYCLES:
             self._phase = PHASE_YLOW2
         self._base_cycle = cycle

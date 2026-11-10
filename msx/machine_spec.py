@@ -32,11 +32,10 @@ class PpiControlRead(str, Enum):
     # The last mode-set word: CMOS 82C55A, as openMSX I8255::readControlPort.
     CONTROL = "control"
     # 0xFF: nothing drives the bus. Verified on a real SONY HB-F1XD (S1985
-    # MSX-ENGINE), extras/HB-F1XD/PORTRD.BAS, 2026-10-05.
+    # MSX-ENGINE), 2026-10-05.
     OPEN_BUS = "open_bus"
     # The byte latched by the last PPI access (see msx/ppi.py PPI._bus_latch). Verified
-    # on a real SONY HB-10 (S3527 MSX-ENGINE), extras/HB-10/PORTRD1-4.BAS,
-    # 2026-10-08.
+    # on a real SONY HB-10 (S3527 MSX-ENGINE), 2026-10-08.
     BUS_LATCH = "bus_latch"
 
 
@@ -153,6 +152,9 @@ class MachineSpec:
     # None when RAM is mapper-backed (the common C-BIOS case).
     flat_ram_subslot: int | None = None
     flat_ram_size_kb: int = 64
+    # MSX2 RAM mapper sub-slot (e.g. C-BIOS MSX2's sub-slot 2) of an expanded
+    # slot 3. None for a non-expanded mapper slot 3 or no mapper.
+    ram_mapper_subslot: int | None = None
 
     # Which sub-slot the SUB ROM resolves to -- default 0 preserves every
     # existing machine's resolved layout (all predate this field and

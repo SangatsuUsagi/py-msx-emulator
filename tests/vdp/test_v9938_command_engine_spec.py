@@ -328,7 +328,7 @@ def test_search_result_high_reads_ones_when_bit_eight_is_clear() -> None:
 # ---------------------------------------------------------------------------
 
 def test_cycle_cost_defaults() -> None:
-    """Per-command costs measured on a real HB-F1XD (CMDTIME.BAS), and the
+    """Per-command costs measured on a real HB-F1XD (2026-10-07), and the
     HMMC/LMMC TR re-assert delay."""
     assert _HMMV_CYCLES_PER_BYTE == 10
     assert _HMMM_CYCLES_PER_BYTE == 21
@@ -346,7 +346,7 @@ def test_cycle_cost_defaults() -> None:
     (0x9, 256, 54272 * 30),  # LMMM page 0 -> 1
 ])
 def test_full_page_command_durations(cmd_code: int, dy: int, expected: int) -> None:
-    """The CMDTIME.BAS cases: each command covers the whole GRAPHIC 4 page."""
+    """The real HB-F1XD timing cases (2026-10-07): each command covers the whole GRAPHIC 4 page."""
     vdp = _make_vdp()
     _dispatch(vdp, cmd_code=cmd_code, sx=0, sy=0, dx=0, dy=dy, nx=256, ny=212)
     assert vdp._cmd_remaining == expected
@@ -613,7 +613,7 @@ def test_commands_do_nothing_outside_the_bitmap_modes() -> None:
 
 
 def test_leaving_bitmap_mode_keeps_the_command_running() -> None:
-    # HB-F1XD CMDABRT.BAS: CE still 1 right after R#0 selects GRAPHIC 1.
+    # Real HB-F1XD (2026-10-07): CE still 1 right after R#0 selects GRAPHIC 1.
     vdp = _make_vdp()
     _dispatch(vdp, cmd_code=0xC, dx=0, dy=0, nx=128, ny=200, clr=0x00)
     assert vdp._status2 & _CE
@@ -725,7 +725,7 @@ def test_mxd_write_is_discarded() -> None:
 
 
 def test_mxs_read_returns_all_ones_dot() -> None:
-    # HB-F1XD VDPCMD2.BAS line 2: POINT with MXS after R#44 = 0x55 read 0x0F.
+    # Real HB-F1XD (2026-10-07): POINT with MXS after R#44 = 0x55 read 0x0F.
     vdp = _make_vdp()
     vdp.vram[0] = 0x7F
     _dispatch(vdp, cmd_code=0x4, sx=0, sy=0, clr=0x55, arg=_ARG_MXS)  # POINT
