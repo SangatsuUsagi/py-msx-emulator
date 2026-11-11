@@ -1026,8 +1026,8 @@ def _render_text(
     # TEXT1 uses the same full-width R#2/R#4 bases (see _render_g1), but at
     # LN=1 its 26.5 rows of 40 reach name index 1059: index bits 11:10 are
     # ANDed with R#2 bits 1:0, so with those clear index 1024 wraps to the
-    # table start (real HB-F1XD, 2026-10-05; openMSX
-    # VDP::updateNameBase masks the text-mode index the same way).
+    # table start (real HB-F1XD, 2026-10-05; openMSX VDP::updateNameBase
+    # masks the text-mode index the same way).
     name_mask = ((regs[2] & 0x7F) << 10) | 0x3FF
     pat_base = (regs[4] & 0x3F) << 11
     # TEXT1: R#7 high nibble = text colour, low nibble = background. A text
@@ -1091,8 +1091,8 @@ def _render_text2(
     blink_fg = (regs[12] >> 4) & 0x0F
     # Deliberately unlike the plain text colour above: a blink text colour 0
     # shows the blink background, not the TP-dependent colour 0. Confirmed on
-    # a real SONY HB-F1XD (2026-10-05: R#12=&H08
-    # makes the blink text invisible) and in openMSX; MAME draws colour 0.
+    # a real SONY HB-F1XD (2026-10-05: R#12=&H08 makes the blink text
+    # invisible) and in openMSX; MAME draws colour 0.
     if blink_fg == 0:
         blink_fg = blink_bg
     ye = y_end if y_end is not None else _TILE_H

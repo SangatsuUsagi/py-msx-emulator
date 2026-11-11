@@ -657,8 +657,8 @@ class Ascii16Mapper(_WindowedRomMapperMixin, BankTracingMapper):
     """ASCII16 mapper: two 16 KB windows at 0x4000 and 0x8000.
 
     Control registers: window 0 at 0x6000–0x67FF, window 1 at 0x7000–0x77FF
-    -- the low half of each 4 KB zone only (openMSX RomAscii16kB.cc:32:
-    `(0x6000 <= address) && (address < 0x7800) && !(address & 0x0800)`;
+    -- the low half of each 4 KB zone only (openMSX RomAscii16kB::writeMem
+    accepts 0x6000-0x77FF only with address bit 11 clear;
     confirmed against references/docs/"MegaROM Mappers - MSX Wiki.md" and
     "Megabit ROM Cartridges.md", both of which give the same narrower
     range). The high half of each zone (0x6800–0x6FFF, 0x7800–0x7FFF) does
@@ -1324,7 +1324,7 @@ class RTypeMapper(BankTracingMapper):
     two-tier block resolution (direct index if below the ROM's page count,
     else masked with page_count - 1, open bus if still out of range) for
     _RTYPE_FIXED_BLOCK and for the switchable bank. This has only been verified against
-    the one 384 KB (24-page) canonical R-Type dump the primary reference
+    the one 384 KB (24-page) cartridge image the primary reference
     and openMSX both describe, where 0x17 is directly selectable (23 < 24
     pages). Behaviour on any other ROM size (tests/test_rtype_mapper.py
     covers the masked fallback with 4- and 8-page fixtures) follows openMSX

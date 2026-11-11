@@ -50,7 +50,7 @@ MSR_CB: int = 0x10   # FDC busy (Command/Execution/Result Phase in progress)
 # Command opcodes. _decode() matches each against its own mask: READ DATA,
 # WRITE DATA and FORMAT allow some of the MT/MFM/SK flag bits (ignored by
 # this functional model), the other commands match the whole byte (openMSX
-# TC8566AF.cc:367-381).
+# TC8566AF::idlePhaseWrite).
 CMD_SPECIFY: int = 0x03
 CMD_SENSE_DEVICE_STATUS: int = 0x04
 CMD_WRITE_DATA: int = 0x05
@@ -256,10 +256,11 @@ class TC8566AF:
         return bool(self.control_reg0 & (0x10 << index))
 
     # The FS-A1F's drives give Track 0 and Write Protected only with the
-    # motor on (openMSX RealDrive with signalsNeedMotorOn, set when the
-    # machine names no connection style: MSXFDC.cc:37, RealDrive.cc:154-160,
-    # 254-262). A nonexistent drive never reports track 0 and always reports
-    # write protected (openMSX DummyDrive).
+    # motor on (openMSX RealDrive with signalsNeedMotorOn, set by the MSXFDC
+    # constructor when the machine names no connection style; see
+    # RealDrive::isWriteProtected and RealDrive::isTrack00). A nonexistent drive
+    # never reports track 0 and always reports write protected (openMSX
+    # DummyDrive).
 
     def _track00(self, index: int) -> bool:
         drive = self._drive(index)

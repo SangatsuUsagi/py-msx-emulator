@@ -407,6 +407,8 @@ class RTC:
 def _days_in_month(month: int, leap_year: int) -> int:
     """Days in the 0-based `month` (a -1 month counts as December); February
     has 29 when the leap-year counter is 0."""
+    # PORT-NOTE: month -1 relies on Python's floor modulo (-1 % 12 == 11).
+    #   C/C++/Rust `%` truncates (-1 % 12 == -1): use rem_euclid / @mod.
     index = month % 12
     if index == 1 and leap_year == 0:
         return 29
@@ -426,6 +428,9 @@ def check_start(start: list[int], label: str) -> None:
 
 def _days_from_civil(year: int, month: int, day: int) -> int:
     """Days since 1970-01-01 for a Gregorian date (integer-only)."""
+    # PORT-NOTE: `//` is floor division. The era term handles a negative y
+    #   explicitly, and year >= 0 keeps y >= -1, so the other divisions see
+    #   only non-negative operands and truncating division gives the same.
     y = year - 1 if month <= 2 else year
     era = (y if y >= 0 else y - 399) // 400
     yoe = y - era * 400

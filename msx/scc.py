@@ -9,10 +9,11 @@ from msx.snapshot_schema import check_int, check_int_list, check_list, check_obj
 
 SCC_SCALE: int = 96         # per-channel amplitude scale, applied after the >> 4
 # A channel's level is ((wave * volume) >> 4) * SCC_SCALE (openMSX SCC.cc
-# `adjust`), so the peak stays 128 * 15 = 1920 >> 4 = 120, * 96 = 11520.
+# `adjust`), so the peak stays (128 * 15) >> 4 = 120, and 120 * 96 = 11520.
 # PORT-NOTE: `>> 4` of a negative product must be an arithmetic (flooring)
 #   shift, as Python's is: -1920 >> 4 == -120 and -15 >> 4 == -1. Rust `>>` on
-#   i32 and C/C++ `>>` on int32_t (arithmetic on every target compiler) match.
+#   i32, Zig `>>` on i32 (arithmetic for signed integers) and C/C++ `>>` on
+#   int32_t (arithmetic on every target compiler) match.
 # A channel holds its index (no step) while its frequency register is at most
 # this value (openMSX SCC::setFreqVol sets incr 0 for a period of 8 or less).
 FREQ_HOLD_MAX: int = 8

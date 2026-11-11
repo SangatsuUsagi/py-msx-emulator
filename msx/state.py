@@ -134,6 +134,11 @@ if TYPE_CHECKING:
 # Version 24: mapper_latch added -- the S1985 latch of the mapper ports
 #   0xFC-0xFF, None when the machine has no latch (memory-ram-mapper "S1985
 #   mapper port latch").
+#   These fields were added later without a version bump: the RTC counter
+#   layout (fraction ... leap_year, tick_remainder and uncounted_cycles,
+#   which replace the version 16 start and elapsed_cycles), the WD2793
+#   immediate_irq, type1_phase, type1_cycles_left, hld and hld_idle_cycles,
+#   and the TC8566AF pcn.
 CURRENT_FORMAT_VERSION: int = 24
 
 _SHA256_HEX_LEN = 64

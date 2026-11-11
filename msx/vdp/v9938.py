@@ -557,9 +557,9 @@ class V9938:
 
         On the wrap, M4/M5 modes carry into R#14 (R#14 itself increments) and
         A16-A14; the MSX1-compatible modes stay in the current 16 KB bank.
-        Confirmed on a real SONY HB-F1XD (2026-10-07):
-        SCREEN 1 wraps 0x3FFF -> 0x0000, SCREEN 5 carries to
-        0x4000 and a later address setup without R#14 lands at 0x4010.
+        Confirmed on a real SONY HB-F1XD (2026-10-07): SCREEN 1 wraps
+        0x3FFF -> 0x0000, SCREEN 5 carries to 0x4000 and a later address
+        setup without R#14 lands at 0x4010.
         openMSX executeCpuVramAccess agrees; the M4/M5 test for the modes
         not run on the hardware (GRAPHIC 3, TEXT 2, GRAPHIC 5-7) follows it.
         """
@@ -643,15 +643,15 @@ class V9938:
     def _apply_r0_write(self, new_r0: int) -> None:
         """Handle side effects of writing R#0 before the new value is stored.
 
-        IE1 falling edge clears FH (openMSX VDP.cc:1182): a split program that
+        IE1 falling edge clears FH (openMSX VDP::changeRegister): a split program that
         re-enables IE1 in the vblank ISR must not see a stale FH latched while
         IE1 was off.
 
         R#0 also selects the screen mode. Leaving the bitmap modes does NOT
         abort a command in progress: confirmed on a real SONY HB-F1XD
-        (2026-10-07: CE still 1 right after R#0
-        selects GRAPHIC 1 during an HMMV, and the page is filled after the
-        return to SCREEN 5). openMSX aborts it (updateDisplayMode) instead.
+        (2026-10-07: CE still 1 right after R#0 selects GRAPHIC 1 during an
+        HMMV, and the page is filled after the return to SCREEN 5). openMSX
+        aborts it (updateDisplayMode) instead.
         Whether the real command pauses outside the bitmap modes is not
         known; here it keeps running on its dispatch-time geometry.
         """
@@ -834,9 +834,9 @@ class V9938:
         # Subtracting R#23 (vertical scroll) is intentional and matches openMSX
         # (VDP.cc scheduleHScan): the split line is compared as (R#19 - R#23) & 0xFF.
         # FH (S#1 bit0) is gated by IE1: openMSX only raises irqHorizontal when
-        # IE1 is set (VDP.cc:412). A split program that parks the compare in the
-        # bottom border with IE1 cleared must NOT latch FH, or re-enabling IE1 in
-        # the vblank ISR fires a spurious interrupt (see extras notes).
+        # IE1 is set (VDP::execHScan). A split program that parks the compare in
+        # the bottom border with IE1 cleared must NOT latch FH, or re-enabling
+        # IE1 in the vblank ISR fires a spurious interrupt.
         # regs are u8 (0-255); the & 0xFF gives the 8-bit wrapping difference
         # (regs[19] - regs[23] may go negative — a port uses u8 wrapping_sub).
         effective = (self.regs[19] - self.regs[23]) & 0xFF
@@ -901,8 +901,8 @@ class V9938:
         if port == 0:
             self.vram[self._addr] = value
             # A data-port write also refills the read-ahead buffer: confirmed
-            # on a real SONY HB-F1XD (2026-10-07: IN
-            # after OUT returns the written byte); openMSX agrees.
+            # on a real SONY HB-F1XD (2026-10-07: IN after OUT returns the
+            # written byte); openMSX agrees.
             self._read_buf = value
             addr = self._addr + 1
             if addr & 0x3FFF:  # no A13-A0 wrap: the common case, kept inline
@@ -1607,9 +1607,8 @@ class V9938:
                 self._tr_delay = 0
                 self._complete_command()
                 # The completing byte leaves TR set: confirmed on a real SONY
-                # HB-F1XD (2026-10-07: a
-                # 2-byte HMMC reads TR/CE 80 after its last byte, 00 after an
-                # idle R#44 write); openMSX agrees.
+                # HB-F1XD (2026-10-07: a 2-byte HMMC reads TR/CE 80 after its
+                # last byte, 00 after an idle R#44 write); openMSX agrees.
                 self._status2 |= _S2_TR
 
     def _advance_lmcm(self) -> None:

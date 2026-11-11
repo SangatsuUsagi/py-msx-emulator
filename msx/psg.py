@@ -135,7 +135,8 @@ class PSG:
     #
     # PORT-NOTE: _tone_cnt/_tone_out are 3-element list[int] fields, fixed
     #   size for the instance's whole lifetime, indexed in the per-sample hot
-    #   loop (_render, below).
+    #   loop (_render, below). _tone_cnt and _noise_cnt are signed: a
+    #   counter can reach 0 or below before _render clamps or reloads it.
     # Rust equivalent: [i32; 3] fields, not Vec<i32>.
     # C++ equivalent: std::array<int32_t, 3>.
     # Kept as-is here because: Python has no cheap fixed-size numeric array

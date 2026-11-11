@@ -1129,11 +1129,10 @@ def load_extension_overlay(
         )
 
     # `slot:` documents which primary slot this overlay YAML's author
-    # targeted/tested -- both slots 1 and 2 are supported placements now;
-    # it does NOT itself
-    # route the overlay to a slot -- load_machine_config's caller decides that via
-    # which of extension_overlay1/extension_overlay2 it passes the resolved
-    # overlay through as.
+    # targeted/tested -- both slots 1 and 2 are supported placements now; it
+    # does NOT itself route the overlay to a slot -- load_machine_config's
+    # caller decides that via which of extension_overlay1/extension_overlay2
+    # it passes the resolved overlay through as.
     slot = int(raw.get("slot", 2))
     if slot not in (1, 2):
         raise MachineLoadError(
@@ -1462,6 +1461,8 @@ def load_machine_config(
         extension_overlay1=carts.extension_overlay1,
         extension_overlay2=carts.extension_overlay2,
     )
+    # Parse here so that a bad value names the machine. machine_loader
+    # parses the same document again when it builds the machine.
     try:
         parse_machine_config(document)
     except MachineLoadError as exc:

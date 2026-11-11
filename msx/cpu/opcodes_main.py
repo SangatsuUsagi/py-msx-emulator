@@ -44,9 +44,9 @@ _DEC_OPS: dict[int, int] = {
 # Undocumented flags Y (bit 5) and X (bit 3) copy bits 5/3 of a per-family
 # source value (Sean Young, Undocumented Z80 Documented; references/z80):
 # usually the 8-bit result, but the operand for CP, A for SCF/CCF, the high
-# byte for 16-bit arithmetic. Confirmed on a real SONY HB-F1XD
-# (2026-10-07: F = 28 BB 3C 6D 7D 6C after ADD, CP,
-# AND, SCF, BIT, RLCA). BIT n,(HL) takes them from the high byte of the
+# byte for 16-bit arithmetic. Confirmed on a real SONY HB-F1XD (2026-10-07:
+# F = 28 BB 3C 6D 7D 6C after ADD, CP, AND, SCF, BIT, RLCA). BIT n,(HL)
+# takes them from the high byte of the
 # internal MEMPTR register (Registers.WZ), set at the openMSX setMemPtr sites;
 # a repeating LDIR/LDDR/CPIR/CPDR takes them from its PC (_ed_block_ld/_cp),
 # and so does a repeating INIR/INDR/OTIR/OTDR (_block_io_repeat_flags);
