@@ -15,6 +15,7 @@ from host.machine_config import (
 )
 from msx.boundary import DiskMount, MediaId, MediaImage, RomImage
 from msx.fdc.disk_image import DskDiskImage
+from msx.fdc.interface import SonyPhilipsInterface
 from msx.machine_loader import build_machine
 from msx.machine_spec import FdcDef, MachineLoadError, MachineSpec, RomEntry
 
@@ -181,6 +182,14 @@ def test_build_wires_fdc_device(tmp_path: Path) -> None:
     machine = build_machine_from_spec(_fdc_spec(tmp_path))
     assert machine.fdc is not None
     assert machine.memory.fdc is machine.fdc
+
+
+def test_wd2793_reads_the_machine_clock(tmp_path: Path) -> None:
+    # Type I step times count machine cycles (fdc-wd2793 "Type I step timing").
+    _make_roms(tmp_path)
+    machine = build_machine_from_spec(_fdc_spec(tmp_path))
+    assert isinstance(machine.fdc, SonyPhilipsInterface)
+    assert machine.fdc.controller._clock is machine.clock
 
 
 def test_disk_rom_and_registers_routed_through_memory(tmp_path: Path) -> None:
