@@ -102,6 +102,12 @@ def _is_type1(command: int) -> bool:
     return (command & 0x80) == 0 or (command & 0xF0) == 0xD0
 
 
+def _is_restore_or_seek(command: int) -> bool:
+    """RESTORE (0x0X) or SEEK (0x1X): the Type I commands that step toward
+    a target track and always update TRACK."""
+    return (command & 0xE0) == 0x00
+
+
 class WD2793State(TypedDict):
     """Save-state schema for WD2793.snapshot()/apply_state().
 
@@ -332,10 +338,16 @@ class WD2793:
         # empty one (DummyDrive / DummyDisk), not only for a protected disk.
         return self.drive is None or not self.drive.has_disk or self.drive.write_protected
 
-    def _sector_on_head_track(self) -> bytes | None:
-        """The addressed sector, found only when TRACK matches the track in
-        the head's sector IDs (the head position itself)."""
+    def _sector_found(self, sector: int) -> bool:
+        """The head's track has an ID field for `sector`, and TRACK matches
+        the track in the head's sector IDs (the head position itself)."""
         if self.drive is None or self.track_reg != self.drive.track:
+            return False
+        return self.drive.has_sector(self.drive.track, self.drive.side, sector)
+
+    def _sector_on_head_track(self) -> bytes | None:
+        """The addressed sector's data, or None when _sector_found fails."""
+        if self.drive is None or not self._sector_found(self.sector_reg):
             return None
         return self.drive.read_sector(self.drive.track, self.drive.side, self.sector_reg)
 
@@ -419,7 +431,7 @@ class WD2793:
         phase = self._phase
         self._phase = Type1Phase.NONE
         if phase == Type1Phase.STEP:
-            if (self.command_reg & 0xE0) == 0x00:   # RESTORE/SEEK: next step
+            if _is_restore_or_seek(self.command_reg):   # next step
                 self._seek_step(now)
             else:
                 self._steps_done(now)
@@ -448,7 +460,7 @@ class WD2793:
         out that finds the head at track 0 ends the steps with TRACK = 0."""
         command = self.command_reg
         inward = self._step_dir > 0
-        if (command & T_FLAG) or (command & 0xE0) == 0x00:
+        if (command & T_FLAG) or _is_restore_or_seek(command):
             if inward:
                 self.track_reg = (self.track_reg + 1) & 0xFF
             else:
@@ -483,9 +495,7 @@ class WD2793:
 
     def _track_id_found(self) -> bool:
         """The head's track has ID fields and their track equals TRACK."""
-        if self.drive is None or self.track_reg != self.drive.track:
-            return False
-        return self.drive.read_sector(self.drive.track, self.drive.side, 1) is not None
+        return self._sector_found(1)
 
     def _end_type1(self, now: int) -> None:
         self._end_command()
@@ -525,7 +535,7 @@ class WD2793:
             self.status_reg |= WRITE_PROTECTED
             self._end_command()
             return
-        if self._sector_on_head_track() is None:
+        if not self._sector_found(self.sector_reg):
             self.status_reg |= RECORD_NOT_FOUND
             self._end_command()
             return
@@ -553,7 +563,7 @@ class WD2793:
             return
         assert self.drive is not None
         track = self.drive.track
-        if self.drive.read_sector(track, self.drive.side, 1) is None:
+        if not self.drive.has_sector(track, self.drive.side, 1):
             self.status_reg |= RECORD_NOT_FOUND  # no sector IDs on this track
             self._end_command()
             return
@@ -660,7 +670,9 @@ class WD2793:
             "index": check_int(fields["index"], f"{label}.index", 0, TRACK_BYTES),
             "step_dir": check_choice(fields["step_dir"], f"{label}.step_dir", (-1, 1)),
             "immediate_irq": check_bool(fields["immediate_irq"], f"{label}.immediate_irq"),
-            "type1_phase": check_int(fields["type1_phase"], f"{label}.type1_phase", 0, 4),
+            "type1_phase": check_int(
+                fields["type1_phase"], f"{label}.type1_phase", 0, len(Type1Phase) - 1
+            ),
             "type1_cycles_left": check_int(
                 fields["type1_cycles_left"], f"{label}.type1_cycles_left", 0, SAFE_INT_MAX
             ),

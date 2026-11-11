@@ -112,10 +112,23 @@ class DiskDrive:
         """Logical sector number for (track, side, 1-based sector), or -1 when
         the sector number is outside 1..MAX_SECTOR_ID (no such sector ID on
         the track)."""
-        spt, sides = self._geometry()
         if sector < 1 or sector > MAX_SECTOR_ID:
             return -1
-        return (track * sides + side) * spt + (sector - 1)
+        return self._track_first_lsn(track, side) + (sector - 1)
+
+    def _track_first_lsn(self, track: int, side: int) -> int:
+        """The LSN of sector 1 on (track, side). format_track uses it
+        directly: lsn() rejects sector numbers above MAX_SECTOR_ID, and a
+        track can hold more sectors than that."""
+        spt, sides = self._geometry()
+        return (track * sides + side) * spt
+
+    def has_sector(self, track: int, side: int, sector: int) -> bool:
+        """True when read_sector would find the sector; copies no data."""
+        if self.image is None:
+            return False
+        lsn = self.lsn(track, side, sector)
+        return 0 <= lsn < self.image.num_sectors
 
     def read_sector(self, track: int, side: int, sector: int) -> bytes | None:
         """Return sector bytes, or None if no disk / sector out of geometry."""
@@ -143,9 +156,9 @@ class DiskDrive:
         """
         if self.image is None or self.image.write_protected:
             return False
-        spt, sides = self._geometry()
+        spt, _sides = self._geometry()
         blank = bytes([fill & 0xFF]) * SECTOR_SIZE
-        first = (track * sides + side) * spt
+        first = self._track_first_lsn(track, side)
         for lsn in range(first, first + spt):
             if 0 <= lsn < self.image.num_sectors:
                 self.image.write_sector(lsn, blank)
