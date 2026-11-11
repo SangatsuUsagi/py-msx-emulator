@@ -1086,7 +1086,8 @@ def _run_frame(ctx: _RunContext, state: _LoopState) -> None:
     if hotkeys.debugger is not None:
         hotkeys.debugger.drain_trace()
         hotkeys.debugger.drain_printer()
-    if out.stop_reason != STOP_NONE and not out.frame_complete:
+    stopped = out.stop_reason != STOP_NONE
+    if stopped and not out.frame_complete:
         # A break inside the frame: the frame continues on the next
         # step_frame, after the REPL returns or the RPC client resumes. Keep
         # the last picture on screen. The call returns no audio, so there is
@@ -1126,9 +1127,10 @@ def _run_frame(ctx: _RunContext, state: _LoopState) -> None:
         _present(sdl2, renderer, state.texture)
         state.last_present = time.perf_counter()
 
-    if out.stop_reason != STOP_NONE:
-        # A frame breakpoint: the frame is complete, and is now shown and
-        # queued like any other frame.
+    if stopped:
+        # A frame breakpoint: only a stop with the frame complete gets here
+        # (a mid-frame stop returned above); it is now shown and queued like
+        # any other frame.
         handle_stop(machine, out.stop_reason, hotkeys.debugger, rpc_server)
         return
 

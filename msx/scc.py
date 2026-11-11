@@ -9,10 +9,11 @@ from msx.snapshot_schema import check_int, check_int_list, check_list, check_obj
 
 SCC_SCALE: int = 96         # per-channel amplitude scale, applied after the >> 4
 # A channel's level is ((wave * volume) >> 4) * SCC_SCALE (openMSX SCC.cc
-# `adjust`), so the peak stays 128 * 15 = 1920 >> 4 = 120, * 96 = 11520.
+# `adjust`), so the peak stays (128 * 15) >> 4 = 120, and 120 * 96 = 11520.
 # PORT-NOTE: `>> 4` of a negative product must be an arithmetic (flooring)
 #   shift, as Python's is: -1920 >> 4 == -120 and -15 >> 4 == -1. Rust `>>` on
-#   i32 and C/C++ `>>` on int32_t (arithmetic on every target compiler) match.
+#   i32, Zig `>>` on i32 (arithmetic for signed integers) and C/C++ `>>` on
+#   int32_t (arithmetic on every target compiler) match.
 # A channel holds its index (no step) while its frequency register is at most
 # this value (openMSX SCC::setFreqVol sets incr 0 for a period of 8 or less).
 FREQ_HOLD_MAX: int = 8
@@ -254,12 +255,13 @@ class SCC:
 
         Hot path (audio callback, 735 or 882 samples/frame): the registers are constant
         across a buffer (the CPU only writes SCC registers between buffers), so
-        the per-channel period / volume / enable / waveform bank are precomputed
-        once, and the phase state is bound to locals — mirroring PSG._render
+        the per-channel period and level table (waveform, volume and enable
+        folded together) are precomputed once, and the phase state is bound
+        to locals — mirroring PSG._render
         (the PSG's hot loop), including its own per-channel loop unrolling
         ("channels 1 and 2: identical integration, unrolled for the hot loop").
         Phase still advances for every channel each sample (even disabled
-        ones); only the accumulation is gated by enable. Behaviour is
+        ones); a disabled channel's level table is all 0. Behaviour is
         identical to the straightforward per-sample form.
         """
         out = bytearray(n * 2)
@@ -271,19 +273,20 @@ class SCC:
         period = [max(1, freq[ch] + 1) for ch in range(NUM_CHANNELS)]
         # 1 for a stepping channel, 0 for one held by a low frequency value.
         run = [0 if freq[ch] <= FREQ_HOLD_MAX else 1 for ch in range(NUM_CHANNELS)]
-        en = [(enable >> ch) & 1 for ch in range(NUM_CHANNELS)]
         # One bank per channel (bank == channel index): in Compatible mode
         # bank 4 already mirrors bank 3's content via write()'s mirroring, so
-        # no mode branch is needed here.
-        wave = [waves[ch] for ch in range(NUM_CHANNELS)]
+        # no mode branch is needed here. Each table holds the channel's scaled
+        # level per waveform step, all 0 for a disabled channel.
+        amp = [
+            _amp_table(waves[ch], vol[ch], (enable >> ch) & 1)
+            for ch in range(NUM_CHANNELS)
+        ]
         wave_mask = WAVE_LEN - 1  # hoisted out of the hot loop below
         # --- bind phase state to locals (scalars written back after the loop) ---
         clk = self._clk_frac
         period0, period1, period2, period3, period4 = period
-        vol0, vol1, vol2, vol3, vol4 = vol
         run0, run1, run2, run3, run4 = run
-        en0, en1, en2, en3, en4 = en
-        wave0, wave1, wave2, wave3, wave4 = wave
+        amp0, amp1, amp2, amp3, amp4 = amp
         pc0, pc1, pc2, pc3, pc4 = self._phase_cnt
         pi0, pi1, pi2, pi3, pi4 = self._phase_idx
 
@@ -296,38 +299,23 @@ class SCC:
 
             steps, pc0 = divmod(pc0 + ticks * run0, period0)
             pi0 = (pi0 + steps) & wave_mask  # wraps within one waveform
-            if en0:
-                raw = wave0[pi0]
-                signed = raw if raw < 128 else raw - 256  # unsigned byte -> signed 8-bit
-                sample += ((signed * vol0) >> 4) * SCC_SCALE
+            sample += amp0[pi0]
 
             steps, pc1 = divmod(pc1 + ticks * run1, period1)
             pi1 = (pi1 + steps) & wave_mask
-            if en1:
-                raw = wave1[pi1]
-                signed = raw if raw < 128 else raw - 256
-                sample += ((signed * vol1) >> 4) * SCC_SCALE
+            sample += amp1[pi1]
 
             steps, pc2 = divmod(pc2 + ticks * run2, period2)
             pi2 = (pi2 + steps) & wave_mask
-            if en2:
-                raw = wave2[pi2]
-                signed = raw if raw < 128 else raw - 256
-                sample += ((signed * vol2) >> 4) * SCC_SCALE
+            sample += amp2[pi2]
 
             steps, pc3 = divmod(pc3 + ticks * run3, period3)
             pi3 = (pi3 + steps) & wave_mask
-            if en3:
-                raw = wave3[pi3]
-                signed = raw if raw < 128 else raw - 256
-                sample += ((signed * vol3) >> 4) * SCC_SCALE
+            sample += amp3[pi3]
 
             steps, pc4 = divmod(pc4 + ticks * run4, period4)
             pi4 = (pi4 + steps) & wave_mask
-            if en4:
-                raw = wave4[pi4]
-                signed = raw if raw < 128 else raw - 256
-                sample += ((signed * vol4) >> 4) * SCC_SCALE
+            sample += amp4[pi4]
 
             if sample > 32767:
                 sample = 32767
@@ -344,3 +332,16 @@ class SCC:
         self._phase_idx[0], self._phase_idx[1], self._phase_idx[2] = pi0, pi1, pi2
         self._phase_idx[3], self._phase_idx[4] = pi3, pi4
         return out
+
+
+def _amp_table(wave: list[int], volume: int, enabled: int) -> list[int]:
+    """The scaled level ((signed * volume) >> 4) * SCC_SCALE for each of the
+    WAVE_LEN waveform bytes, or all 0 when the channel is disabled."""
+    table = [0] * WAVE_LEN
+    if not enabled:
+        return table
+    for i in range(WAVE_LEN):
+        raw = wave[i]
+        signed = raw if raw < 128 else raw - 256  # unsigned byte -> signed 8-bit
+        table[i] = ((signed * volume) >> 4) * SCC_SCALE
+    return table

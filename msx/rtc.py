@@ -30,7 +30,6 @@ from typing import TypedDict
 from msx.boundary import RTC_CMOS_SIZE, RTC_DEFAULT_START, RtcTime
 from msx.clock import CPU_CLOCK_HZ, CoreClock
 from msx.snapshot_schema import (
-    SAFE_INT_MAX,
     SchemaError,
     check_int,
     check_int_list,
@@ -45,6 +44,19 @@ RESET_REG = 15
 MODE_TIMER_ENABLE = 0x08
 MODE_BLOCK_SELECT = 0x03
 REGS_PER_BLOCK = 13
+# Blocks 0 and 1 hold the clock (time digits, alarm and settings); blocks 2
+# and 3 are RAM.
+_CLOCK_BLOCKS = 2
+
+# Block 0 registers. Each value is a ones digit in this register and a tens
+# digit in the next one; the weekday is one digit.
+SECONDS_REG = 0
+MINUTES_REG = 2
+HOURS_REG = 4
+DAY_WEEK_REG = 6
+DAY_REG = 7
+MONTH_REG = 9
+YEAR_REG = 11
 
 # Block 1 registers.
 HOUR_MODE_REG = 10   # bit 0: 1 = 24-hour, 0 = 12-hour (see _write_time_regs)
@@ -56,6 +68,15 @@ _ALARM_LAST_REG = 8
 # The internal divider rate: the seconds counter carries once per TICK_HZ
 # ticks.
 TICK_HZ = 16384
+
+# The most uncounted cycles a state holds: about 2.5 emulated years. A
+# snapshot saves no more than this, so a longer run with no RTC access
+# loses the excess.
+# PORT-NOTE: _take_ticks multiplies the uncounted cycles by TICK_HZ (2^14).
+#   With this bound (2^48) the product plus the tick remainder stays below
+#   2^63, so it fits an i64 or u64. A native core counting more cycles than
+#   this between two RTC accesses must clamp the same way.
+_MAX_UNCOUNTED_CYCLES = 1 << 48
 
 # TEST register bits: the counter advances once per tick instead of by carry.
 TEST_SECONDS = 0x1
@@ -98,7 +119,6 @@ class RtcState(TypedDict):
     addr: int
     mode: int
     test: int
-    reset: int
     regs: list[int]           # the 4 blocks, as stored (one byte each)
 
 
@@ -112,7 +132,6 @@ class RTC:
     _addr: int = 0
     _mode: int = MODE_TIMER_ENABLE
     _test: int = 0
-    _reset: int = 0
     # The persisted image of the 4 blocks, the initial bytes of `cmos`
     # (blank when not RTC_CMOS_SIZE bytes).
     sram: InitVar[bytes | bytearray | None] = None
@@ -173,14 +192,13 @@ class RTC:
         self._write_time_regs()
 
     def reset(self) -> None:
-        """Machine reset: MODE to Timer-EN with block 0, TEST and RESET to 0,
-        the register-select latch to 0. The time and the stored registers
-        stay."""
+        """Machine reset: MODE to Timer-EN with block 0, TEST to 0, the
+        register-select latch to 0. The time and the stored registers stay.
+        RESET is write-only and acts at once, so it holds nothing to reset."""
         self._count_time()
         self._addr = 0
         self._mode = MODE_TIMER_ENABLE
         self._test = 0
-        self._reset = 0
 
     def snapshot(self) -> RtcState:
         """Capture the RTC for save-state (paired with apply_state)."""
@@ -195,11 +213,10 @@ class RTC:
             "years": self._years,
             "leap_year": self._leap_year,
             "tick_remainder": self._tick_rem,
-            "uncounted_cycles": self._uncounted_cycles(),
+            "uncounted_cycles": min(self._uncounted_cycles(), _MAX_UNCOUNTED_CYCLES),
             "addr": self._addr,
             "mode": self._mode,
             "test": self._test,
-            "reset": self._reset,
             "regs": list(self.cmos.data()),
         }
 
@@ -222,12 +239,12 @@ class RTC:
                 state["tick_remainder"], f"{label}.tick_remainder", 0, CPU_CLOCK_HZ - 1
             ),
             "uncounted_cycles": check_int(
-                state["uncounted_cycles"], f"{label}.uncounted_cycles", 0, SAFE_INT_MAX
+                state["uncounted_cycles"], f"{label}.uncounted_cycles", 0,
+                _MAX_UNCOUNTED_CYCLES,
             ),
             "addr": check_int(state["addr"], f"{label}.addr", 0, 0x0F),
             "mode": check_int(state["mode"], f"{label}.mode", 0, 0x0F),
             "test": check_int(state["test"], f"{label}.test", 0, 0x0F),
-            "reset": check_int(state["reset"], f"{label}.reset", 0, 0x0F),
             "regs": check_int_list(state["regs"], f"{label}.regs", RTC_CMOS_SIZE, 0, 0xFF),
         }
 
@@ -248,7 +265,6 @@ class RTC:
         self._addr = state["addr"]
         self._mode = state["mode"]
         self._test = state["test"]
-        self._reset = state["reset"]
         self.cmos.restore(bytes(state["regs"]))
 
     def _uncounted_cycles(self) -> int:
@@ -262,7 +278,7 @@ class RTC:
         if (port & 1) == 0:
             return 0xFF  # 0xB4 is write-only; high bits float to 1
         reg = self._addr
-        if reg < MODE_REG and (self._mode & MODE_BLOCK_SELECT) < 2:
+        if reg < MODE_REG and _is_clock_block(self._mode & MODE_BLOCK_SELECT):
             self._count_time()
         return 0xF0 | self._read_reg(reg)
 
@@ -280,8 +296,7 @@ class RTC:
             return self._mode & 0x0F
         if reg in (TEST_REG, RESET_REG):
             return 0x0F  # write-only
-        block = self._mode & MODE_BLOCK_SELECT
-        return self.cmos.read(block * REGS_PER_BLOCK + reg) & _MASK[block][reg]
+        return self._read_masked(self._mode & MODE_BLOCK_SELECT, reg)
 
     def _write_reg(self, reg: int, value: int) -> None:
         if reg == MODE_REG:
@@ -296,7 +311,6 @@ class RTC:
             # Count first, so the divider clear drops the fraction of the
             # moment of the write.
             self._count_time()
-            self._reset = value
             if value & RESET_ALARM:
                 for alarm_reg in range(_ALARM_FIRST_REG, _ALARM_LAST_REG + 1):
                     self.cmos.write(REGS_PER_BLOCK + alarm_reg, 0)
@@ -304,10 +318,10 @@ class RTC:
                 self._fraction = 0
             return
         block = self._mode & MODE_BLOCK_SELECT
-        if block < 2:
+        if _is_clock_block(block):
             self._count_time()
         self.cmos.write(block * REGS_PER_BLOCK + reg, value & _MASK[block][reg])
-        if block < 2:
+        if _is_clock_block(block):
             self._read_time_regs()
 
     # -- time counting ------------------------------------------------------
@@ -317,12 +331,23 @@ class RTC:
         and write them to the time digits. A day carries into the month only
         when days are added, so a date that software sets digit by digit
         (02-31 on its way to 12-31) is kept."""
+        ticks = self._take_ticks()
+        self._carry(ticks)
+        self._wrap_counters()
+        self._write_time_regs()
+
+    def _take_ticks(self) -> int:
+        """The whole ticks in the cycles since the last count. The part
+        below one tick stays for the next count."""
         total = self._uncounted_cycles() * TICK_HZ + self._tick_rem
         self._base_cycle = self._clock.cycle
         self._base_age = 0
-        ticks = total // CPU_CLOCK_HZ
         self._tick_rem = total % CPU_CLOCK_HZ
+        return total // CPU_CLOCK_HZ
 
+    def _carry(self, ticks: int) -> None:
+        """Add the ticks and carry each counter into the next. A TEST bit
+        makes its counter advance once per tick instead of by carry."""
         if self._mode & MODE_TIMER_ENABLE:
             self._fraction += ticks
         if self._test & TEST_SECONDS:
@@ -334,7 +359,10 @@ class RTC:
         else:
             self._minutes += self._seconds // 60
         self._hours += self._minutes // 60
-        carry_days = ticks if self._test & TEST_DAYS else self._hours // 24
+        if self._test & TEST_DAYS:
+            carry_days = ticks
+        else:
+            carry_days = self._hours // 24
         if carry_days > 0:
             self._days += carry_days
             self._day_week += carry_days
@@ -345,11 +373,15 @@ class RTC:
                 month_len = _days_in_month(self._months, self._leap_year)
         if self._test & TEST_YEARS:
             carry_years = ticks
+        elif self._months > 0:
+            carry_years = self._months // 12
         else:
-            carry_years = self._months // 12 if self._months > 0 else 0
+            carry_years = 0
         self._years += carry_years
         self._leap_year += carry_years
 
+    def _wrap_counters(self) -> None:
+        """Bring each counter back into its range after a carry."""
         self._fraction %= TICK_HZ
         self._seconds %= 60
         self._minutes %= 60
@@ -359,15 +391,13 @@ class RTC:
             self._months %= 12  # a -1 month (register 0) stays -1
         self._years %= 100
         self._leap_year %= 4
-        self._write_time_regs()
 
     def _write_time_regs(self) -> None:
         """Write the counters to block 0's digits and block 1's leap-year
         register. In 12-hour mode (block 1 register 10 bit 0 clear) a PM
         hour 12-23 is written as 20-31."""
         hours = self._hours
-        is_24h = (self.cmos.read(REGS_PER_BLOCK + HOUR_MODE_REG) & HOUR_MODE_24H) != 0
-        if not is_24h and hours >= 12:
+        if not self._is_24h() and hours >= 12:
             hours = hours - 12 + 20
         day = self._days + 1
         month = self._months + 1
@@ -388,25 +418,40 @@ class RTC:
         """Set the counters from block 0's digits and block 1's leap-year
         register (a write to block 0 or 1 sets the clock). In 12-hour mode
         an hour of 20 or more is a PM hour."""
-        regs = [self._read_masked(0, reg) for reg in range(REGS_PER_BLOCK)]
-        self._seconds = regs[0] + 10 * regs[1]
-        self._minutes = regs[2] + 10 * regs[3]
-        self._hours = regs[4] + 10 * regs[5]
-        self._day_week = regs[6]
-        self._days = regs[7] + 10 * regs[8] - 1
-        self._months = regs[9] + 10 * regs[10] - 1
-        self._years = regs[11] + 10 * regs[12]
+        self._seconds = self._digit_pair(SECONDS_REG)
+        self._minutes = self._digit_pair(MINUTES_REG)
+        self._hours = self._digit_pair(HOURS_REG)
+        self._day_week = self._read_masked(0, DAY_WEEK_REG)
+        self._days = self._digit_pair(DAY_REG) - 1
+        self._months = self._digit_pair(MONTH_REG) - 1
+        self._years = self._digit_pair(YEAR_REG)
         self._leap_year = self._read_masked(1, LEAP_YEAR_REG)
-        if not self._read_masked(1, HOUR_MODE_REG) and self._hours >= 20:
+        if not self._is_24h() and self._hours >= 20:
             self._hours = self._hours - 20 + 12
+
+    def _digit_pair(self, reg: int) -> int:
+        """The block 0 value with its ones digit in `reg` and its tens digit
+        in `reg + 1`."""
+        return self._read_masked(0, reg) + 10 * self._read_masked(0, reg + 1)
+
+    def _is_24h(self) -> bool:
+        """Block 1 register 10 bit 0: 1 = 24-hour mode, 0 = 12-hour mode."""
+        return (self._read_masked(1, HOUR_MODE_REG) & HOUR_MODE_24H) != 0
 
     def _read_masked(self, block: int, reg: int) -> int:
         return self.cmos.read(block * REGS_PER_BLOCK + reg) & _MASK[block][reg]
 
 
+def _is_clock_block(block: int) -> bool:
+    """Blocks 0 and 1 hold the clock; an access to them counts the time."""
+    return block < _CLOCK_BLOCKS
+
+
 def _days_in_month(month: int, leap_year: int) -> int:
     """Days in the 0-based `month` (a -1 month counts as December); February
     has 29 when the leap-year counter is 0."""
+    # PORT-NOTE: month -1 relies on Python's floor modulo (-1 % 12 == 11).
+    #   C/C++/Rust `%` truncates (-1 % 12 == -1): use rem_euclid / @mod.
     index = month % 12
     if index == 1 and leap_year == 0:
         return 29
@@ -426,6 +471,9 @@ def check_start(start: list[int], label: str) -> None:
 
 def _days_from_civil(year: int, month: int, day: int) -> int:
     """Days since 1970-01-01 for a Gregorian date (integer-only)."""
+    # PORT-NOTE: `//` is floor division. The era term handles a negative y
+    #   explicitly, and year >= 0 keeps y >= -1, so the other divisions see
+    #   only non-negative operands and truncating division gives the same.
     y = year - 1 if month <= 2 else year
     era = (y if y >= 0 else y - 399) // 400
     yoe = y - era * 400

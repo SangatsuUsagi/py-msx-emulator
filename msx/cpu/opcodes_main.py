@@ -44,9 +44,9 @@ _DEC_OPS: dict[int, int] = {
 # Undocumented flags Y (bit 5) and X (bit 3) copy bits 5/3 of a per-family
 # source value (Sean Young, Undocumented Z80 Documented; references/z80):
 # usually the 8-bit result, but the operand for CP, A for SCF/CCF, the high
-# byte for 16-bit arithmetic. Confirmed on a real SONY HB-F1XD
-# (2026-10-07: F = 28 BB 3C 6D 7D 6C after ADD, CP,
-# AND, SCF, BIT, RLCA). BIT n,(HL) takes them from the high byte of the
+# byte for 16-bit arithmetic. Confirmed on a real SONY HB-F1XD (2026-10-07:
+# F = 28 BB 3C 6D 7D 6C after ADD, CP, AND, SCF, BIT, RLCA). BIT n,(HL)
+# takes them from the high byte of the
 # internal MEMPTR register (Registers.WZ), set at the openMSX setMemPtr sites;
 # a repeating LDIR/LDDR/CPIR/CPDR takes them from its PC (_ed_block_ld/_cp),
 # and so does a repeating INIR/INDR/OTIR/OTDR (_block_io_repeat_flags);
@@ -958,8 +958,14 @@ _build_dd_fd_dispatch()
 def _execute_dd_fd(cpu: Z80, use_iy: bool) -> int:
     # A prefix followed by another DD/FD is absorbed: it was its own
     # 4-T-state M1 cycle (openMSX CC_DD), plus one M1 wait for the byte
-    # fetched after it; the last prefix selects IX or IY. A loop, not re-dispatch, so a
-    # chain of any length runs as one step at constant stack depth.
+    # fetched after it; the last prefix selects IX or IY.
+    # PORT-NOTE: the loop runs as long as DD/FD bytes follow, so a CPU view
+    #   holding only DD/FD bytes never leaves this step. This is on purpose:
+    #   openMSX continues a prefix chain inside one instruction with no
+    #   interrupt check, and cpu-z80 "An absorbed DD/FD prefix costs a full
+    #   M1 cycle" requires one step() per chain.
+    # Rust/C++/Zig equivalent: the same loop, not recursion, so the stack
+    #   depth stays constant for a chain of any length.
     extra = 0
     op = cpu._fetch_opcode()
     while op == 0xDD or op == 0xFD:
@@ -970,9 +976,10 @@ def _execute_dd_fd(cpu: Z80, use_iy: bool) -> int:
     handler = _DD_FD_DISPATCH.get(op)
     if handler is not None:
         return handler(cpu, use_iy, op) + extra
-    # Prefix absorbed: the byte runs as its unprefixed instruction, and the
-    # prefix was its own 4-T-state M1 cycle (openMSX CC_DD). The prefix wrote
-    # no flags, so that instruction sees Q = 0 (hoglet67/Z80Decoder wiki).
+    # No DD/FD meaning: the last prefix is absorbed too (4 T-states, as
+    # above) and the byte runs as its unprefixed instruction. The prefix
+    # wrote no flags, so that instruction sees Q = 0 (hoglet67/Z80Decoder
+    # wiki).
     cpu.q = 0
     return _DISPATCH[op](cpu) + 4 + extra
 

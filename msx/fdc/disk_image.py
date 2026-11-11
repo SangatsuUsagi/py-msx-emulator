@@ -20,6 +20,17 @@ FALLBACK_SIDES: int = 2
 _SECTORS_2DD: int = 1440
 # A 360 KB image with no usable boot sector or FAT media byte is 1 side.
 _SECTORS_1DD: int = 720
+# The default geometry: 9 sectors/track, 2 sides (1 side for a 360 KB image).
+_DEFAULT_SECTORS_PER_TRACK: int = 9
+_DEFAULT_SIDES: int = 2
+# A boot sector that starts with an 8086 JMP (0xE9 or 0xEB) carries a BPB.
+_JMP_NEAR: int = 0xE9
+_JMP_SHORT: int = 0xEB
+_BPB_SECTORS_PER_TRACK: int = 0x18  # 16-bit little-endian
+_BPB_HEADS: int = 0x1A              # 16-bit little-endian
+# FAT media byte (LSN 1, byte 0): 0xF8-0xFF is valid; bit 1 set = 8
+# sectors/track, bit 0 set = 2 sides.
+_MEDIA_MIN: int = 0xF8
 
 
 class DskDiskImage:
@@ -55,21 +66,28 @@ class DskDiskImage:
         only for a 360 KB image.
         """
         if self.num_sectors == _SECTORS_2DD:
-            return 9, 2
+            return _DEFAULT_SECTORS_PER_TRACK, _DEFAULT_SIDES
         d = self._data
-        if d[0] == 0xE9 or d[0] == 0xEB:
-            spt = d[0x18] | (d[0x19] << 8)
-            heads = d[0x1A] | (d[0x1B] << 8)
+        if d[0] == _JMP_NEAR or d[0] == _JMP_SHORT:
+            spt = d[_BPB_SECTORS_PER_TRACK] | (d[_BPB_SECTORS_PER_TRACK + 1] << 8)
+            heads = d[_BPB_HEADS] | (d[_BPB_HEADS + 1] << 8)
             if 1 <= spt <= 255 and 1 <= heads <= 255:
                 return spt, heads
-        elif self.num_sectors > 1:
+            # An invalid BPB takes the default, without the FAT media byte
+            # (openMSX Disk::detectGeometry falls back the same way).
+            return self._default_geometry()
+        if self.num_sectors > 1:
             media = d[SECTOR_SIZE]
-            if media >= 0xF8:
+            if media >= _MEDIA_MIN:
                 spt = 8 if media & 0x02 else 9
                 sides = 2 if media & 0x01 else 1
                 return spt, sides
-        sides = 1 if self.num_sectors == _SECTORS_1DD else 2
-        return 9, sides
+        return self._default_geometry()
+
+    def _default_geometry(self) -> tuple[int, int]:
+        """9 sectors/track; 1 side for a 360 KB image, else 2."""
+        sides = 1 if self.num_sectors == _SECTORS_1DD else _DEFAULT_SIDES
+        return _DEFAULT_SECTORS_PER_TRACK, sides
 
     @property
     def num_sectors(self) -> int:

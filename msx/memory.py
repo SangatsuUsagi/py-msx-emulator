@@ -325,8 +325,9 @@ class Memory:
     def _resolve_slot3_read_leaf_data_driven(self, page: int, sub: int) -> Callable[[int], int]:
         """Data-driven MSX2 slot-3 (e.g. HB-F1XD, FS-A1F): SUB ROM in
         sub-slot `sub_rom_subslot` page 0, memory-mapped FDC in sub-slot
-        `fdc_subslot` page `fdc_page` -- independently configurable
-        sub-slots, both defaulting to sub-slot 0 (page 1 for the FDC) so
+        `fdc_subslot` pages `fdc_page` and `fdc_page + 1` -- independently
+        configurable sub-slots, both defaulting to sub-slot 0 (pages 1-2 for
+        the FDC) so
         every existing machine resolves identically to the
         pre-generalisation `if sub == 0: ...` special case -- flat 64 KB RAM
         (offset == address) in `self.flat_ram_subslot` or the RAM mapper in
@@ -348,7 +349,8 @@ class Memory:
         then RAM), adapted for this branch's RAM fallback (RAM mapper or
         MSX1 flat RAM, rather than a single RAM sub-slot match) --
           sub_rom_subslot page 0: extension ROM (if present)
-          fdc_subslot/fdc_page: memory-mapped FDC (if present) -- an FDC
+          fdc_subslot pages fdc_page/fdc_page + 1: memory-mapped FDC (if
+            present) -- an FDC
             may coexist with a RAM mapper here, just as it already does
             with the data-driven flat-RAM strategy above
           sub_rom_subslot (other pages, with a sub0_rom present): open bus
@@ -616,11 +618,12 @@ class Memory:
         if self._is_data_driven_slot3():
             # Data-driven layout (e.g. FS-A1F): mirror
             # _resolve_slot3_read_leaf's precedence -- SUB ROM at page 0
-            # of sub_rom_subslot, FDC at fdc_page of fdc_subslot, flat
+            # of sub_rom_subslot, FDC at pages fdc_page and fdc_page + 1
+            # of fdc_subslot, flat
             # RAM in flat_ram_subslot, the RAM mapper in
             # ram_mapper_subslot, open bus elsewhere. Page -1 (the
             # `st` tree view, one line per sub-slot) matches the
-            # page-0/fdc_page role regardless of page, same as the
+            # page-0/FDC-page role regardless of page, same as the
             # legacy branch below always describing sub-slot 0 as ROM.
             if (
                 secondary == self.sub_rom_subslot

@@ -102,6 +102,12 @@ def _is_type1(command: int) -> bool:
     return (command & 0x80) == 0 or (command & 0xF0) == 0xD0
 
 
+def _is_restore_or_seek(command: int) -> bool:
+    """RESTORE (0x0X) or SEEK (0x1X): the Type I commands that step toward
+    a target track and always update TRACK."""
+    return (command & 0xE0) == 0x00
+
+
 class WD2793State(TypedDict):
     """Save-state schema for WD2793.snapshot()/apply_state().
 
@@ -177,7 +183,12 @@ class WD2793:
     _phase: Type1Phase = Type1Phase.NONE
     _event_cycle: int = 0
     _hld: bool = False
-    _hld_idle_cycle: int = 0
+    # The idle time for the head unload is _hld_base_age + (clock.cycle -
+    # _hld_base_cycle). Two fields, so a restored state with more idle
+    # cycles than the clock's count needs no base below zero (an unsigned
+    # clock in a native core).
+    _hld_base_cycle: int = 0
+    _hld_base_age: int = 0
 
     def __post_init__(self) -> None:
         self.reset()
@@ -315,8 +326,8 @@ class WD2793:
 
     def _index_pulses(self) -> bool:
         # A disk in the drive turns and gives index pulses. The motor is not
-        # modelled, so a disk counts as turning.
-        return self.drive is not None and self.drive.has_disk
+        # modelled, so a disk counts as turning: the same test as _ready.
+        return self._ready()
 
     def _at_track00(self) -> bool:
         # openMSX's DummyDrive (no drive selected) never reports track 0.
@@ -327,44 +338,67 @@ class WD2793:
         # empty one (DummyDrive / DummyDisk), not only for a protected disk.
         return self.drive is None or not self.drive.has_disk or self.drive.write_protected
 
-    def _sector_on_head_track(self) -> bytes | None:
-        """The addressed sector, found only when TRACK matches the track in
-        the head's sector IDs (the head position itself)."""
+    def _sector_found(self, sector: int) -> bool:
+        """The head's track has an ID field for `sector`, and TRACK matches
+        the track in the head's sector IDs (the head position itself)."""
         if self.drive is None or self.track_reg != self.drive.track:
+            return False
+        return self.drive.has_sector(self.drive.track, self.drive.side, sector)
+
+    def _sector_on_head_track(self) -> bytes | None:
+        """The addressed sector's data, or None when _sector_found fails."""
+        if self.drive is None or not self._sector_found(self.sector_reg):
             return None
         return self.drive.read_sector(self.drive.track, self.drive.side, self.sector_reg)
 
     # -- Command implementations ------------------------------------------
+
+    def attach_clock(self, clock: CoreClock) -> None:
+        """Time the Type I steps on the machine's clock record
+        (msx/clock.py)."""
+        self._clock = clock
 
     def catch_up(self) -> None:
         """Run every Type I event that is due by now, then drop HLD when the
         controller has been idle for 15 index pulses. Every register access
         runs it; the interface also runs it before a drive or side select,
         so due steps reach the drive selected when they were due."""
+        if self._phase is Type1Phase.NONE and not self._hld:
+            return  # no Type I event pending and no head to unload
         now = self._clock.cycle
-        if self._phase == Type1Phase.NO_INDEX and self._index_pulses():
+        if self._phase is Type1Phase.NO_INDEX and self._index_pulses():
             self._phase = Type1Phase.NONE
             self._verify_search(now)  # a disk is in: the search starts now
         while (
-            self._phase != Type1Phase.NONE
-            and self._phase != Type1Phase.NO_INDEX
+            self._phase is not Type1Phase.NONE
+            and self._phase is not Type1Phase.NO_INDEX
             and self._event_cycle <= now
         ):
-            if self._phase == Type1Phase.VERIFY and not self._index_pulses():
+            if self._phase is Type1Phase.VERIFY and not self._index_pulses():
                 self._phase = Type1Phase.NO_INDEX  # the disk went out
                 break
             self._type1_event()
-        idle = self._phase == Type1Phase.NONE and (self.status_reg & BUSY) == 0
-        if self._hld and idle and not self._index_pulses():
-            self._hld_idle_cycle = now  # no index pulses to count yet
-        if (
-            self._hld
-            and self._phase == Type1Phase.NONE
-            and (self.status_reg & BUSY) == 0
-            and self._index_pulses()
-            and now - self._hld_idle_cycle >= HEAD_UNLOAD_CYCLES
-        ):
+        if self._hld:
+            self._update_head_unload(now)
+
+    def _update_head_unload(self, now: int) -> None:
+        """Drop HLD after 15 index pulses of idle time. With no index
+        pulses the idle count restarts at `now` instead."""
+        idle = self._phase is Type1Phase.NONE and (self.status_reg & BUSY) == 0
+        if not idle:
+            return
+        if not self._index_pulses():
+            self._start_idle(now)  # no index pulses to count yet
+        elif self._idle_cycles(now) >= HEAD_UNLOAD_CYCLES:
             self._hld = False
+
+    def _start_idle(self, now: int) -> None:
+        """Start the idle time for the head unload at `now`."""
+        self._hld_base_cycle = now
+        self._hld_base_age = 0
+
+    def _idle_cycles(self, now: int) -> int:
+        return self._hld_base_age + (now - self._hld_base_cycle)
 
     def _type1(self, value: int) -> None:
         self._mode = Mode.IDLE
@@ -397,7 +431,7 @@ class WD2793:
         phase = self._phase
         self._phase = Type1Phase.NONE
         if phase == Type1Phase.STEP:
-            if (self.command_reg & 0xE0) == 0x00:   # RESTORE/SEEK: next step
+            if _is_restore_or_seek(self.command_reg):   # next step
                 self._seek_step(now)
             else:
                 self._steps_done(now)
@@ -426,7 +460,7 @@ class WD2793:
         out that finds the head at track 0 ends the steps with TRACK = 0."""
         command = self.command_reg
         inward = self._step_dir > 0
-        if (command & T_FLAG) or (command & 0xE0) == 0x00:
+        if (command & T_FLAG) or _is_restore_or_seek(command):
             if inward:
                 self.track_reg = (self.track_reg + 1) & 0xFF
             else:
@@ -461,13 +495,11 @@ class WD2793:
 
     def _track_id_found(self) -> bool:
         """The head's track has ID fields and their track equals TRACK."""
-        if self.drive is None or self.track_reg != self.drive.track:
-            return False
-        return self.drive.read_sector(self.drive.track, self.drive.side, 1) is not None
+        return self._sector_found(1)
 
     def _end_type1(self, now: int) -> None:
         self._end_command()
-        self._hld_idle_cycle = now
+        self._start_idle(now)
 
     def _start_transfer(self, clear: int) -> bool:
         """Clear the given status bits and set BUSY; end the command and
@@ -503,7 +535,7 @@ class WD2793:
             self.status_reg |= WRITE_PROTECTED
             self._end_command()
             return
-        if self._sector_on_head_track() is None:
+        if not self._sector_found(self.sector_reg):
             self.status_reg |= RECORD_NOT_FOUND
             self._end_command()
             return
@@ -531,7 +563,7 @@ class WD2793:
             return
         assert self.drive is not None
         track = self.drive.track
-        if self.drive.read_sector(track, self.drive.side, 1) is None:
+        if not self.drive.has_sector(track, self.drive.side, 1):
             self.status_reg |= RECORD_NOT_FOUND  # no sector IDs on this track
             self._end_command()
             return
@@ -579,7 +611,7 @@ class WD2793:
         is. Stopping a busy command starts the idle time for the head unload."""
         self.catch_up()
         if self._phase != Type1Phase.NONE or (self.status_reg & BUSY):
-            self._hld_idle_cycle = self._clock.cycle
+            self._start_idle(self._clock.cycle)
         self._phase = Type1Phase.NONE
 
     def _end_command(self) -> None:
@@ -587,14 +619,14 @@ class WD2793:
         self._drq = False
         self.status_reg &= ~(BUSY | S_DRQ)
         self._intrq = True
-        self._hld_idle_cycle = self._clock.cycle
+        self._start_idle(self._clock.cycle)
 
     # ------------------------------------------------------------ save-state
 
     def snapshot(self) -> WD2793State:
-        """Capture register/phase/buffer state after running the Type I
-        events already due. `drive` is not included -- see WD2793State."""
-        self.catch_up()
+        """Capture register/phase/buffer state; it changes nothing. Run
+        catch_up() first, so the Type I events already due are in the
+        capture. `drive` is not included -- see WD2793State."""
         cycles_left = 0
         if self._phase != Type1Phase.NONE and self._phase != Type1Phase.NO_INDEX:
             cycles_left = max(0, self._event_cycle - self._clock.cycle)
@@ -614,7 +646,7 @@ class WD2793:
             "type1_phase": self._phase.value,
             "type1_cycles_left": cycles_left,
             "hld": self._hld,
-            "hld_idle_cycles": min(SAFE_INT_MAX, max(0, self._clock.cycle - self._hld_idle_cycle)),
+            "hld_idle_cycles": min(SAFE_INT_MAX, self._idle_cycles(self._clock.cycle)),
         }
 
     def parse_state(self, obj: object, label: str) -> WD2793State:
@@ -638,7 +670,9 @@ class WD2793:
             "index": check_int(fields["index"], f"{label}.index", 0, TRACK_BYTES),
             "step_dir": check_choice(fields["step_dir"], f"{label}.step_dir", (-1, 1)),
             "immediate_irq": check_bool(fields["immediate_irq"], f"{label}.immediate_irq"),
-            "type1_phase": check_int(fields["type1_phase"], f"{label}.type1_phase", 0, 4),
+            "type1_phase": check_int(
+                fields["type1_phase"], f"{label}.type1_phase", 0, len(Type1Phase) - 1
+            ),
             "type1_cycles_left": check_int(
                 fields["type1_cycles_left"], f"{label}.type1_cycles_left", 0, SAFE_INT_MAX
             ),
@@ -665,4 +699,5 @@ class WD2793:
         self._phase = Type1Phase(state["type1_phase"])
         self._event_cycle = self._clock.cycle + state["type1_cycles_left"]
         self._hld = state["hld"]
-        self._hld_idle_cycle = self._clock.cycle - state["hld_idle_cycles"]
+        self._hld_base_cycle = self._clock.cycle
+        self._hld_base_age = state["hld_idle_cycles"]

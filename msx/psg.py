@@ -17,6 +17,8 @@ from msx.snapshot_schema import (
     check_object,
 )
 
+_LAST_TONE_REG = 5   # R0-R5: the three 12-bit tone periods
+_NOISE_REG = 6       # R6: the 5-bit noise period
 _REG_IO_PORT_A = 14
 # Register 14 bit 6: the keyboard-layout line (not modeled, reads 1).
 _PORT_A_LAYOUT_BIT = 0x40
@@ -113,8 +115,9 @@ class PSG:
     _input: InputLines | None = field(default=None, repr=False)
     _mouse: MouseSlot | None = field(default=None, repr=False)
     # The mouse port's pins 6, 7 and 8 (bits 0-2) at the last register 15
-    # write; -1 before the first write, so that write always reaches the mouse.
-    _mouse_pins: int = field(default=-1, repr=False)
+    # write; 0xFF (no pin value) before the first write, so that write always
+    # reaches the mouse.
+    _mouse_pins: int = field(default=0xFF, repr=False)
     # The machine's cassette port (attach_cassette), or None with no port.
     _cassette: CassettePort | None = field(default=None, repr=False)
 
@@ -135,7 +138,8 @@ class PSG:
     #
     # PORT-NOTE: _tone_cnt/_tone_out are 3-element list[int] fields, fixed
     #   size for the instance's whole lifetime, indexed in the per-sample hot
-    #   loop (_render, below).
+    #   loop (_render, below). _tone_cnt and _noise_cnt are signed: a
+    #   counter can reach 0 or below before _render clamps or reloads it.
     # Rust equivalent: [i32; 3] fields, not Vec<i32>.
     # C++ equivalent: std::array<int32_t, 3>.
     # Kept as-is here because: Python has no cheap fixed-size numeric array
@@ -241,21 +245,24 @@ class PSG:
         model), so the remaining count of this down-counter model moves by
         the period difference, and a period below the elapsed count ends the
         half-cycle on the next tick."""
-        if reg <= 5:
+        if reg <= _LAST_TONE_REG:
             ch = reg >> 1
             old = self._tone_period(ch)
             self.regs[reg] = value
             self._tone_cnt[ch] = max(1, self._tone_cnt[ch] + self._tone_period(ch) - old)
-        elif reg == 6:
-            old = max(1, self.regs[6] & 0x1F)
-            self.regs[6] = value
+        elif reg == _NOISE_REG:
+            old = self._noise_period()
+            self.regs[_NOISE_REG] = value
             # The noise counter reloads to 2 * NP (see _step_noise).
-            self._noise_cnt = max(1, self._noise_cnt + 2 * (max(1, value & 0x1F) - old))
+            self._noise_cnt = max(1, self._noise_cnt + 2 * (self._noise_period() - old))
         else:
             self.regs[reg] = value
 
     def _tone_period(self, ch: int) -> int:
         return max(1, ((self.regs[ch * 2 + 1] & 0x0F) << 8) | self.regs[ch * 2])
+
+    def _noise_period(self) -> int:
+        return max(1, self.regs[_NOISE_REG] & 0x1F)
 
     # --------------------------------------------------------------- reset
 
@@ -394,7 +401,7 @@ class PSG:
     # --------------------------------------------------------------- noise
 
     def _step_noise(self, ticks: int) -> None:
-        period = max(1, self.regs[6] & 0x1F)
+        period = self._noise_period()
         self._noise_cnt -= ticks
         while self._noise_cnt <= 0:
             # Datasheet fN = fMaster/(16*NP) = PSG_CLOCK/(2*NP): the LFSR shifts

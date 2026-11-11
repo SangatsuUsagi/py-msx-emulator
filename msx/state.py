@@ -134,7 +134,14 @@ if TYPE_CHECKING:
 # Version 24: mapper_latch added -- the S1985 latch of the mapper ports
 #   0xFC-0xFF, None when the machine has no latch (memory-ram-mapper "S1985
 #   mapper port latch").
-CURRENT_FORMAT_VERSION: int = 24
+#   These fields were added later without a version bump: the RTC counter
+#   layout (fraction ... leap_year, tick_remainder and uncounted_cycles,
+#   which replace the version 16 start and elapsed_cycles), the WD2793
+#   immediate_irq, type1_phase, type1_cycles_left, hld and hld_idle_cycles,
+#   and the TC8566AF pcn.
+# Version 25: rtc.reset removed -- the RESET register is write-only and acts
+#   at once, so it holds no state. rtc.uncounted_cycles is bounded to 2^48.
+CURRENT_FORMAT_VERSION: int = 25
 
 _SHA256_HEX_LEN = 64
 _SHA1_HEX_LEN = 40
@@ -469,6 +476,7 @@ def _check_optional_wiring(
 def _fdc_to_dict(machine: "Machine") -> dict[str, object] | None:
     if machine.fdc is None:
         return None
+    machine.fdc.catch_up()  # the due events belong in the capture
     return machine.fdc.snapshot()
 
 

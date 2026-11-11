@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TypedDict
 
+from msx.clock import CoreClock
 from msx.fdc.disk_drive import DiskDrive
 from msx.snapshot_schema import (
     check_bool,
@@ -50,7 +51,7 @@ MSR_CB: int = 0x10   # FDC busy (Command/Execution/Result Phase in progress)
 # Command opcodes. _decode() matches each against its own mask: READ DATA,
 # WRITE DATA and FORMAT allow some of the MT/MFM/SK flag bits (ignored by
 # this functional model), the other commands match the whole byte (openMSX
-# TC8566AF.cc:367-381).
+# TC8566AF::idlePhaseWrite).
 CMD_SPECIFY: int = 0x03
 CMD_SENSE_DEVICE_STATUS: int = 0x04
 CMD_WRITE_DATA: int = 0x05
@@ -116,15 +117,22 @@ def _decode(command: int) -> int | None:
     return None
 
 
-def _locate_sector(drive: DiskDrive, hd_ds: int, c: int, h: int, r: int) -> bytes | None:
-    """The sector with ID (C, H, R) on the head's track and the side the HD
-    bit selects, or None. An ID's C is its track and its H its side, so
-    only C equal to the head's track and H equal to HD can match (openMSX
+def _sector_id_found(drive: DiskDrive, hd_ds: int, c: int, h: int, r: int) -> bool:
+    """The head's track, on the side the HD bit selects, has a sector with
+    ID (C, H, R). An ID's C is its track and its H its side, so only C equal
+    to the head's track and H equal to HD can match (openMSX
     TC8566AF::locateSector)."""
     side = (hd_ds >> 2) & 0x01
     if c != drive.track or h != side:
+        return False
+    return drive.has_sector(drive.track, side, r)
+
+
+def _locate_sector(drive: DiskDrive, hd_ds: int, c: int, h: int, r: int) -> bytes | None:
+    """The data of the sector _sector_id_found finds, or None."""
+    if not _sector_id_found(drive, hd_ds, c, h, r):
         return None
-    return drive.read_sector(drive.track, side, r)
+    return drive.read_sector(drive.track, (hd_ds >> 2) & 0x01, r)
 
 
 class Phase(Enum):
@@ -226,6 +234,15 @@ class TC8566AF:
         self._pcn = [0, 0, 0, 0]
         self.abort()
 
+    def catch_up(self) -> None:
+        """Nothing to run: no TC8566AF state advances with time (the
+        FdcController contract; WD2793.catch_up runs its timed Type I
+        events)."""
+
+    def attach_clock(self, clock: CoreClock) -> None:
+        """Nothing to keep: the TC8566AF reads no emulated time (the
+        FdcController contract; WD2793 times its Type I steps)."""
+
     def abort(self) -> None:
         """Cancel any in-progress command, back to Command-Phase idle.
 
@@ -256,10 +273,11 @@ class TC8566AF:
         return bool(self.control_reg0 & (0x10 << index))
 
     # The FS-A1F's drives give Track 0 and Write Protected only with the
-    # motor on (openMSX RealDrive with signalsNeedMotorOn, set when the
-    # machine names no connection style: MSXFDC.cc:37, RealDrive.cc:154-160,
-    # 254-262). A nonexistent drive never reports track 0 and always reports
-    # write protected (openMSX DummyDrive).
+    # motor on (openMSX RealDrive with signalsNeedMotorOn, set by the MSXFDC
+    # constructor when the machine names no connection style; see
+    # RealDrive::isWriteProtected and RealDrive::isTrack00). A nonexistent drive
+    # never reports track 0 and always reports write protected (openMSX
+    # DummyDrive).
 
     def _track00(self, index: int) -> bool:
         drive = self._drive(index)
@@ -459,14 +477,12 @@ class TC8566AF:
         drive = self._drive(index)
         st0 = self._seek_st0(index)
         remaining = _RECALIBRATE_STEPS
-        while True:
-            if self._track00(index) or remaining == 0:
-                if remaining == 0:
-                    st0 |= ST0_EQUIPMENT_CHECK
-                break
+        while remaining > 0 and not self._track00(index):
             if drive is not None:
                 drive.step(False)
             remaining -= 1
+        if remaining == 0:
+            st0 |= ST0_EQUIPMENT_CHECK
         self._pcn[index] = 0
         self._end_seek(index, st0)
 
@@ -499,7 +515,7 @@ class TC8566AF:
         if drive.write_protected:
             self._abnormal_result(index, 0, ST1_NOT_WRITABLE, c, h, r, n)
             return
-        if _locate_sector(drive, hd_ds, c, h, r) is None:
+        if not _sector_id_found(drive, hd_ds, c, h, r):
             self._abnormal_result(index, 0, ST1_NO_DATA, c, h, r, n)
             return
         self._exec_buffer = bytearray()

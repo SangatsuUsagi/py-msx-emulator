@@ -390,21 +390,29 @@ class FixedPageMapper(_NoStateMapperMixin):
         return 0xFF
 
 
+def _resolve_block(value: int, count: int) -> int:
+    """The ROM block that a block number selects, as openMSX
+    RomBlocks::setRom resolves it with the default block mask (count - 1):
+    the block itself when the ROM has it, else value & (count - 1). The
+    mask keeps only low bits when count is a power of two. For another
+    count it differs from value % count (24 blocks: 25 selects block 17,
+    not block 1). With count >= 1 the result is always below count."""
+    if value < count:
+        return value
+    return value & (count - 1)
+
+
 def page2_rom_image(rom: bytes) -> bytes:
     """The 16 KB that a "Page2" ROM shows at 0x8000-0xBFFF: 8 KB blocks 0 and
-    1, each resolved as openMSX RomBlocks::setRom does (the block if the ROM
-    has it, else block & (block_count - 1), else open bus). An 8 KB ROM
-    therefore repeats at 0xA000, and a ROM longer than 16 KB shows only its
-    first 16 KB (openMSX RomPageNN maps page 2 only)."""
+    1, each resolved as openMSX RomBlocks::setRom does (_resolve_block). An
+    8 KB ROM therefore repeats at 0xA000, and a ROM longer than 16 KB shows
+    only its first 16 KB (openMSX RomPageNN maps page 2 only)."""
     block_count = max(1, (len(rom) + _PAGE_8K - 1) // _PAGE_8K)
     padded = rom + b"\xff" * (block_count * _PAGE_8K - len(rom))
     image = bytearray()
     for block in (0, 1):
-        resolved = block if block < block_count else block & (block_count - 1)
-        if resolved < block_count:
-            image += padded[resolved * _PAGE_8K:(resolved + 1) * _PAGE_8K]
-        else:
-            image += b"\xff" * _PAGE_8K
+        resolved = _resolve_block(block, block_count)
+        image += padded[resolved * _PAGE_8K:(resolved + 1) * _PAGE_8K]
     return bytes(image)
 
 
@@ -505,21 +513,11 @@ class _WindowedRomMapperMixin:
         return max(1, len(self.rom) // self._MAPPER_PAGE_SIZE)
 
     def _select_page(self, value: int) -> int:
-        # openMSX RomBlocks::setRom's two-tier resolution (neither
-        # RomAscii8kB.cc nor RomAscii16kB.cc installs a setBlockMask
-        # override, so the mask is the default `nrBlocks - 1`, matching
-        # KonamiSCCMapper's own _select_page -- not KonamiMapper's fixed
-        # 5-bit mask): a raw value already below the ROM's real page count
-        # selects that page directly; otherwise it is masked with
-        # (pages - 1), which is only a contiguous-low-bits mask when pages
-        # is itself a power of two. This replaces a prior `value % pages`
-        # resolution, which diverges from this for a non-power-of-two page
-        # count (e.g. 24 pages: value=25 gives page 1 under modulo but page
-        # 17 under this mask).
-        pages = self._num_pages()
-        if value < pages:
-            return value
-        return value & (pages - 1)
+        # Neither RomAscii8kB nor RomAscii16kB installs a setBlockMask
+        # override, so openMSX uses the default mask (_resolve_block),
+        # matching KonamiSCCMapper's own _select_page -- not KonamiMapper's
+        # fixed 5-bit mask.
+        return _resolve_block(value, self._num_pages())
 
     def _sync_window(self, window: int) -> None:
         page_size = self._MAPPER_PAGE_SIZE
@@ -657,8 +655,8 @@ class Ascii16Mapper(_WindowedRomMapperMixin, BankTracingMapper):
     """ASCII16 mapper: two 16 KB windows at 0x4000 and 0x8000.
 
     Control registers: window 0 at 0x6000–0x67FF, window 1 at 0x7000–0x77FF
-    -- the low half of each 4 KB zone only (openMSX RomAscii16kB.cc:32:
-    `(0x6000 <= address) && (address < 0x7800) && !(address & 0x0800)`;
+    -- the low half of each 4 KB zone only (openMSX RomAscii16kB::writeMem
+    accepts 0x6000-0x77FF only with address bit 11 clear;
     confirmed against references/docs/"MegaROM Mappers - MSX Wiki.md" and
     "Megabit ROM Cartridges.md", both of which give the same narrower
     range). The high half of each zone (0x6800–0x6FFF, 0x7800–0x7FFF) does
@@ -1322,10 +1320,11 @@ class RTypeMapper(BankTracingMapper):
 
     Note on generality: this mirrors openMSX RomBlocks::setRom's own
     two-tier block resolution (direct index if below the ROM's page count,
-    else masked with page_count - 1, open bus if still out of range) for
-    _RTYPE_FIXED_BLOCK and for the switchable bank. This has only been verified against
-    the one 384 KB (24-page) canonical R-Type dump the primary reference
-    and openMSX both describe, where 0x17 is directly selectable (23 < 24
+    else masked with page_count - 1; see _resolve_block) for
+    _RTYPE_FIXED_BLOCK and for the switchable bank. A page that runs past
+    the end of a short ROM reads open bus there (_sync_window). This has
+    only been verified against the one 384 KB (24-page) cartridge image
+    the primary reference and openMSX both describe, where 0x17 is directly selectable (23 < 24
     pages). Behaviour on any other ROM size (tests/test_rtype_mapper.py
     covers the masked fallback with 4- and 8-page fixtures) follows openMSX
     only and is unconfirmed against real hardware.
@@ -1345,13 +1344,8 @@ class RTypeMapper(BankTracingMapper):
     _flat: bytearray = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        pages = self._num_pages()
-        # Two-tier resolution (see class docstring): direct index if in
-        # range, else masked with pages - 1.
-        if _RTYPE_FIXED_BLOCK < pages:
-            self._fixed_block = _RTYPE_FIXED_BLOCK
-        else:
-            self._fixed_block = _RTYPE_FIXED_BLOCK & (pages - 1)
+        # Two-tier resolution (see class docstring).
+        self._fixed_block = _resolve_block(_RTYPE_FIXED_BLOCK, self._num_pages())
         self._flat = bytearray(2 * _PAGE_16K)
         self._sync_window(0)
         self._sync_window(1)
@@ -1363,8 +1357,7 @@ class RTypeMapper(BankTracingMapper):
         if window == 0:
             page = self._fixed_block
         else:
-            pages = self._num_pages()
-            page = self._bank if self._bank < pages else self._bank & (pages - 1)
+            page = _resolve_block(self._bank, self._num_pages())
         src = self.rom[page * _PAGE_16K : (page + 1) * _PAGE_16K]
         dst = window * _PAGE_16K
         self._flat[dst : dst + len(src)] = src
@@ -1685,17 +1678,10 @@ class KonamiSCCMapper(BankTracingMapper):
         return max(1, len(self.rom) // _PAGE_8K)
 
     def _select_page(self, value: int) -> int:
-        # openMSX RomBlocks::setRom's two-tier resolution (RomKonamiSCC
-        # installs no setBlockMask override, so the mask is the default
-        # `nrBlocks - 1`, derived from this ROM's own page count -- unlike
-        # KonamiMapper's fixed 5-bit mask): a raw value already below the
-        # real page count selects that page directly; otherwise it is
-        # masked with (pages - 1), which is only a contiguous-low-bits mask
-        # when pages is itself a power of two.
-        pages = self._num_pages()
-        if value < pages:
-            return value
-        return value & (pages - 1)
+        # RomKonamiSCC installs no setBlockMask override, so openMSX uses
+        # the default mask derived from this ROM's own page count
+        # (_resolve_block) -- unlike KonamiMapper's fixed 5-bit mask.
+        return _resolve_block(value, self._num_pages())
 
     def _sync_window(self, window: int) -> None:
         page = self._banks[window]

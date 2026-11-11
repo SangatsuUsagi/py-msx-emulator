@@ -17,8 +17,9 @@ import abc
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, ClassVar, Generic, Protocol, TypedDict, TypeVar, cast
+from typing import Any, ClassVar, Generic, Protocol, TypedDict, TypeVar
 
+from msx.clock import CoreClock
 from msx.fdc.disk_drive import DiskDrive, DiskDriveState
 from msx.fdc.disk_image import DskDiskImage
 from msx.fdc.tc8566af import TC8566AF, TC8566AFState
@@ -47,6 +48,8 @@ class FdcController(Protocol[S]):
 
     drive: DiskDrive | None
     def abort(self) -> None: ...
+    def catch_up(self) -> None: ...
+    def attach_clock(self, clock: CoreClock) -> None: ...
     def snapshot(self) -> Mapping[str, object]: ...
     def parse_state(self, obj: object, label: str) -> S: ...
     def apply_state(self, state: S) -> None: ...
@@ -152,18 +155,17 @@ class FloppyDiskState(Generic[S]):
         self.controller = controller
         self.drives = drives
         self.disk_rom = disk_rom
+        # The DISK ROM byte for each CPU address, read at a non-register
+        # address of the window: visible in 0x4000-0x7FFF only, 0xFF
+        # elsewhere and past a short ROM's end (openMSX MSXFDC's ROM
+        # visibility). Built once, so a read is one index.
+        view = bytearray(b"\xff" * 0x10000)
+        if disk_rom is not None:
+            size = min(len(disk_rom), 0x4000)
+            view[0x4000:0x4000 + size] = disk_rom[:size]
+        self.rom_view = bytes(view)
         # The active drive is tracked solely via self.controller.drive.
         self.controller.drive = self.drives[0]
-
-    def read_rom(self, addr: int) -> int:
-        """DISK ROM byte at a non-register address: visible in 0x4000-0x7FFF
-        only, 0xFF elsewhere in the window (openMSX MSXFDC's ROM
-        visibility)."""
-        rom = self.disk_rom
-        reg = addr & 0x3FFF
-        if rom is not None and 0x4000 <= addr < 0x8000 and reg < len(rom):
-            return rom[reg]
-        return 0xFF
 
     def mount(self, image: DskDiskImage | None, drive: int = 0) -> None:
         """Mount (or unmount with None) an image into a drive."""
@@ -197,8 +199,7 @@ class FloppyDiskState(Generic[S]):
         self.drives order). The connection-style-specific piece and the
         FdcKind discriminant are FloppyDisk's own concern, layered around
         this."""
-        # The controller first: its snapshot runs the due Type I steps,
-        # which move a drive's head.
+        # Read-only: the caller runs catch_up() first (FloppyDisk.catch_up).
         controller = self.controller.snapshot()
         drives: list[DiskDriveState] = []
         for drive in self.drives:
@@ -278,10 +279,9 @@ class FloppyDiskBase(abc.ABC, Generic[S, C]):
       reset() -> None hold unchanged across both, confirmed against openMSX's
       own TC8566AF-based connection style (TurboRFDC) too.
       `self.state.controller`'s static type is `FdcController[S]` (not
-      WD2793-specific), so TC8566AFInterface no longer needs `typing.cast` to
-      construct one -- only `_ctrl()`'s narrowing back to the concrete
-      TC8566AF type remains, which is ordinary type narrowing, not a
-      declared-type mismatch.
+      WD2793-specific), so neither connection style needs `typing.cast`:
+      each keeps its own concretely typed reference to the controller it
+      was constructed with (`_wd`, `_tc`).
     """
 
     # Save-state identity discriminant -- each concrete connection style
@@ -319,6 +319,16 @@ class FloppyDiskBase(abc.ABC, Generic[S, C]):
         """Replace a drive's image at runtime (hot swap / eject). See
         FloppyDiskState.swap for the full behaviour."""
         return self.state.swap(drive, image)
+
+    def catch_up(self) -> None:
+        """Run the controller's events already due, which can move a
+        drive's head. A save runs it before snapshot(), so the capture
+        holds them and snapshot() itself changes nothing."""
+        self.state.controller.catch_up()
+
+    def attach_clock(self, clock: CoreClock) -> None:
+        """Give the controller the machine's clock record (msx/clock.py)."""
+        self.state.controller.attach_clock(clock)
 
     @abc.abstractmethod
     def _snapshot_connection_style(self) -> C:
@@ -434,6 +444,9 @@ class SonyPhilipsInterface(FloppyDiskBase[WD2793State, SonyPhilipsConnectionStat
         disk_rom: bytes | None = None,
     ):
         super().__init__(controller, drives, disk_rom)
+        # The concrete controller, kept so register accesses need no
+        # narrowing from the base class's FdcController type.
+        self._wd = controller
         self.side_reg = 0
         self.drive_reg = 0
 
@@ -454,10 +467,7 @@ class SonyPhilipsInterface(FloppyDiskBase[WD2793State, SonyPhilipsConnectionStat
 
     @property
     def controller(self) -> WD2793:
-        # self.state.controller's static type is FdcController; this
-        # class always constructs with a WD2793, so narrow it back here --
-        # mirrors TC8566AFInterface._ctrl().
-        return cast(WD2793, self.state.controller)
+        return self._wd
 
     def reset(self) -> None:
         """Power-on/Z80-reset: WD2793 core, side select, and drive/motor
@@ -465,7 +475,7 @@ class SonyPhilipsInterface(FloppyDiskBase[WD2793State, SonyPhilipsConnectionStat
         plus writing 0 to both 0x3FFC and 0x3FFD). Reuses write_mem() so side 0
         reaches every drive and drive A is reselected regardless of drive count.
         """
-        self.controller.reset()
+        self._wd.reset()
         self.write_mem(REG_SIDE, 0x00)
         self.write_mem(REG_DRIVE, 0x00)
 
@@ -473,7 +483,7 @@ class SonyPhilipsInterface(FloppyDiskBase[WD2793State, SonyPhilipsConnectionStat
         reg = addr & 0x3FFF
         if REG_STATUS_CMD <= reg <= REG_CONTROL_STATUS:
             return self._read_reg(reg)
-        return self.state.read_rom(addr)
+        return self.state.rom_view[addr]
 
     def write_mem(self, addr: int, value: int) -> None:
         reg = addr & 0x3FFF
@@ -483,13 +493,13 @@ class SonyPhilipsInterface(FloppyDiskBase[WD2793State, SonyPhilipsConnectionStat
 
     def _read_reg(self, reg: int) -> int:
         if reg == REG_STATUS_CMD:
-            return self.controller.get_status()
+            return self._wd.get_status()
         if reg == REG_TRACK:
-            return self.controller.get_track()
+            return self._wd.get_track()
         if reg == REG_SECTOR:
-            return self.controller.get_sector()
+            return self._wd.get_sector()
         if reg == REG_DATA:
-            return self.controller.get_data()
+            return self._wd.get_data()
         if reg == REG_SIDE:
             return self.side_reg & 0xFF
         if reg == REG_DRIVE:
@@ -498,7 +508,7 @@ class SonyPhilipsInterface(FloppyDiskBase[WD2793State, SonyPhilipsConnectionStat
             # change once, then reverts to "not changed" so the DISK ROM re-reads
             # a swapped-in disk once instead of looping.
             res = self.drive_reg & ~0x04
-            drive = self.controller.drive
+            drive = self._wd.drive
             if drive is not None and drive.disk_changed:
                 drive.disk_changed = False  # consume
             else:
@@ -508,30 +518,30 @@ class SonyPhilipsInterface(FloppyDiskBase[WD2793State, SonyPhilipsConnectionStat
             return 0xFF  # not connected
         # REG_CONTROL_STATUS: active low (bit 6 = !INTRQ, bit 7 = !DRQ).
         value = 0xFF
-        if self.controller.get_irq():
+        if self._wd.get_irq():
             value &= ~0x40
-        if self.controller.get_drq():
+        if self._wd.get_drq():
             value &= ~0x80
         return value
 
     def _write_reg(self, reg: int, value: int) -> None:
         if reg == REG_STATUS_CMD:
-            self.controller.set_command(value)
+            self._wd.set_command(value)
         elif reg == REG_TRACK:
-            self.controller.set_track(value)
+            self._wd.set_track(value)
         elif reg == REG_SECTOR:
-            self.controller.set_sector(value)
+            self._wd.set_sector(value)
         elif reg == REG_DATA:
-            self.controller.set_data(value)
+            self._wd.set_data(value)
         elif reg == REG_SIDE:
             # bit 0 = side select
-            self.controller.catch_up()  # due steps use the old selection
+            self._wd.catch_up()  # due steps use the old selection
             self.side_reg = value
             for drive in self.drives:
                 drive.side = value & 1
         elif reg == REG_DRIVE:
             # bits 1:0 -> drive (00/10 = A, 01 = B, 11 = none); bit 7 -> motor.
-            self.controller.catch_up()  # due steps go to the old drive
+            self._wd.catch_up()  # due steps go to the old drive
             self.drive_reg = value
             self._select_drive(value)
         # REG_UNCONNECTED / REG_CONTROL_STATUS: no writable control bits.
@@ -550,9 +560,9 @@ class SonyPhilipsInterface(FloppyDiskBase[WD2793State, SonyPhilipsConnectionStat
         else:
             idx = None
         if idx is not None and idx < len(self.drives):
-            self.controller.drive = self.drives[idx]
+            self._wd.drive = self.drives[idx]
         else:
-            self.controller.drive = None
+            self._wd.drive = None
 
 
 # TC8566AF connection style register window offsets (addr & 0x3FFF), used by
@@ -592,6 +602,9 @@ class TC8566AFInterface(FloppyDiskBase[TC8566AFState, TC8566AFConnectionState]):
         disk_rom: bytes | None = None,
     ) -> None:
         super().__init__(controller, drives, disk_rom)
+        # The concrete controller, kept so register accesses need no
+        # narrowing from the base class's FdcController type.
+        self._tc = controller
 
     def _snapshot_connection_style(self) -> TC8566AFConnectionState:
         return {}
@@ -603,15 +616,8 @@ class TC8566AFInterface(FloppyDiskBase[TC8566AFState, TC8566AFConnectionState]):
     def _apply_connection_style(self, state: TC8566AFConnectionState) -> None:
         pass  # no connection-style registers
 
-    # self.controller's static type is FdcController (FloppyDisk composes
-    # FloppyDiskState, not WD2793-specific); this narrows it locally to the
-    # concrete TC8566AF this class always constructs with, same as any other
-    # structural-to-concrete narrowing.
-    def _ctrl(self) -> TC8566AF:
-        return cast(TC8566AF, self.controller)
-
     def reset(self) -> None:
-        self._ctrl().reset()
+        self._tc.reset()
 
     def read_mem(self, addr: int) -> int:
         reg = addr & 0x3FFF
@@ -621,21 +627,21 @@ class TC8566AFInterface(FloppyDiskBase[TC8566AFState, TC8566AFConnectionState]):
             # ROM, matching openMSX TurboRFDC::peekMem's default 0xFF for
             # undefined offsets in this region.
             if reg == TC_REG_STATUS:
-                return self._ctrl().read_main_status()
+                return self._tc.read_main_status()
             if reg == TC_REG_DATA:
-                return self._ctrl().read_data()
+                return self._tc.read_data()
             if reg in _TC_RESERVED:
                 return _TC_RESERVED[reg]
             return 0xFF  # 0x3FF0-0x3FF7, and the write-only control registers
-        return self.state.read_rom(addr)
+        return self.state.rom_view[addr]
 
     def write_mem(self, addr: int, value: int) -> None:
         reg = addr & 0x3FFF
         value &= 0xFF
         if reg == TC_REG_CONTROL0:
-            self._ctrl().write_control_reg0(value)
+            self._tc.write_control_reg0(value)
         elif reg == TC_REG_CONTROL1:
-            self._ctrl().write_control_reg1(value)
+            self._tc.write_control_reg1(value)
         elif reg == TC_REG_DATA:
-            self._ctrl().write_data(value)
+            self._tc.write_data(value)
         # TC_REG_STATUS / reserved offsets / DISK ROM: not writable.
