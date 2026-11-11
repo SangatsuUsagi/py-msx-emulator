@@ -23,6 +23,19 @@ _PORT_A_LAYOUT_BIT = 0x40
 # Register 14 bit 7: the cassette input.
 _PORT_A_TAPE_SHIFT = 7
 
+# What a port 0xA2 read keeps of each register (PSG.read_mask; the stored
+# register keeps all 8 bits). The YM2149 reads back every bit. The
+# AY-3-8910's register latches are narrower and read the unused bits as 0:
+# R1/R3/R5/R13 4 bits, R6 and R8-R10 5 bits (lvd2 AY-3-8910 die model,
+# rtl/ay_model.v). A real SONY HB-F1XD reads back the AY-3-8910 mask and a
+# real SONY HB-10 the YM2149 one (write-then-read tests, 2026-11-11 and
+# 2026-11-06).
+YM2149_READ_MASK: tuple[int, ...] = (0xFF,) * 16
+AY8910_READ_MASK: tuple[int, ...] = (
+    0xFF, 0x0F, 0xFF, 0x0F, 0xFF, 0x0F, 0x1F, 0xFF,
+    0x1F, 0x1F, 0x1F, 0xFF, 0xFF, 0x0F, 0xFF, 0xFF,
+)
+
 PSG_CLOCK: int = 223_722      # AY-3-8910: 3,579,545 Hz / 16
 # Upper bound on recorded register writes per audio buffer. Far above any real
 # frame's write count; caps memory if generate_samples is never called (headless).
@@ -94,6 +107,9 @@ class PSG:
 
     regs: list[int] = field(default_factory=lambda: [0] * 16)
     latch: int = 0
+    # The port 0xA2 read-back mask per register, fixed by build_machine for
+    # the machine's life (YM2149_READ_MASK or AY8910_READ_MASK).
+    read_mask: tuple[int, ...] = YM2149_READ_MASK
     _input: InputLines | None = field(default=None, repr=False)
     _mouse: MouseSlot | None = field(default=None, repr=False)
     # The mouse port's pins 6, 7 and 8 (bits 0-2) at the last register 15
@@ -215,7 +231,7 @@ class PSG:
                     return (self._mouse.device.read() & 0x3F) | high
                 sel = self._input.joy1 if joy_select == JoystickPort.JOY1 else self._input.joy2
                 return (sel & 0x3F) | high
-            return self.regs[self.latch]
+            return self.regs[self.latch] & self.read_mask[self.latch]
         return 0xFF
 
     def _set_reg(self, reg: int, value: int) -> None:

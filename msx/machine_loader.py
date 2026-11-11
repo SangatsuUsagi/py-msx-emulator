@@ -49,6 +49,7 @@ from msx.machine_spec import (
     MachineSpec,
     MapperPortForm,
     PrinterPortForm,
+    PsgReadBack,
 )
 from msx.mapper import (
     Ascii8Mapper,
@@ -78,7 +79,7 @@ from msx.memory import Memory
 from msx.opll import Opll
 from msx.ppi import PPI
 from msx.printer import PrinterPort
-from msx.psg import PSG
+from msx.psg import AY8910_READ_MASK, PSG, YM2149_READ_MASK
 from msx.ram_mapper import RamMapper
 from msx.rtc import RTC, check_start
 from msx.scc import SCC
@@ -930,7 +931,8 @@ def _build(machine_config: MachineConfig) -> "Machine":
     dac = _resolve_shared_dac(spec, wiring.mapper1_instance, wiring.mapper2_instance)
 
     input_state = InputLines()
-    psg = PSG(_input=input_state)
+    read_mask = AY8910_READ_MASK if spec.psg_read_back is PsgReadBack.AY8910 else YM2149_READ_MASK
+    psg = PSG(read_mask=read_mask, _input=input_state)
     io = IOBus()
     if wiring.fmpac_device is not None:
         io.register_read(0x7C, 0x7D, wiring.fmpac_device.read_port)

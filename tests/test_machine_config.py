@@ -102,9 +102,9 @@ def test_machine_properties_are_integers() -> None:
 # The canonical documents' SHA-256, recorded at format version 2. The video
 # standard and the keyboard layout stay text in the document.
 _DOCUMENT_SHA256 = {
-    "cbios_msx1_eu": "c29c13e2f861ad5ab44026b389c9f35e6c8379873a10cdb395aa02f988526032",
-    "cbios_msx1_jp": "8f133cc397f85c8a4a30eced1a2a114f88245bd0bd61b0a7d21a84dca8a597ba",
-    "hb_f1xd": "e53b3f8e8db975d4b70fc362c1c5d585114e4edb02b73dd8fb3bd70c1504c725",
+    "cbios_msx1_eu": "c2409df5372368819b52eb81ccd6182ac60d56b46d5a8a8f2fce9b0526654837",
+    "cbios_msx1_jp": "75da86ac08e92a9f1525b90e94ab2d171c7ea8478119df062e65a1436739161a",
+    "hb_f1xd": "a09e84de254a452a854ecc3f839554bb59656754f49206e8d9aaa8f797f6b410",
 }
 
 
@@ -193,7 +193,7 @@ def test_the_same_inputs_give_the_same_document_bytes(
     first = _document(cartridge1=_CART, mapper1="ASCII8")
     second = _document(cartridge1=_CART, mapper1="ASCII8")
     assert first == second
-    assert json.loads(first)["format_version"] == 5
+    assert json.loads(first)["format_version"] == 6
 
 
 def test_run_inputs_do_not_change_the_document(
@@ -295,6 +295,7 @@ def format_1_config(machine_id: str = "hb_10", keep_printer_port: bool = False):
     document = json.loads(config.document)
     document["format_version"] = 1
     del document["machine"]["mapper_io"]
+    del document["machine"]["psg_read_back"]
     del document["machine"]["cassette_port"]
     del document["machine"]["ram_mapper_subslot"]
     if not keep_printer_port:
@@ -310,6 +311,7 @@ def format_2_config(machine_id: str = "hb_10", keep_cassette_port: bool = False)
     document = json.loads(config.document)
     document["format_version"] = 2
     del document["machine"]["mapper_io"]
+    del document["machine"]["psg_read_back"]
     del document["machine"]["ram_mapper_subslot"]
     if not keep_cassette_port:
         del document["machine"]["cassette_port"]
@@ -324,6 +326,7 @@ def format_3_config(machine_id: str = "cbios_msx2", keep_subslot: bool = False):
     document = json.loads(config.document)
     document["format_version"] = 3
     del document["machine"]["mapper_io"]
+    del document["machine"]["psg_read_back"]
     if not keep_subslot:
         del document["machine"]["ram_mapper_subslot"]
     config.document = json.dumps(document).encode("utf-8")
@@ -349,6 +352,7 @@ def format_4_config(machine_id: str = "hb_f1xd", keep_mapper_io: bool = False):
     config = load_machine_config(spec, **_overrides(spec)).config
     document = json.loads(config.document)
     document["format_version"] = 4
+    del document["machine"]["psg_read_back"]
     if not keep_mapper_io:
         del document["machine"]["mapper_io"]
     config.document = json.dumps(document).encode("utf-8")
@@ -375,6 +379,41 @@ def test_the_mapper_port_form_round_trips_through_the_document() -> None:
 
     parsed = parse_machine_config(_document("hb_f1xd"))
     assert parsed.spec.mapper_io is MapperPortForm.S1985
+
+
+def format_5_config(machine_id: str = "hb_f1xd", keep_psg_read_back: bool = False):
+    """A machine's config with its document written as format version 5."""
+    spec = _spec(machine_id)
+    config = load_machine_config(spec, **_overrides(spec)).config
+    document = json.loads(config.document)
+    document["format_version"] = 5
+    if not keep_psg_read_back:
+        del document["machine"]["psg_read_back"]
+    config.document = json.dumps(document).encode("utf-8")
+    return config
+
+
+def test_a_format_5_document_has_the_ym2149_read_back_form() -> None:
+    # machine-loader "A format 5 document has the YM2149 read-back form".
+    from msx.machine_spec import PsgReadBack
+
+    assert parse_machine_config(format_5_config().document).spec.psg_read_back is (
+        PsgReadBack.YM2149
+    )
+
+
+def test_a_format_5_document_with_psg_read_back_is_rejected() -> None:
+    # machine-loader "A format 5 document with psg_read_back is rejected".
+    with pytest.raises(MachineLoadError, match="psg_read_back"):
+        build_machine(format_5_config(keep_psg_read_back=True))
+
+
+def test_the_psg_read_back_form_round_trips_through_the_document() -> None:
+    # machine-loader "The PSG read-back form round-trips through the document".
+    from msx.machine_spec import PsgReadBack
+
+    parsed = parse_machine_config(_document("hb_f1xd"))
+    assert parsed.spec.psg_read_back is PsgReadBack.AY8910
 
 
 def test_a_ram_mapper_subslot_without_a_mapper_is_rejected() -> None:
@@ -414,7 +453,7 @@ def test_a_format_1_document_with_printer_port_is_rejected() -> None:
         build_machine(format_1_config(keep_printer_port=True))
 
 
-@pytest.mark.parametrize("version", [0, 6])
+@pytest.mark.parametrize("version", [0, 7])
 def test_an_unsupported_format_version_is_rejected(version: int) -> None:
     # machine-loader "An unsupported format version is rejected".
     config = format_1_config()
@@ -425,7 +464,7 @@ def test_an_unsupported_format_version_is_rejected(version: int) -> None:
         build_machine(config)
 
 
-@pytest.mark.parametrize(("version", "message"), [(6, "version 6, expected 1 to 5"),
+@pytest.mark.parametrize(("version", "message"), [(7, "version 7, expected 1 to 6"),
                                                   (1, "not valid JSON")])
 def test_a_document_that_is_not_strict_json_names_an_unsupported_version(
     version: int, message: str
