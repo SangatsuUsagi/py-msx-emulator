@@ -26,6 +26,13 @@ class PrinterPortForm(str, Enum):
     S1985 = "s1985"  # 0x90-0x97 with mirrors, unused status bits 0
 
 
+class MapperPortForm(str, Enum):
+    """What a read of the RAM mapper ports 0xFC-0xFF returns (msx/mapper_io.py)."""
+
+    PLAIN = "plain"  # the RAM mapper's bank register, unused bits 1
+    S1985 = "s1985"  # the S1985 latch of the last write, (latch & 0x1F) | 0x80
+
+
 class PpiControlRead(str, Enum):
     """What a port 0xAB read returns; the 8255A data sheet calls it illegal."""
 
@@ -115,6 +122,10 @@ class MachineSpec:
     # Whether the machine has a cassette port (msx/cassette.py), resolved
     # from the cassette_port device.
     cassette_port: bool = False
+
+    # What a read of the mapper ports 0xFC-0xFF returns, resolved from the
+    # mapper_io device.
+    mapper_io: MapperPortForm = MapperPortForm.PLAIN
 
     # RAM mapper's configured size (MSX2, when has_ram_mapper is True), resolved
     # from the mapper: standard sub-slot's size_kb -- default 128 preserves

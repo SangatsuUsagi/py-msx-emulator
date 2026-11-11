@@ -1,0 +1,11 @@
+id: mapper_io
+type: io_device
+implemented: true
+name: RAM mapper port read-back
+controls: mapper_io
+# What a read of the mapper ports 0xFC-0xFF returns: "plain" (the RAM
+# mapper's bank register, unused bits 1) or "s1985" (the S1985 MSX-ENGINE
+# latch of the last write, (latch & 0x1F) | 0x80, with or without a RAM
+# mapper). Machines override it. The ports are fixed at 0xFC-0xFF, so there
+# is no io_ports. A machine without this entry has the plain form.
+form: plain
