@@ -71,6 +71,9 @@ builtin_devices:
     # Port decode (openMSX).
     overrides: { form: s1985 }
   - ref: rtc_rp5c01
+  - ref: mapper_io
+    # S1985 MSX-ENGINE latch: 0xFC-0xFF read (last write & 0x1F) | 0x80 (verified on a real HB-F1XD).
+    overrides: { form: s1985 }
   - ref: memory_mapper_standard
 
 default_extensions: []

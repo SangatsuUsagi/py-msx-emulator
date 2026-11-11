@@ -141,3 +141,16 @@ def test_disk_basic_boots_with_disk_mounted(tmp_path: Path) -> None:
             display_seen = True
     assert display_seen, "boot stalled with a disk mounted"
     assert machine.fdc is not None and machine.fdc.drives[0].has_disk
+
+
+@pytest.mark.skipif(not _HAVE_ROMS, reason="real HB-F1XD ROMs not present")
+def test_the_bios_start_values_on_a_real_rom_boot() -> None:
+    # memory-ram-mapper "The BIOS start values on a real-ROM boot": the BIOS
+    # writes 3, 2, 1, 0 to the mapper ports, and the S1985 latch reads them
+    # back with bit 7 set, as the real HB-F1XD does.
+    machine = build_machine_from_spec(_spec())
+    for _ in range(300):
+        machine.run_frame()
+    assert [machine.io.read_port(port) for port in (0xFC, 0xFD, 0xFE, 0xFF)] == [
+        0x83, 0x82, 0x81, 0x80,
+    ]

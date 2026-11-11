@@ -25,6 +25,7 @@ from msx.machine_spec import (
     ExpandedSubslotDevice,
     MachineLoadError,
     MachineSpec,
+    MapperPortForm,
     PpiControlRead,
     PrinterPortForm,
     RomEntry,
@@ -537,6 +538,46 @@ def test_an_unknown_printer_port_form_is_rejected(tmp_path: Path) -> None:
     reg = load_device_registry(config_dir)
     with pytest.raises(MachineLoadError, match="bidi"):
         load_machine_spec("hb_10", config_dir, reg, tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# mapper port form resolution (machine-loader "A machine declares its mapper
+# port form")
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("machine_id", ["hb_f1xd", "hb_f1xd_256k", "fs_a1f"])
+def test_s1985_machines_declare_the_s1985_form(machine_id: str) -> None:
+    reg = load_device_registry(Path("config"))
+    spec = load_machine_spec(machine_id, Path("config"), reg, Path("."))
+    assert spec.mapper_io is MapperPortForm.S1985
+
+
+@pytest.mark.parametrize(
+    "machine_id",
+    ["hb_10", "hb_10_64k", *sorted(p.stem for p in Path("config/machines").glob("cbios_*.yaml"))],
+)
+def test_other_machines_have_the_plain_form(machine_id: str) -> None:
+    reg = load_device_registry(Path("config"))
+    spec = load_machine_spec(machine_id, Path("config"), reg, Path("."))
+    assert spec.mapper_io is MapperPortForm.PLAIN
+
+
+def test_an_unknown_mapper_port_form_is_rejected(tmp_path: Path) -> None:
+    source = Path("config/machines/hb_f1xd.yaml").read_text(encoding="utf-8")
+    config_dir = tmp_path / "config"
+    _write(
+        config_dir / "machines" / "hb_f1xd.yaml",
+        source.replace(
+            "(verified on a real HB-F1XD).\n    overrides: { form: s1985 }",
+            "(verified on a real HB-F1XD).\n    overrides: { form: s3527 }",
+        ),
+    )
+    (config_dir / "devices").mkdir()
+    for path in Path("config/devices").glob("*.yaml"):
+        (config_dir / "devices" / path.name).write_bytes(path.read_bytes())
+    reg = load_device_registry(config_dir)
+    with pytest.raises(MachineLoadError, match="s3527"):
+        load_machine_spec("hb_f1xd", config_dir, reg, tmp_path)
 
 
 # ---------------------------------------------------------------------------

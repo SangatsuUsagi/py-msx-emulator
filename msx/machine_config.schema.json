@@ -1,11 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "py-msx-emulator MachineConfig document, format 4",
-  "description": "The resolved machine the core is built from: produced by the host from the machine/device/extension YAML, cartridges and mappers (msx/machine_config.py encode_machine_config), written as RFC 8785 (JCS) canonical JSON, integers only. Every property is required; null means the machine has no such part. A RomRef names a ROM image passed beside the document, keyed by its SHA1; `name` is the bare file name, a display label, never a path. Run inputs (initial SRAM/CMOS images, disks, the RTC start time) are not part of the document. Closed sets (mapper, FDC controller / connection style and their pairs, device names) are enums, and the devices that need a ROM or a size say so; the parser in msx/machine_config.py is authoritative. This schema describes format version 4, the only version the encoder writes. The parser also reads format versions 1 to 3: version 1 has no machine.printer_port (the form is none), versions 1 and 2 have no machine.cassette_port (the machine has none), and versions 1 to 3 have no machine.ram_mapper_subslot (the mapper has no sub-slot).",
+  "title": "py-msx-emulator MachineConfig document, format 5",
+  "description": "The resolved machine the core is built from: produced by the host from the machine/device/extension YAML, cartridges and mappers (msx/machine_config.py encode_machine_config), written as RFC 8785 (JCS) canonical JSON, integers only. Every property is required; null means the machine has no such part. A RomRef names a ROM image passed beside the document, keyed by its SHA1; `name` is the bare file name, a display label, never a path. Run inputs (initial SRAM/CMOS images, disks, the RTC start time) are not part of the document. Closed sets (mapper, FDC controller / connection style and their pairs, device names) are enums, and the devices that need a ROM or a size say so; the parser in msx/machine_config.py is authoritative. This schema describes format version 5, the only version the encoder writes. The parser also reads format versions 1 to 4: version 1 has no machine.printer_port (the form is none), versions 1 and 2 have no machine.cassette_port (the machine has none), versions 1 to 3 have no machine.ram_mapper_subslot (the mapper has no sub-slot), and versions 1 to 4 have no machine.mapper_io (the form is plain).",
   "type": "object",
   "properties": {
     "format_version": {
-      "const": 4
+      "const": 5
     },
     "machine": {
       "$ref": "#/$defs/Machine"
@@ -330,6 +330,12 @@
         "cassette_port": {
           "type": "boolean"
         },
+        "mapper_io": {
+          "enum": [
+            "plain",
+            "s1985"
+          ]
+        },
         "has_v9938": {
           "type": "boolean"
         },
@@ -558,6 +564,7 @@
         "logo_rom",
         "m1_wait_states",
         "main_rom",
+        "mapper_io",
         "name",
         "ppi_control_read",
         "printer_port",

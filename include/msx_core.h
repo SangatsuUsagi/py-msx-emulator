@@ -53,7 +53,7 @@ extern "C" {
 #endif
 
 #define MSX_CORE_ABI_VERSION_MAJOR 1
-#define MSX_CORE_ABI_VERSION_MINOR 3
+#define MSX_CORE_ABI_VERSION_MINOR 4
 #define MSX_CORE_ABI_VERSION ((MSX_CORE_ABI_VERSION_MAJOR << 16) | MSX_CORE_ABI_VERSION_MINOR)
 #define MSX_CORE_ABI_COMPATIBLE(v)                         \
     ((((v) >> 16) == MSX_CORE_ABI_VERSION_MAJOR) &&        \

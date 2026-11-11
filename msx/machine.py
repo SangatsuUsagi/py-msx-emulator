@@ -54,6 +54,7 @@ from msx.input import InputFrame, InputLines
 from msx.io import IOBus
 from msx.kanji import KanjiRom
 from msx.mapper import MajutsushiMapper
+from msx.mapper_io import S1985MapperLatch
 from msx.memory import Memory
 from msx.mouse import TRIGGER_A_BIT, TRIGGER_B_BIT, MouseDevice
 from msx.ppi import PPI
@@ -103,6 +104,9 @@ class Machine:
     kanji: KanjiRom | None = field(default=None, repr=False)
     ppi: PPI | None = field(default=None, repr=False)
     printer: PrinterPort | None = field(default=None, repr=False)
+    # The S1985 latch of the mapper ports 0xFC-0xFF, or None when the
+    # machine reads the RAM mapper's own registers there.
+    mapper_latch: S1985MapperLatch | None = field(default=None, repr=False)
     # The cassette port's tape deck, or None when the machine has no port.
     cassette: CassettePort | None = field(default=None, repr=False)
     rtc: "RTC | None" = field(default=None, repr=False)
@@ -221,7 +225,8 @@ class Machine:
         """Full power-on reset: CPU, PSG, SCC (if present), FM-PAC (if
         present), VDP, FDC (if present), Kanji ROM (if present), PPI (if
         present), the RTC's MODE/TEST/RESET and latch (if present), the printer
-        port (if present), the primary/secondary slot
+        port (if present), the S1985 mapper port latch (if present), the
+        primary/secondary slot
         registers, the slot-3 RAM mapper (if present), and every `Mapper` --
         `memory.mapper1`, `memory.mapper2`, and every non-`None` sub-slot
         entry of either expanded cartridge slot (1 or 2), which covers a
@@ -250,6 +255,8 @@ class Machine:
             self.rtc.reset()
         if self.printer is not None:
             self.printer.reset()
+        if self.mapper_latch is not None:
+            self.mapper_latch.reset()
         # Power-on slot state: all pages select slot 0 (matches construction).
         self.memory.set_slot_register(0x00)
         self.memory.set_sub_slot_reg(0x00)

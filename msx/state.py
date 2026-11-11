@@ -131,7 +131,10 @@ if TYPE_CHECKING:
 # Version 23: tape added -- the mounted tape's identity, the position and the
 #   motor, None when the machine has no cassette port (io-cassette "The
 #   tape state is saved").
-CURRENT_FORMAT_VERSION: int = 23
+# Version 24: mapper_latch added -- the S1985 latch of the mapper ports
+#   0xFC-0xFF, None when the machine has no latch (memory-ram-mapper "S1985
+#   mapper port latch").
+CURRENT_FORMAT_VERSION: int = 24
 
 _SHA256_HEX_LEN = 64
 _SHA1_HEX_LEN = 40
@@ -336,6 +339,8 @@ class MachineSnapshot:
     mouse: dict[str, object] | None
     # None when the machine has no printer port.
     printer: PrinterSnapshot | None
+    # The four S1985 mapper port latches; None when the machine has no latch.
+    mapper_latch: list[int] | None
     # None when the machine has no cassette port.
     tape: TapeSnapshot | None
 
@@ -621,6 +626,9 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
         rtc=_rtc_to_dict(machine),
         mouse=_mouse_to_dict(machine),
         printer=_printer_snapshot(machine),
+        mapper_latch=(
+            machine.mapper_latch.snapshot() if machine.mapper_latch is not None else None
+        ),
         tape=_tape_snapshot(machine),
     )
 
@@ -831,6 +839,12 @@ def _parse_printer(value: object) -> PrinterSnapshot | None:
     )
 
 
+def _parse_mapper_latch(value: object) -> list[int] | None:
+    if value is None:
+        return None
+    return check_int_list(value, "mapper_latch", 4, 0, 0xFF)
+
+
 def _parse_tape(value: object) -> TapeSnapshot | None:
     if value is None:
         return None
@@ -922,6 +936,8 @@ def parse_snapshot(decoded: object) -> MachineSnapshot:
         mouse = check_optional_object(data["mouse"], "mouse")
         field_name = "printer"
         printer = _parse_printer(data["printer"])
+        field_name = "mapper_latch"
+        mapper_latch = _parse_mapper_latch(data["mapper_latch"])
         field_name = "tape"
         tape = _parse_tape(data["tape"])
     except SchemaError as exc:
@@ -941,6 +957,7 @@ def parse_snapshot(decoded: object) -> MachineSnapshot:
         rtc=rtc,
         mouse=mouse,
         printer=printer,
+        mapper_latch=mapper_latch,
         tape=tape,
     )
 
@@ -999,6 +1016,9 @@ def _validate_snapshot(machine: "Machine", snap: MachineSnapshot) -> _ParsedProd
     _check_optional_wiring("mouse", machine.psg.mouse is not None, snap.mouse)
     _check_optional_wiring("PPI", machine.ppi is not None, snap.ppi)
     _check_optional_wiring("printer port", machine.printer is not None, snap.printer)
+    _check_optional_wiring(
+        "mapper port latch", machine.mapper_latch is not None, snap.mapper_latch
+    )
     _check_tape(machine, snap.tape)
     parsed = _parse_producer_objects(machine, snap)
     # Last of the identity checks: the specific ones above and in the
@@ -1182,6 +1202,8 @@ def _apply_sound_and_io(
         mouse.apply_state(parsed.mouse, machine.cycle_count)
     if machine.printer is not None and snap.printer is not None:
         machine.printer.apply_state({"data": snap.printer.data, "strobe": snap.printer.strobe})
+    if machine.mapper_latch is not None and snap.mapper_latch is not None:
+        machine.mapper_latch.apply_state(snap.mapper_latch)
     if machine.cassette is not None and snap.tape is not None:
         # After the clock: the position counts from the restored cycle.
         machine.cassette.apply_state(snap.tape.position, snap.tape.motor)

@@ -152,17 +152,17 @@ _TAPE_ITEMS = {
 }
 
 
-def test_the_ram_mapper_subslot_is_the_third_minor_increase() -> None:
-    # machine-c-abi "The RAM mapper sub-slot is the third minor increase":
-    # MachineConfig format 4 adds a document key and no declaration.
-    assert _version_macros() == (1, 3)
+def test_the_s1985_mapper_port_form_is_the_fourth_minor_increase() -> None:
+    # machine-c-abi "The S1985 mapper port form is the fourth minor increase":
+    # MachineConfig format 5 adds a document key and no declaration.
+    assert _version_macros() == (1, 4)
 
 
 def test_the_cassette_additions_are_a_minor_change() -> None:
     # machine-c-abi "The additions are a minor change": the 1.1 items are the
-    # 1.2 baseline (unchanged in 1.3) without the cassette items.
+    # 1.2 baseline (unchanged in 1.3 and 1.4) without the cassette items.
     version, items = _read_baseline()
-    assert version == "version 1.3"
+    assert version == "version 1.4"
     assert _TAPE_ITEMS <= items
     assert _classify(items - _TAPE_ITEMS, _abi_items(_text())) == "minor"
 
