@@ -33,6 +33,13 @@ class MapperPortForm(str, Enum):
     S1985 = "s1985"  # the S1985 latch of the last write, (latch & 0x1F) | 0x80
 
 
+class PsgReadBack(str, Enum):
+    """What a PSG register read on port 0xA2 returns (msx/psg.py read masks)."""
+
+    YM2149 = "ym2149"  # every bit as written
+    AY8910 = "ay8910"  # the AY-3-8910 latch widths, unused bits 0
+
+
 class PpiControlRead(str, Enum):
     """What a port 0xAB read returns; the 8255A data sheet calls it illegal."""
 
@@ -126,6 +133,10 @@ class MachineSpec:
     # What a read of the mapper ports 0xFC-0xFF returns, resolved from the
     # mapper_io device.
     mapper_io: MapperPortForm = MapperPortForm.PLAIN
+
+    # What a PSG register read returns, resolved from the psg_ay8910
+    # device's read_back option.
+    psg_read_back: PsgReadBack = PsgReadBack.YM2149
 
     # RAM mapper's configured size (MSX2, when has_ram_mapper is True), resolved
     # from the mapper: standard sub-slot's size_kb -- default 128 preserves

@@ -10,7 +10,7 @@
 
 ハードウェアコンポーネントはすべて純粋な Python で書いています。各コンポーネントは実装の前に機械可読な仕様として定義し、その仕様がテストを決めます（[仕様駆動アーキテクチャ](#仕様駆動アーキテクチャ)を参照）。コンポーネントの配線は `build_machine()` に手で書いてあり、リフレクションや依存性注入は使いません。プラットフォーム固有の依存は、画面と音声のフロントエンドに使う pysdl2 だけです。内部構造は [`docs/technical-implementation_ja.md`](docs/technical-implementation_ja.md) で説明しています。
 
-コア（`msx/`）はファイルもホストの時計も読みません。コアの外のコードは、コア API（`msx/core_api.py`）だけを通してマシンを使います。`include/msx_core.h` は、この API を C で表したヘッダで、ABI バージョンは 1.4 です。このヘッダがあれば、Python のコアを、ほかの言語で書いたコアと置き換えられます。[コアの移植](docs/technical-implementation_ja.md#コアの移植)を参照してください。
+コア（`msx/`）はファイルもホストの時計も読みません。コアの外のコードは、コア API（`msx/core_api.py`）だけを通してマシンを使います。`include/msx_core.h` は、この API を C で表したヘッダで、ABI バージョンは 1.5 です。このヘッダがあれば、Python のコアを、ほかの言語で書いたコアと置き換えられます。[コアの移植](docs/technical-implementation_ja.md#コアの移植)を参照してください。
 
 動かすには BIOS ROM が必要で、リポジトリには含まれません。汎用マシンには無償の [C-BIOS](https://cbios.sourceforge.net/) が使えます。手順は [QUICK_START_ja.md](QUICK_START_ja.md) を参照してください。
 
@@ -819,7 +819,7 @@ builtin_devices:
 | `slots.primary.N` | プライマリスロット N：`{type: cartridge}`、`{type: ram, ...}`、またはインライン ROM `content` |
 | `slots.primary.N.expanded` | `true` で 4 つのセカンダリスロットに拡張 |
 | `builtin_devices` | スロット非経由で直接配線するデバイス：VDP、PSG、PPI、RTC、RAM マッパー |
-| `overrides` | マシンごとのデバイス設定。ローダーが読むのは `ppi8255` の `keyboard_type` と `control_read`、`printer_port` と `mapper_io` の `form` だけ。ほかのキーは受け付けて無視します（例：V9938 の `vram_kb: 128`） |
+| `overrides` | マシンごとのデバイス設定。ローダーが読むのは `ppi8255` の `keyboard_type` と `control_read`、`printer_port` と `mapper_io` の `form`、`psg_ay8910` の `read_back` だけ。ほかのキーは受け付けて無視します（例：V9938 の `vram_kb: 128`） |
 | `sha1` | 説明用のみ。ダンプの想定 SHA1 を書きます。値が `null` でもハッシュでも、ローダーはファイルと照合しません。コアが照合するのは、エミュレータが読み込んだバイト列から計算した SHA1 |
 
 独自のマシン定義を使うには、`config/machines/` に新しい YAML ファイルを置き、その `id` を `--machine` に渡します。デバイス YAML で `implemented: false` になっている項目は、読み込み時に警告を出して飛ばします。

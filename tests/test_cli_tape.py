@@ -73,6 +73,7 @@ def test_a_machine_with_no_port(tmp_path: Path) -> None:
         del document["machine"]["cassette_port"]
         del document["machine"]["ram_mapper_subslot"]
         del document["machine"]["mapper_io"]
+        del document["machine"]["psg_read_back"]
         loaded.config.document = json.dumps(document).encode("utf-8")
         return loaded
 

@@ -64,6 +64,8 @@ builtin_devices:
   - ref: vdp_v9938
     overrides: { vram_kb: 128 }
   - ref: psg_ay8910
+    # Register read-back has the AY-3-8910 mask (verified on a real HB-F1XD).
+    overrides: { read_back: ay8910 }
   - ref: cassette_port
     # Cassette input on PSG R#14 bit 7, motor on PPI Port C bit 4 (openMSX
     # machine files have a CassettePort).

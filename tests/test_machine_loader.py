@@ -28,6 +28,7 @@ from msx.machine_spec import (
     MapperPortForm,
     PpiControlRead,
     PrinterPortForm,
+    PsgReadBack,
     RomEntry,
     Slot0RamEntry,
 )
@@ -577,6 +578,43 @@ def test_an_unknown_mapper_port_form_is_rejected(tmp_path: Path) -> None:
         (config_dir / "devices" / path.name).write_bytes(path.read_bytes())
     reg = load_device_registry(config_dir)
     with pytest.raises(MachineLoadError, match="s3527"):
+        load_machine_spec("hb_f1xd", config_dir, reg, tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# PSG read-back form resolution (machine-loader "A machine declares its PSG
+# read-back form")
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("machine_id", ["hb_f1xd", "hb_f1xd_256k", "fs_a1f"])
+def test_s1985_machines_declare_the_ay8910_form(machine_id: str) -> None:
+    reg = load_device_registry(Path("config"))
+    spec = load_machine_spec(machine_id, Path("config"), reg, Path("."))
+    assert spec.psg_read_back is PsgReadBack.AY8910
+
+
+@pytest.mark.parametrize(
+    "machine_id",
+    ["hb_10", "hb_10_64k", *sorted(p.stem for p in Path("config/machines").glob("cbios_*.yaml"))],
+)
+def test_other_machines_have_the_ym2149_form(machine_id: str) -> None:
+    reg = load_device_registry(Path("config"))
+    spec = load_machine_spec(machine_id, Path("config"), reg, Path("."))
+    assert spec.psg_read_back is PsgReadBack.YM2149
+
+
+def test_an_unknown_psg_read_back_form_is_rejected(tmp_path: Path) -> None:
+    source = Path("config/machines/hb_f1xd.yaml").read_text(encoding="utf-8")
+    config_dir = tmp_path / "config"
+    _write(
+        config_dir / "machines" / "hb_f1xd.yaml",
+        source.replace("overrides: { read_back: ay8910 }", "overrides: { read_back: ym2413 }"),
+    )
+    (config_dir / "devices").mkdir()
+    for path in Path("config/devices").glob("*.yaml"):
+        (config_dir / "devices" / path.name).write_bytes(path.read_bytes())
+    reg = load_device_registry(config_dir)
+    with pytest.raises(MachineLoadError, match="ym2413"):
         load_machine_spec("hb_f1xd", config_dir, reg, tmp_path)
 
 
