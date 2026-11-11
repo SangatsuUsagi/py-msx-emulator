@@ -37,8 +37,9 @@ from __future__ import annotations
 import hashlib
 import sys
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple, TypedDict, TypeGuard, cast
+from typing import TYPE_CHECKING, Any, NamedTuple, TypedDict, TypeGuard, TypeVar, cast
 
 if TYPE_CHECKING:
     from msx.core_api import CoreApi
@@ -665,40 +666,41 @@ def _validate_slot3(context: str, result: _Slot3Msx2) -> None:
         _check_subslot_index(context, "flat RAM", result.flat_ram_subslot)
     if result.ram_mapper_subslot is not None:
         _check_subslot_index(context, "RAM mapper", result.ram_mapper_subslot)
+    sub_rom_subslot = result.sub_rom_subslot if result.sub_rom is not None else None
+    fdc_subslot = result.fdc_subslot if result.fdc is not None else None
     if result.has_ram_mapper and result.flat_ram_subslot is not None:
         raise MachineLoadError(
             f"{context}: RAM mapper and flat RAM sub-slot {result.flat_ram_subslot} "
             "declared simultaneously -- these are mutually exclusive MSX2 slot 3 "
             "RAM strategies (Memory cannot host both at once)"
         )
-    if result.flat_ram_subslot is not None and result.sub_rom is not None \
-            and result.flat_ram_subslot == result.sub_rom_subslot:
-        raise MachineLoadError(
-            f"{context}: flat RAM and SUB ROM both declared in sub-slot "
-            f"{result.flat_ram_subslot} -- Memory's write path has no SUB-ROM "
-            "guard, so a write to that page would silently land in the flat RAM"
+    for ram_name, ram_subslot in (
+        ("flat RAM", result.flat_ram_subslot),
+        ("RAM mapper", result.ram_mapper_subslot),
+    ):
+        _reject_shared_subslot(context, ram_name, ram_subslot, "SUB ROM", sub_rom_subslot)
+        _reject_shared_subslot(context, ram_name, ram_subslot, "fdc", fdc_subslot)
+
+
+def _reject_shared_subslot(
+    context: str, ram_name: str, ram_subslot: int | None,
+    other_name: str, other_subslot: int | None,
+) -> None:
+    """Reject RAM (flat RAM or RAM mapper) declared in the same slot 3
+    sub-slot as the SUB ROM or the fdc. None means not declared."""
+    if ram_subslot is None or other_subslot is None or ram_subslot != other_subslot:
+        return
+    if other_name == "SUB ROM":
+        reason = (
+            "Memory's write path has no SUB-ROM guard, so a write to that page "
+            f"would silently land in the {ram_name}"
         )
-    if result.flat_ram_subslot is not None and result.fdc is not None \
-            and result.flat_ram_subslot == result.fdc_subslot:
-        raise MachineLoadError(
-            f"{context}: flat RAM and fdc both declared in sub-slot "
-            f"{result.flat_ram_subslot} -- the flat RAM would answer in the "
-            "FDC sub-slot's other pages"
-        )
-    if result.ram_mapper_subslot is not None and result.sub_rom is not None \
-            and result.ram_mapper_subslot == result.sub_rom_subslot:
-        raise MachineLoadError(
-            f"{context}: RAM mapper and SUB ROM both declared in sub-slot "
-            f"{result.ram_mapper_subslot} -- Memory's write path has no SUB-ROM "
-            "guard, so a write to that page would silently land in the RAM mapper"
-        )
-    if result.ram_mapper_subslot is not None and result.fdc is not None \
-            and result.ram_mapper_subslot == result.fdc_subslot:
-        raise MachineLoadError(
-            f"{context}: RAM mapper and fdc both declared in sub-slot "
-            f"{result.ram_mapper_subslot} -- the RAM mapper would answer in the "
-            "FDC sub-slot's other pages"
-        )
+    else:
+        reason = f"the {ram_name} would answer in the FDC sub-slot's other pages"
+    raise MachineLoadError(
+        f"{context}: {ram_name} and {other_name} both declared in sub-slot "
+        f"{ram_subslot} -- {reason}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -750,40 +752,23 @@ def _parse_ppi8255(
     return KeyboardLayout.from_spelling(kt), PpiControlRead(str(cr))
 
 
-def _parse_printer_port(
-    dev: _DeviceDef, entry: BuiltinDeviceEntryYaml, machine_path: Path
-) -> PrinterPortForm:
-    """The port form of a printer_port entry."""
-    form = _device_option(dev, entry.get("overrides"), "form", PrinterPortForm.PLAIN.value)
-    if form != PrinterPortForm.PLAIN.value and form != PrinterPortForm.S1985.value:
+_FormT = TypeVar("_FormT", bound=Enum)
+
+
+def _parse_form_option(
+    dev: _DeviceDef, entry: BuiltinDeviceEntryYaml, machine_path: Path,
+    device: str, key: str, form_type: type[_FormT], default: _FormT, other: _FormT,
+) -> _FormT:
+    """A two-valued device option (printer_port and mapper_io `form`,
+    psg_ay8910 `read_back`): `default` when absent, else `default` or
+    `other`."""
+    form = _device_option(dev, entry.get("overrides"), key, default.value)
+    if form != default.value and form != other.value:
         raise MachineLoadError(
-            f"{machine_path}: printer_port form must be 'plain' or 's1985', got {form!r}"
+            f"{machine_path}: {device} {key} must be '{default.value}' or "
+            f"'{other.value}', got {form!r}"
         )
-    return PrinterPortForm(str(form))
-
-
-def _parse_mapper_io(
-    dev: _DeviceDef, entry: BuiltinDeviceEntryYaml, machine_path: Path
-) -> MapperPortForm:
-    """The read-back form of a mapper_io entry."""
-    form = _device_option(dev, entry.get("overrides"), "form", MapperPortForm.PLAIN.value)
-    if form != MapperPortForm.PLAIN.value and form != MapperPortForm.S1985.value:
-        raise MachineLoadError(
-            f"{machine_path}: mapper_io form must be 'plain' or 's1985', got {form!r}"
-        )
-    return MapperPortForm(str(form))
-
-
-def _parse_psg_ay8910(
-    dev: _DeviceDef, entry: BuiltinDeviceEntryYaml, machine_path: Path
-) -> PsgReadBack:
-    """The register read-back form of a psg_ay8910 entry."""
-    form = _device_option(dev, entry.get("overrides"), "read_back", PsgReadBack.YM2149.value)
-    if form != PsgReadBack.YM2149.value and form != PsgReadBack.AY8910.value:
-        raise MachineLoadError(
-            f"{machine_path}: psg_ay8910 read_back must be 'ym2149' or 'ay8910', got {form!r}"
-        )
-    return PsgReadBack(str(form))
+    return form_type(str(form))
 
 
 def _parse_builtin_devices(
@@ -827,13 +812,22 @@ def _parse_builtin_devices(
         elif ref_str == "ppi8255":
             keyboard_type, ppi_control_read = _parse_ppi8255(dev, entry, machine_path)
         elif ref_str == "printer_port":
-            printer_port = _parse_printer_port(dev, entry, machine_path)
+            printer_port = _parse_form_option(
+                dev, entry, machine_path, "printer_port", "form",
+                PrinterPortForm, PrinterPortForm.PLAIN, PrinterPortForm.S1985,
+            )
         elif ref_str == "cassette_port":
             cassette_port = True
         elif ref_str == "mapper_io":
-            mapper_io = _parse_mapper_io(dev, entry, machine_path)
+            mapper_io = _parse_form_option(
+                dev, entry, machine_path, "mapper_io", "form",
+                MapperPortForm, MapperPortForm.PLAIN, MapperPortForm.S1985,
+            )
         elif ref_str == "psg_ay8910":
-            psg_read_back = _parse_psg_ay8910(dev, entry, machine_path)
+            psg_read_back = _parse_form_option(
+                dev, entry, machine_path, "psg_ay8910", "read_back",
+                PsgReadBack, PsgReadBack.YM2149, PsgReadBack.AY8910,
+            )
         ports_raw: Any = dev.raw.get("io_ports")
         if isinstance(ports_raw, list) and len(ports_raw) >= 1:
             device_io_ports[ref_str] = (int(ports_raw[0]), int(ports_raw[-1]))
