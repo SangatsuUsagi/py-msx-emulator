@@ -341,29 +341,33 @@ class WD2793:
         controller has been idle for 15 index pulses. Every register access
         runs it; the interface also runs it before a drive or side select,
         so due steps reach the drive selected when they were due."""
+        if self._phase is Type1Phase.NONE and not self._hld:
+            return  # no Type I event pending and no head to unload
         now = self._clock.cycle
-        if self._phase == Type1Phase.NO_INDEX and self._index_pulses():
+        if self._phase is Type1Phase.NO_INDEX and self._index_pulses():
             self._phase = Type1Phase.NONE
             self._verify_search(now)  # a disk is in: the search starts now
         while (
-            self._phase != Type1Phase.NONE
-            and self._phase != Type1Phase.NO_INDEX
+            self._phase is not Type1Phase.NONE
+            and self._phase is not Type1Phase.NO_INDEX
             and self._event_cycle <= now
         ):
-            if self._phase == Type1Phase.VERIFY and not self._index_pulses():
+            if self._phase is Type1Phase.VERIFY and not self._index_pulses():
                 self._phase = Type1Phase.NO_INDEX  # the disk went out
                 break
             self._type1_event()
-        idle = self._phase == Type1Phase.NONE and (self.status_reg & BUSY) == 0
-        if self._hld and idle and not self._index_pulses():
+        if self._hld:
+            self._update_head_unload(now)
+
+    def _update_head_unload(self, now: int) -> None:
+        """Drop HLD after 15 index pulses of idle time. With no index
+        pulses the idle count restarts at `now` instead."""
+        idle = self._phase is Type1Phase.NONE and (self.status_reg & BUSY) == 0
+        if not idle:
+            return
+        if not self._index_pulses():
             self._hld_idle_cycle = now  # no index pulses to count yet
-        if (
-            self._hld
-            and self._phase == Type1Phase.NONE
-            and (self.status_reg & BUSY) == 0
-            and self._index_pulses()
-            and now - self._hld_idle_cycle >= HEAD_UNLOAD_CYCLES
-        ):
+        elif now - self._hld_idle_cycle >= HEAD_UNLOAD_CYCLES:
             self._hld = False
 
     def _type1(self, value: int) -> None:
