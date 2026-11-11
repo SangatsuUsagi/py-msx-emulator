@@ -326,8 +326,8 @@ class WD2793:
 
     def _index_pulses(self) -> bool:
         # A disk in the drive turns and gives index pulses. The motor is not
-        # modelled, so a disk counts as turning.
-        return self.drive is not None and self.drive.has_disk
+        # modelled, so a disk counts as turning: the same test as _ready.
+        return self._ready()
 
     def _at_track00(self) -> bool:
         # openMSX's DummyDrive (no drive selected) never reports track 0.

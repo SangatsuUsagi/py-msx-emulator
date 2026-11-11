@@ -39,6 +39,9 @@ _SPRITE_CLAIM = 0x10
 # y-coord 8").
 _COLLISION_X_OFFSET = 12
 _COLLISION_Y_OFFSET = 8
+# "No line yet" for the topmost overflow line and the first collision line
+# and x: above any line or x (at most 511), and fits a u16.
+_NO_LINE = 0xFFFF
 
 # Cache border-fill buffers per border pattern (see _border_pattern) so a band
 # prefill can slice-assign a memoryview instead of rebuilding the fill every
@@ -217,7 +220,7 @@ class _RenderStatus:
     status2: int
     # Topmost line on which a sprite overflowed this frame, across all sprite
     # passes: S#0 bits 4:0 take the overflowing sprite on that line.
-    overflow_line: int = 999
+    overflow_line: int = _NO_LINE
 
 
 def render_frame(vdp: "V9938", skip_render: bool = False) -> bytearray:
@@ -632,18 +635,19 @@ def _render_run_sprites(
             )
 
 
-def _sprite_pass_key(regs: list[int]) -> tuple[int, ...]:
+def _sprite_pass_key(regs: list[int]) -> int:
     # SAT base (R#5, R#11 bits 1:0), then the registers a sprite pass reads
     # once: R#0 M3-M5, R#1 BL/M1/M2/SI/MAG, R#6 pattern base, R#8 TP, R#9 LN.
     # R#23 and SPD are per line (row_vscroll / row_spd), so they are not here.
+    # One byte lane per register, so the key fits a u64.
     return (
-        regs[5],
-        regs[11] & 0x03,
-        regs[0] & 0x0E,
-        regs[1] & 0x5B,
-        regs[6] & 0x3F,
-        regs[8] & 0x20,
-        regs[9] & 0x80,
+        regs[5]
+        | ((regs[11] & 0x03) << 8)
+        | ((regs[0] & 0x0E) << 16)
+        | ((regs[1] & 0x5B) << 24)
+        | ((regs[6] & 0x3F) << 32)
+        | ((regs[8] & 0x20) << 40)
+        | ((regs[9] & 0x80) << 48)
     )
 
 
@@ -1260,8 +1264,8 @@ def _render_sprites(
     # Collision coordinates (S#3-S#6): the earliest colliding line, and the
     # leftmost collision on it (openMSX SpriteChecker takes minXCollision on
     # the first colliding line and stops there).
-    col_line = 999
-    col_x = 999
+    col_line = _NO_LINE
+    col_x = _NO_LINE
     had_collision = bool(st.status & 0x20)  # C set since last cleared by an S#0 read
     # Vertical scroll and SPD are both per scanline: split the range into runs
     # of constant vscroll AND constant sprite-enable, exactly as sprite mode 2
@@ -1523,8 +1527,8 @@ def _render_sprites_mode2(
     drawn: list[int] = []  # coords touched, to composite only those (vs full scan)
     coincidence = False
     # Collision coordinates (S#3-S#6), as in _render_sprites above.
-    col_line = 999
-    col_x = 999
+    col_line = _NO_LINE
+    col_x = _NO_LINE
     had_collision = bool(st.status & 0x20)
     # Vertical scroll and SPD (sprite disable) are both per scanline: split the
     # range into runs of constant vscroll AND constant sprite-enable (one run for

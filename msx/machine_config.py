@@ -324,6 +324,15 @@ _MACHINE_KEYS = frozenset({
     "ram_mapper_size_kb", "flat_ram_subslot", "flat_ram_size_kb", "ram_mapper_subslot",
     "fdc", "fdc_subslot", "io_device", "device_io_ports",
 })
+# The machine keys added after format version 1, with the version that
+# added each: an older document has none of them.
+_KEY_SINCE_VERSION: tuple[tuple[str, int], ...] = (
+    ("printer_port", 2),
+    ("cassette_port", 3),
+    ("ram_mapper_subslot", 4),
+    ("mapper_io", 5),
+    ("psg_read_back", 6),
+)
 _ROM_KEYS = frozenset({"name", "size", "sha1", "pages"})
 _SLOT0_RAM_KEYS = frozenset({"size_kb", "page"})
 _FDC_KEYS = frozenset({"controller", "connection_style", "drives", "disk_rom"})
@@ -468,16 +477,9 @@ def _ram_mapper_subslot(obj: dict[str, object], label: str) -> int | None:
 
 def _parse_machine(value: object, roms: dict[str, RomRef], version: int) -> MachineSpec:
     keys = _MACHINE_KEYS
-    if version < 6:
-        keys = keys - {"psg_read_back"}
-    if version < 5:
-        keys = keys - {"mapper_io"}
-    if version < 4:
-        keys = keys - {"ram_mapper_subslot"}
-    if version < 3:
-        keys = keys - {"cassette_port"}
-    if version < 2:
-        keys = keys - {"printer_port"}
+    for key, since in _KEY_SINCE_VERSION:
+        if version < since:
+            keys = keys - {key}
     obj = check_object(value, "machine", keys)
     label = "machine"
     main = _add_rom(roms, "main", _rom(obj["main_rom"], f"{label}.main_rom"))
