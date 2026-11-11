@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TypedDict
 
+from msx.clock import CoreClock
 from msx.fdc.disk_drive import DiskDrive
 from msx.snapshot_schema import (
     check_bool,
@@ -230,6 +231,10 @@ class TC8566AF:
         """Nothing to run: no TC8566AF state advances with time (the
         FdcController contract; WD2793.catch_up runs its timed Type I
         events)."""
+
+    def attach_clock(self, clock: CoreClock) -> None:
+        """Nothing to keep: the TC8566AF reads no emulated time (the
+        FdcController contract; WD2793 times its Type I steps)."""
 
     def abort(self) -> None:
         """Cancel any in-progress command, back to Command-Phase idle.

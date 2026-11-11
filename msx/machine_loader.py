@@ -816,13 +816,31 @@ def _wire_post_construction_attrs(
         dac._clock = clock
     if machine.rtc is not None:
         machine.rtc._clock = clock
-    from msx.fdc.interface import SonyPhilipsInterface
-
-    if isinstance(machine.fdc, SonyPhilipsInterface):
-        machine.fdc.controller._clock = clock  # WD2793 Type I step times
+    if machine.fdc is not None:
+        machine.fdc.attach_clock(clock)  # WD2793 Type I step times
     _wire_trace(machine)
     machine.fmpac = wiring.fmpac_device
     machine.kanji = wiring.kanji_device
+
+
+def _wire_mapper_ports(
+    spec: MachineSpec, io: IOBus, ram_mapper: RamMapper | None
+) -> S1985MapperLatch | None:
+    """Give ports 0xFC-0xFF their one owner and return the S1985 latch, if
+    any. On an S1985 machine the latch drives the ports with or without a
+    RAM mapper and passes every write on to `ram_mapper`; otherwise the RAM
+    mapper answers on them itself, and with no RAM mapper nothing does."""
+    start, end = _io_range(spec, "memory_mapper_standard",
+                           _DEFAULT_IO_PORTS["memory_mapper_standard"])
+    if spec.mapper_io is MapperPortForm.S1985:
+        latch = S1985MapperLatch(ram_mapper)
+        io.register_read(start, end, latch.read_port)
+        io.register_write(start, end, latch.write_port)
+        return latch
+    if ram_mapper is not None:
+        io.register_read(start, end, ram_mapper.read_port)
+        io.register_write(start, end, ram_mapper.write_port)
+    return None
 
 
 def _wire_trace(machine: "Machine") -> None:
@@ -946,21 +964,15 @@ def _build(machine_config: MachineConfig) -> "Machine":
         io.register_read(printer.first_port(), printer.last_port(), printer.read_port)
         io.register_write(printer.first_port(), printer.last_port(), printer.write_port)
     # An expanded slot's ram_mapper sub-slot (--extensionN memory_512k/
-    # msxdos2_512k*) registers on the same standard memory-mapper ports
-    # slot 3's own RamMapper would use -- safe because _wire_extension_overlay
-    # already rejected a RamMapper on both cartridge slots at once, and on a
-    # slot alongside spec.has_ram_mapper being True. On an S1985 machine the
-    # latch takes the ports instead (below).
+    # msxdos2_512k*) answers on the same standard memory-mapper ports slot
+    # 3's own RamMapper would use (_wire_mapper_ports, below) -- safe
+    # because _wire_extension_overlay already rejected a RamMapper on both
+    # cartridge slots at once, and on a slot alongside spec.has_ram_mapper
+    # being True.
     overlay_ram_mapper: RamMapper | None = None
     for sub_mapper in (*wiring.mapper1_subslots, *wiring.mapper2_subslots):
-        if _is_ram_mapper(sub_mapper):
+        if _is_ram_mapper(sub_mapper) and overlay_ram_mapper is None:
             overlay_ram_mapper = sub_mapper
-            if spec.mapper_io is MapperPortForm.S1985:
-                continue
-            mm_s, mm_e = _io_range(spec, "memory_mapper_standard",
-                                    _DEFAULT_IO_PORTS["memory_mapper_standard"])
-            io.register_read(mm_s, mm_e, sub_mapper.read_port)
-            io.register_write(mm_s, mm_e, sub_mapper.write_port)
 
     if spec.generation == "msx2":
         machine = _build_msx2(config, bios, wiring, dac, input_state, psg, io)
@@ -969,15 +981,11 @@ def _build(machine_config: MachineConfig) -> "Machine":
 
     _wire_post_construction_attrs(machine, dac, wiring)
     machine.printer = printer
-    if spec.mapper_io is MapperPortForm.S1985:
-        # The latch drives 0xFC-0xFF with or without a RAM mapper and passes
-        # every write on to the one mapper the machine has (if any).
-        latch = S1985MapperLatch(machine.memory.ram_mapper or overlay_ram_mapper)
-        latch_s, latch_e = _io_range(spec, "memory_mapper_standard",
-                                     _DEFAULT_IO_PORTS["memory_mapper_standard"])
-        io.register_read(latch_s, latch_e, latch.read_port)
-        io.register_write(latch_s, latch_e, latch.write_port)
-        machine.mapper_latch = latch
+    # The machine has at most one RAM mapper: slot 3's or an overlay's.
+    ram_mapper = machine.memory.ram_mapper
+    if ram_mapper is None:
+        ram_mapper = overlay_ram_mapper
+    machine.mapper_latch = _wire_mapper_ports(spec, io, ram_mapper)
     if spec.cassette_port:
         cassette = CassettePort(machine.clock)
         cassette._trace = machine._trace
@@ -1155,11 +1163,6 @@ def _build_msx2(
         rtc_s, rtc_e = _io_range(spec, "rtc_rp5c01", _DEFAULT_IO_PORTS["rtc_rp5c01"])
         io.register_read(rtc_s, rtc_e, rtc.read_port)
         io.register_write(rtc_s, rtc_e, rtc.write_port)
-    if ram_mapper is not None and spec.mapper_io is MapperPortForm.PLAIN:
-        ram_s, ram_e = _io_range(spec, "memory_mapper_standard",
-                                 _DEFAULT_IO_PORTS["memory_mapper_standard"])
-        io.register_read(ram_s, ram_e, ram_mapper.read_port)
-        io.register_write(ram_s, ram_e, ram_mapper.write_port)
 
     cpu = Z80(read_byte=memory.read, write_byte=memory.write,
               m1_wait_states=spec.m1_wait_states)

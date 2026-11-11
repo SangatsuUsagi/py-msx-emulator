@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, ClassVar, Generic, Protocol, TypedDict, TypeVar
 
+from msx.clock import CoreClock
 from msx.fdc.disk_drive import DiskDrive, DiskDriveState
 from msx.fdc.disk_image import DskDiskImage
 from msx.fdc.tc8566af import TC8566AF, TC8566AFState
@@ -48,6 +49,7 @@ class FdcController(Protocol[S]):
     drive: DiskDrive | None
     def abort(self) -> None: ...
     def catch_up(self) -> None: ...
+    def attach_clock(self, clock: CoreClock) -> None: ...
     def snapshot(self) -> Mapping[str, object]: ...
     def parse_state(self, obj: object, label: str) -> S: ...
     def apply_state(self, state: S) -> None: ...
@@ -323,6 +325,10 @@ class FloppyDiskBase(abc.ABC, Generic[S, C]):
         drive's head. A save runs it before snapshot(), so the capture
         holds them and snapshot() itself changes nothing."""
         self.state.controller.catch_up()
+
+    def attach_clock(self, clock: CoreClock) -> None:
+        """Give the controller the machine's clock record (msx/clock.py)."""
+        self.state.controller.attach_clock(clock)
 
     @abc.abstractmethod
     def _snapshot_connection_style(self) -> C:

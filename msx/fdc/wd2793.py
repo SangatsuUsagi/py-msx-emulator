@@ -341,6 +341,11 @@ class WD2793:
 
     # -- Command implementations ------------------------------------------
 
+    def attach_clock(self, clock: CoreClock) -> None:
+        """Time the Type I steps on the machine's clock record
+        (msx/clock.py)."""
+        self._clock = clock
+
     def catch_up(self) -> None:
         """Run every Type I event that is due by now, then drop HLD when the
         controller has been idle for 15 index pulses. Every register access
