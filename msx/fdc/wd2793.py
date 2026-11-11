@@ -177,7 +177,12 @@ class WD2793:
     _phase: Type1Phase = Type1Phase.NONE
     _event_cycle: int = 0
     _hld: bool = False
-    _hld_idle_cycle: int = 0
+    # The idle time for the head unload is _hld_base_age + (clock.cycle -
+    # _hld_base_cycle). Two fields, so a restored state with more idle
+    # cycles than the clock's count needs no base below zero (an unsigned
+    # clock in a native core).
+    _hld_base_cycle: int = 0
+    _hld_base_age: int = 0
 
     def __post_init__(self) -> None:
         self.reset()
@@ -366,9 +371,17 @@ class WD2793:
         if not idle:
             return
         if not self._index_pulses():
-            self._hld_idle_cycle = now  # no index pulses to count yet
-        elif now - self._hld_idle_cycle >= HEAD_UNLOAD_CYCLES:
+            self._start_idle(now)  # no index pulses to count yet
+        elif self._idle_cycles(now) >= HEAD_UNLOAD_CYCLES:
             self._hld = False
+
+    def _start_idle(self, now: int) -> None:
+        """Start the idle time for the head unload at `now`."""
+        self._hld_base_cycle = now
+        self._hld_base_age = 0
+
+    def _idle_cycles(self, now: int) -> int:
+        return self._hld_base_age + (now - self._hld_base_cycle)
 
     def _type1(self, value: int) -> None:
         self._mode = Mode.IDLE
@@ -471,7 +484,7 @@ class WD2793:
 
     def _end_type1(self, now: int) -> None:
         self._end_command()
-        self._hld_idle_cycle = now
+        self._start_idle(now)
 
     def _start_transfer(self, clear: int) -> bool:
         """Clear the given status bits and set BUSY; end the command and
@@ -583,7 +596,7 @@ class WD2793:
         is. Stopping a busy command starts the idle time for the head unload."""
         self.catch_up()
         if self._phase != Type1Phase.NONE or (self.status_reg & BUSY):
-            self._hld_idle_cycle = self._clock.cycle
+            self._start_idle(self._clock.cycle)
         self._phase = Type1Phase.NONE
 
     def _end_command(self) -> None:
@@ -591,14 +604,14 @@ class WD2793:
         self._drq = False
         self.status_reg &= ~(BUSY | S_DRQ)
         self._intrq = True
-        self._hld_idle_cycle = self._clock.cycle
+        self._start_idle(self._clock.cycle)
 
     # ------------------------------------------------------------ save-state
 
     def snapshot(self) -> WD2793State:
-        """Capture register/phase/buffer state after running the Type I
-        events already due. `drive` is not included -- see WD2793State."""
-        self.catch_up()
+        """Capture register/phase/buffer state; it changes nothing. Run
+        catch_up() first, so the Type I events already due are in the
+        capture. `drive` is not included -- see WD2793State."""
         cycles_left = 0
         if self._phase != Type1Phase.NONE and self._phase != Type1Phase.NO_INDEX:
             cycles_left = max(0, self._event_cycle - self._clock.cycle)
@@ -618,7 +631,7 @@ class WD2793:
             "type1_phase": self._phase.value,
             "type1_cycles_left": cycles_left,
             "hld": self._hld,
-            "hld_idle_cycles": min(SAFE_INT_MAX, max(0, self._clock.cycle - self._hld_idle_cycle)),
+            "hld_idle_cycles": min(SAFE_INT_MAX, self._idle_cycles(self._clock.cycle)),
         }
 
     def parse_state(self, obj: object, label: str) -> WD2793State:
@@ -669,4 +682,5 @@ class WD2793:
         self._phase = Type1Phase(state["type1_phase"])
         self._event_cycle = self._clock.cycle + state["type1_cycles_left"]
         self._hld = state["hld"]
-        self._hld_idle_cycle = self._clock.cycle - state["hld_idle_cycles"]
+        self._hld_base_cycle = self._clock.cycle
+        self._hld_base_age = state["hld_idle_cycles"]

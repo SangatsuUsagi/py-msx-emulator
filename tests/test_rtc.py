@@ -438,6 +438,22 @@ def test_snapshot_regs_are_the_register_file() -> None:
     assert regs[26:] == list(range(26, 52))
 
 
+def test_uncounted_cycles_above_the_bound_are_rejected() -> None:
+    # The bound keeps uncounted_cycles * TICK_HZ within 64 bits.
+    rtc = RTC()
+    state = dict(rtc.snapshot())
+    state["uncounted_cycles"] = (1 << 48) + 1
+    with pytest.raises(ValueError, match="rtc.uncounted_cycles"):
+        rtc.parse_state(state, "rtc")
+
+
+def test_a_snapshot_saves_at_most_the_uncounted_cycle_bound() -> None:
+    clock = CoreClock()
+    rtc = RTC(_clock=clock)
+    clock.cycle = (1 << 48) + 12345
+    assert rtc.snapshot()["uncounted_cycles"] == 1 << 48
+
+
 def test_restoring_regs_with_different_cmos_marks_it_dirty() -> None:
     rtc = RTC()
     state = rtc.parse_state(rtc.snapshot(), "rtc")

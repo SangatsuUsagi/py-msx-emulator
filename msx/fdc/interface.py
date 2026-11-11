@@ -47,6 +47,7 @@ class FdcController(Protocol[S]):
 
     drive: DiskDrive | None
     def abort(self) -> None: ...
+    def catch_up(self) -> None: ...
     def snapshot(self) -> Mapping[str, object]: ...
     def parse_state(self, obj: object, label: str) -> S: ...
     def apply_state(self, state: S) -> None: ...
@@ -196,8 +197,7 @@ class FloppyDiskState(Generic[S]):
         self.drives order). The connection-style-specific piece and the
         FdcKind discriminant are FloppyDisk's own concern, layered around
         this."""
-        # The controller first: its snapshot runs the due Type I steps,
-        # which move a drive's head.
+        # Read-only: the caller runs catch_up() first (FloppyDisk.catch_up).
         controller = self.controller.snapshot()
         drives: list[DiskDriveState] = []
         for drive in self.drives:
@@ -317,6 +317,12 @@ class FloppyDiskBase(abc.ABC, Generic[S, C]):
         """Replace a drive's image at runtime (hot swap / eject). See
         FloppyDiskState.swap for the full behaviour."""
         return self.state.swap(drive, image)
+
+    def catch_up(self) -> None:
+        """Run the controller's events already due, which can move a
+        drive's head. A save runs it before snapshot(), so the capture
+        holds them and snapshot() itself changes nothing."""
+        self.state.controller.catch_up()
 
     @abc.abstractmethod
     def _snapshot_connection_style(self) -> C:

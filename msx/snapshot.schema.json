@@ -5,7 +5,7 @@
   "type": "object",
   "properties": {
     "format_version": {
-      "const": 24
+      "const": 25
     },
     "machine_type": {
       "enum": [
@@ -1787,7 +1787,7 @@
         "uncounted_cycles": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 9007199254740991
+          "maximum": 281474976710656
         },
         "addr": {
           "type": "integer",
@@ -1800,11 +1800,6 @@
           "maximum": 15
         },
         "test": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 15
-        },
-        "reset": {
           "type": "integer",
           "minimum": 0,
           "maximum": 15
@@ -1831,7 +1826,6 @@
         "mode",
         "months",
         "regs",
-        "reset",
         "seconds",
         "test",
         "tick_remainder",

@@ -226,6 +226,11 @@ class TC8566AF:
         self._pcn = [0, 0, 0, 0]
         self.abort()
 
+    def catch_up(self) -> None:
+        """Nothing to run: no TC8566AF state advances with time (the
+        FdcController contract; WD2793.catch_up runs its timed Type I
+        events)."""
+
     def abort(self) -> None:
         """Cancel any in-progress command, back to Command-Phase idle.
 

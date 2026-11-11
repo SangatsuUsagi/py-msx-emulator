@@ -310,7 +310,9 @@ def test_selecting_a_drive_with_a_disk_during_a_verify_starts_the_id_search(
 
 
 def _reload(wd: WD2793, drive: DiskDrive, cycle: int) -> WD2793:
-    """Apply wd's snapshot to a new controller whose clock is at `cycle`."""
+    """Apply wd's snapshot to a new controller whose clock is at `cycle`,
+    catching up first as a save does."""
+    wd.catch_up()
     state = wd.snapshot()
     other = WD2793()
     other._clock.cycle = cycle
@@ -365,6 +367,49 @@ def test_the_head_unload_time_survives_a_save(tmp_path: Path) -> None:
     assert other.get_status() & HEAD_LOADED
     wait_ms(other, 200)
     assert not (other.get_status() & HEAD_LOADED)
+
+
+def test_the_head_unload_time_survives_a_load_into_an_earlier_clock(
+    tmp_path: Path,
+) -> None:
+    # The saved idle time is longer than the new clock's whole count: the
+    # base-cycle/base-age pair keeps every stored value non-negative.
+    wd, drive = _with_disk(tmp_path)
+    wd.set_command(0x08)  # RESTORE with h, ends at once
+    finish_type1(wd)
+    wait_ms(wd, 2000)
+    other = _reload(wd, drive, 1000)
+    assert other._hld_base_cycle >= 0 and other._hld_base_age >= 0
+    wait_ms(other, 900)
+    assert other.get_status() & HEAD_LOADED
+    wait_ms(other, 200)
+    assert not (other.get_status() & HEAD_LOADED)
+
+
+def test_a_snapshot_runs_no_due_event(tmp_path: Path) -> None:
+    wd, drive = _with_disk(tmp_path)
+    wd.set_data(10)
+    start = wd._clock.cycle
+    wd.set_command(0x10)  # SEEK, rate 0: 10 steps of 6 ms
+    before = drive.track  # the first step pulse comes with the write
+    _at(wd, start, 50)    # every other step is due, none has run
+    first = dict(wd.snapshot())
+    assert drive.track == before
+    assert dict(wd.snapshot()) == first
+
+
+def test_a_save_catches_up_before_the_capture(tmp_path: Path) -> None:
+    iface = SonyPhilipsInterface(WD2793(), [DiskDrive(_disk(tmp_path))], disk_rom=bytes(16384))
+    wd = iface.controller
+    finish_type1(wd)  # the power-on RESTORE
+    wd.set_data(10)
+    start = wd._clock.cycle
+    wd.set_command(0x10)  # SEEK, rate 0: 10 steps of 6 ms
+    before = iface.drives[0].track  # the first step pulse comes with the write
+    _at(wd, start, 70)
+    assert iface.snapshot()["drives"][0]["track"] == before
+    iface.catch_up()
+    assert iface.snapshot()["drives"][0]["track"] == 10
 
 
 def test_an_out_of_range_type1_phase_is_rejected() -> None:
