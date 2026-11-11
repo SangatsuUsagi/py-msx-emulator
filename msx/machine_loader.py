@@ -813,6 +813,10 @@ def _wire_post_construction_attrs(
         dac._clock = clock
     if machine.rtc is not None:
         machine.rtc._clock = clock
+    from msx.fdc.interface import SonyPhilipsInterface
+
+    if isinstance(machine.fdc, SonyPhilipsInterface):
+        machine.fdc.controller._clock = clock  # WD2793 Type I step times
     _wire_trace(machine)
     machine.fmpac = wiring.fmpac_device
     machine.kanji = wiring.kanji_device

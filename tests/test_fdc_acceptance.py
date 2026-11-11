@@ -14,6 +14,7 @@ from msx.fdc.disk_image import SECTOR_SIZE
 from msx.fdc.interface import SonyPhilipsInterface
 from msx.fdc.wd2793 import BUSY, TRACK_BYTES, WD2793
 from tests.disk_factories import dsk_image
+from tests.wd2793_helpers import finish_type1
 
 _2DD = 737280
 
@@ -29,6 +30,7 @@ _DRIVE = 0x7FFD
 
 def _iface_with_disk(dsk: Path) -> SonyPhilipsInterface:
     iface = SonyPhilipsInterface(WD2793(), [DiskDrive()], disk_rom=bytes(16384))
+    finish_type1(iface.controller)  # the power-on RESTORE
     iface.mount(dsk_image(dsk), drive=0)
     iface.write_mem(_DRIVE, 0x80)  # drive A + motor on
     iface.write_mem(_SIDE, 0x00)   # side 0
@@ -39,6 +41,7 @@ def _format_track(iface: SonyPhilipsInterface, track: int) -> None:
     # WRITE TRACK formats the track under the head, so SEEK there first.
     iface.write_mem(_DATA, track)
     iface.write_mem(_CMD, 0x10)  # SEEK
+    finish_type1(iface.controller)
     iface.write_mem(_CMD, 0xF0)  # WRITE TRACK
     for _ in range(TRACK_BYTES + 16):  # small margin; loop stops when BUSY clears
         if not (iface.read_mem(_STATUS) & BUSY):

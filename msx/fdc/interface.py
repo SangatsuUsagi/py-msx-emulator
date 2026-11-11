@@ -172,20 +172,22 @@ class FloppyDiskState(Generic[S]):
     def swap(self, drive: int, image: DskDiskImage | None) -> DskDiskImage | None:
         """Replace a drive's image at runtime (hot swap / eject).
 
-        Mounts the new image (or None to eject), asserts the drive's
-        disk-change signal so Disk BASIC re-reads the new medium, and aborts
-        any in-progress controller transfer so no buffer keeps referencing the
-        previous disk. Returns the outgoing image when it holds unpersisted
-        writes, for the host to write back; None otherwise.
+        Aborts any in-progress controller command (when the swapped drive is
+        the controller's), so no buffer keeps referencing the previous disk,
+        then mounts the new image (or None to eject) and asserts the drive's
+        disk-change signal so Disk BASIC re-reads the new medium. Returns the
+        outgoing image when it holds unpersisted writes, for the host to write
+        back; None otherwise.
         """
         target = self.drives[drive]
         outgoing = target.image
-        target.mount(image)  # also sets disk_changed
         # Only abort a transfer on the drive actually connected to the
         # controller -- swapping a *different* drive's disk on a multi-drive
         # machine must not disturb an in-progress transfer on the selected one.
+        # Abort before the mount, so work that was due sees the old disk.
         if self.controller.drive is target:
             self.controller.abort()
+        target.mount(image)  # also sets disk_changed
         if outgoing is not None and outgoing.dirty:
             return outgoing
         return None
@@ -195,10 +197,13 @@ class FloppyDiskState(Generic[S]):
         self.drives order). The connection-style-specific piece and the
         FdcKind discriminant are FloppyDisk's own concern, layered around
         this."""
+        # The controller first: its snapshot runs the due Type I steps,
+        # which move a drive's head.
+        controller = self.controller.snapshot()
         drives: list[DiskDriveState] = []
         for drive in self.drives:
             drives.append(drive.snapshot())
-        return {"controller": self.controller.snapshot(), "drives": drives}
+        return {"controller": controller, "drives": drives}
 
     def parse_state(self, obj: object, label: str) -> FloppyDiskStateParsed[S]:
         """Validate a snapshot() object -- the controller and every drive --
@@ -520,11 +525,13 @@ class SonyPhilipsInterface(FloppyDiskBase[WD2793State, SonyPhilipsConnectionStat
             self.controller.set_data(value)
         elif reg == REG_SIDE:
             # bit 0 = side select
+            self.controller.catch_up()  # due steps use the old selection
             self.side_reg = value
             for drive in self.drives:
                 drive.side = value & 1
         elif reg == REG_DRIVE:
             # bits 1:0 -> drive (00/10 = A, 01 = B, 11 = none); bit 7 -> motor.
+            self.controller.catch_up()  # due steps go to the old drive
             self.drive_reg = value
             self._select_drive(value)
         # REG_UNCONNECTED / REG_CONTROL_STATUS: no writable control bits.

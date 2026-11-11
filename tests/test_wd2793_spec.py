@@ -95,6 +95,7 @@ from msx.fdc.wd2793 import (
     Mode,
 )
 from tests.disk_factories import dsk_image
+from tests.wd2793_helpers import finish_type1
 
 _2DD = 737280
 
@@ -137,10 +138,13 @@ def test_step_in_increments_track_and_latches_direction(tmp_path: Path) -> None:
     wd, drive, _ = _ctrl(tmp_path)
     wd.set_data(10)
     wd.set_command(0x10)  # SEEK to track 10
+    finish_type1(wd)
     wd.set_command(0x50)  # STEP-IN, T set: TRACK follows the head
+    finish_type1(wd)
     assert wd.get_track() == 11
     assert drive.track == 11
     wd.set_command(0x30)  # STEP, T set: repeats the latched "in" direction
+    finish_type1(wd)
     assert wd.get_track() == 12
     assert drive.track == 12
 
@@ -149,8 +153,10 @@ def test_step_out_decrements_track_and_clamps_at_zero(tmp_path: Path) -> None:
     wd, _, _ = _ctrl(tmp_path)
     wd.set_track(1)
     wd.set_command(0x60)  # STEP-OUT
+    finish_type1(wd)
     assert wd.get_track() == 0
     wd.set_command(0x60)  # STEP-OUT again at track 0
+    finish_type1(wd)
     assert wd.get_track() == 0  # clamped, does not go negative
 
 
@@ -163,8 +169,10 @@ def test_step_repeat_out_clamps_at_zero_same_as_dedicated_step_out(
     wd, _, _ = _ctrl(tmp_path)
     wd.set_track(0)
     wd.set_command(0x60)  # STEP-OUT: clamps, track stays 0
+    finish_type1(wd)
     assert wd.get_track() == 0
     wd.set_command(0x20)  # STEP: repeats "out" -- now clamps too
+    finish_type1(wd)
     assert wd.get_track() == 0
 
 
@@ -176,6 +184,7 @@ def test_step_after_reset_repeats_the_reset_restore_direction(
     drive.track = 5
     wd.set_track(5)
     wd.set_command(0x30)  # STEP, T set, no STEP-IN/STEP-OUT since reset
+    finish_type1(wd)
     assert wd.get_track() == 4
     assert drive.track == 4
 
@@ -190,6 +199,7 @@ def test_read_address_reports_synthesized_id_field_and_track_into_sector_registe
     wd, drive, _ = _ctrl(tmp_path)
     wd.set_data(5)
     wd.set_command(0x10)  # SEEK: the ID field carries the head's track
+    finish_type1(wd)
     drive.side = 1
     wd.set_command(0xC0)  # READ ADDRESS
     assert wd.get_status() & (BUSY | S_DRQ) == (BUSY | S_DRQ)
@@ -283,6 +293,7 @@ def test_abort_clears_transfer_state_but_preserves_head_position(
     image.write_sector(0, b"\x22" * SECTOR_SIZE)
     wd.set_data(7)
     wd.set_command(0x10)  # SEEK: READ SECTOR needs TRACK == head track
+    finish_type1(wd)
     wd.set_sector(3)
     wd.set_command(0x80)  # start a read: BUSY|DRQ
     assert wd.get_drq() is True
@@ -302,16 +313,22 @@ def test_abort_clears_transfer_state_but_preserves_head_position(
 # ---------------------------------------------------------------------------
 
 def test_reset_returns_to_power_on_state(tmp_path: Path) -> None:
-    wd, _, image = _ctrl(tmp_path)
+    wd, drive, image = _ctrl(tmp_path)
     image.write_sector(0, b"\x33" * SECTOR_SIZE)
+    drive.track = 7
     wd.set_track(9)
     wd.set_sector(4)
     wd.set_command(0x80)  # get into a busy/DRQ transfer state
 
     wd.reset()
 
-    # Reset runs RESTORE (COMMAND 0x03), as a real MR pulse does.
+    # Reset runs RESTORE (COMMAND 0x03), as a real MR pulse does. It takes
+    # step time: 7 steps out at rate 3.
     assert wd.command_reg == 0x03
+    assert wd.status_reg & BUSY
+    finish_type1(wd)
+    assert drive.track == 0
+    assert wd.drive is drive
     assert wd.get_irq() is True  # the RESTORE ended
     assert wd.get_track() == 0
     assert wd.get_sector() == 1
@@ -378,6 +395,7 @@ def test_no_drive_connected_at_all_reports_not_ready_but_type1_still_runs() -> N
     assert wd.get_status() & NOT_READY
 
     wd.set_command(0x00)  # RESTORE -- Type I commands run regardless of Ready
+    finish_type1(wd)
     assert wd.get_track() == 0
     assert wd.get_status() & NOT_READY  # still reported, just doesn't block Type I
 
@@ -392,6 +410,7 @@ def test_restore_with_no_disk_reports_track00_and_not_ready_together(
     wd, drive, _ = _ctrl(tmp_path)
     drive.mount(None)
     wd.set_command(0x00)  # RESTORE
+    finish_type1(wd)
     assert wd.get_status() == (TRACK00 | WRITE_PROTECTED | NOT_READY)  # 0xC4
 
 

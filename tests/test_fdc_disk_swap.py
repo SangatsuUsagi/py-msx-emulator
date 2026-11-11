@@ -8,12 +8,15 @@ from msx.fdc.disk_image import SECTOR_SIZE
 from msx.fdc.interface import SonyPhilipsInterface
 from msx.fdc.wd2793 import BUSY, WD2793, Mode
 from tests.disk_factories import dsk_image
+from tests.wd2793_helpers import finish_type1
 
 _2DD = 737280
 
 
 def _iface() -> SonyPhilipsInterface:
-    return SonyPhilipsInterface(WD2793(), [DiskDrive()], disk_rom=bytes(16384))
+    iface = SonyPhilipsInterface(WD2793(), [DiskDrive()], disk_rom=bytes(16384))
+    finish_type1(iface.controller)  # the power-on RESTORE
+    return iface
 
 
 def _blank(path: Path, first_byte: int = 0x00) -> Path:
@@ -69,6 +72,7 @@ def test_swap_on_non_selected_drive_does_not_abort_selected_drives_transfer(
     controller = WD2793()
     drive_a, drive_b = DiskDrive(), DiskDrive()
     iface = SonyPhilipsInterface(controller, [drive_a, drive_b], disk_rom=bytes(16384))
+    finish_type1(controller)  # the power-on RESTORE
     iface.mount(dsk_image(_blank(tmp_path / "a.dsk", first_byte=0x11)), 0)
     iface.mount(dsk_image(_blank(tmp_path / "b.dsk")), 1)
     assert controller.drive is drive_a  # power-on default
@@ -86,6 +90,7 @@ def test_swap_on_selected_drive_still_aborts(tmp_path: Path) -> None:
     controller = WD2793()
     drive_a, drive_b = DiskDrive(), DiskDrive()
     iface = SonyPhilipsInterface(controller, [drive_a, drive_b], disk_rom=bytes(16384))
+    finish_type1(controller)  # the power-on RESTORE
     iface.mount(dsk_image(_blank(tmp_path / "a.dsk", first_byte=0x11)), 0)
     assert controller.drive is drive_a
 
