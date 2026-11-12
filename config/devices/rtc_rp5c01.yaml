@@ -5,3 +5,7 @@ name: Ricoh RP-5C01 Real-Time Clock
 chip: rp5c01
 io_ports: [0xB4, 0xB5]
 controls: real_time_clock
+# What the RTC ports read: "plain" (0xB5 0xF0 | nibble, registers 14/15
+# 0x0F, 0xB4 0xFF) or "s1985" (0xB5 the nibble, registers 14/15 0x00, and
+# 0xB4, 0xB6 and 0xB7 0x8B, as on a real HB-F1XD). Machines override it.
+read_back: plain

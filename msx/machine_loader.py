@@ -50,6 +50,7 @@ from msx.machine_spec import (
     MapperPortForm,
     PrinterPortForm,
     PsgReadBack,
+    RtcReadBack,
 )
 from msx.mapper import (
     Ascii8Mapper,
@@ -81,7 +82,7 @@ from msx.ppi import PPI
 from msx.printer import PrinterPort
 from msx.psg import AY8910_READ_MASK, PSG, YM2149_READ_MASK
 from msx.ram_mapper import RamMapper
-from msx.rtc import RTC, check_start
+from msx.rtc import PLAIN_READ_VALUES, RTC, S1985_READ_VALUES, check_start
 from msx.scc import SCC
 from msx.sram import SramImage
 from msx.vdp.v9938 import V9938
@@ -1150,7 +1151,10 @@ def _build_msx2(
     rtc: RTC | None = None
     if spec.has_rtc:
         rtc_sram = config.media.get(MediaId.RTC_CMOS)
-        rtc = RTC(sram=rtc_sram, start=config.rtc_initial_time)
+        rtc_values = PLAIN_READ_VALUES
+        if spec.rtc_read_back is RtcReadBack.S1985:
+            rtc_values = S1985_READ_VALUES
+        rtc = RTC(sram=rtc_sram, start=config.rtc_initial_time, read_values=rtc_values)
     ppi = PPI(
         memory=memory, _input=input_state, control_read=spec.ppi_control_read
     )
@@ -1163,6 +1167,10 @@ def _build_msx2(
         rtc_s, rtc_e = _io_range(spec, "rtc_rp5c01", _DEFAULT_IO_PORTS["rtc_rp5c01"])
         io.register_read(rtc_s, rtc_e, rtc.read_port)
         io.register_write(rtc_s, rtc_e, rtc.write_port)
+        if spec.rtc_read_back is RtcReadBack.S1985:
+            # Read-only: a write to 0xB6/0xB7 is not measured, so it stays
+            # unconnected.
+            io.register_read(0xB6, 0xB7, rtc.read_port)
 
     cpu = Z80(read_byte=memory.read, write_byte=memory.write,
               m1_wait_states=spec.m1_wait_states)

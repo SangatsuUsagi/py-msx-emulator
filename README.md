@@ -10,7 +10,7 @@ A functionally accurate MSX1/MSX2 emulator, written in pure Python 3.10+ and dri
 
 Every hardware component is pure Python. A machine-readable specification defines each component before its implementation, and these specs drive the test suite. See [Spec-driven architecture](#spec-driven-architecture) for details. The component wiring is explicit: `build_machine()` connects the components by hand, with no reflection or dependency injection. The only platform-specific dependency is pysdl2, for the display and audio frontend. [`docs/technical-implementation.md`](docs/technical-implementation.md) describes the internals.
 
-The core (`msx/`) reads no file and no host clock. Code outside it uses the machine only through the core API (`msx/core_api.py`). `include/msx_core.h` is the C form of that API, at ABI version 1.5, so that a core in another language can replace the Python core. See [Porting the core](docs/technical-implementation.md#porting-the-core).
+The core (`msx/`) reads no file and no host clock. Code outside it uses the machine only through the core API (`msx/core_api.py`). `include/msx_core.h` is the C form of that API, at ABI version 1.6, so that a core in another language can replace the Python core. See [Porting the core](docs/technical-implementation.md#porting-the-core).
 
 The emulator needs BIOS ROMs, which the repository does not include. The free [C-BIOS](https://cbios.sourceforge.net/) works for the generic machines. [QUICK_START.md](QUICK_START.md) explains the setup.
 
@@ -814,7 +814,7 @@ Key fields:
 | `slots.primary.N` | Primary slot N: `{type: cartridge}`, `{type: ram, ...}`, or inline ROM `content` |
 | `slots.primary.N.expanded` | Set `true` to expand into 4 secondary slots |
 | `builtin_devices` | Devices wired directly (not slot-based): VDP, PSG, PPI, RTC, RAM mapper |
-| `overrides` | Per-machine device settings. The loader reads only `keyboard_type` and `control_read` for `ppi8255`, `form` for `printer_port` and `mapper_io`, and `read_back` for `psg_ay8910`. It accepts and ignores other keys (e.g. `vram_kb: 128` for V9938) |
+| `overrides` | Per-machine device settings. The loader reads only `keyboard_type` and `control_read` for `ppi8255`, `form` for `printer_port` and `mapper_io`, and `read_back` for `psg_ay8910` and `rtc_rp5c01`. It accepts and ignores other keys (e.g. `vram_kb: 128` for V9938) |
 | `sha1` | Documentation only: the expected SHA1 of the dump. The loader does not compare it with the file, whether it is `null` or a hash. The core checks the SHA1 that the emulator calculates from the bytes it read |
 
 To use a custom machine definition, add a new YAML file to `config/machines/` and pass its `id` to `--machine`. At load time, the emulator skips device entries with `implemented: false` in their device YAML and shows a warning.

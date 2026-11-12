@@ -152,17 +152,17 @@ _TAPE_ITEMS = {
 }
 
 
-def test_the_psg_read_back_form_is_the_fifth_minor_increase() -> None:
-    # machine-c-abi "The PSG read-back form is the fifth minor increase":
-    # MachineConfig format 6 adds a document key and no declaration.
-    assert _version_macros() == (1, 5)
+def test_the_rtc_read_back_form_is_the_sixth_minor_increase() -> None:
+    # machine-c-abi "The RTC read-back form is the sixth minor increase":
+    # MachineConfig format 7 adds a document key and no declaration.
+    assert _version_macros() == (1, 6)
 
 
 def test_the_cassette_additions_are_a_minor_change() -> None:
     # machine-c-abi "The additions are a minor change": the 1.1 items are the
-    # 1.2 baseline (unchanged in 1.3 to 1.5) without the cassette items.
+    # 1.2 baseline (unchanged in 1.3 to 1.6) without the cassette items.
     version, items = _read_baseline()
-    assert version == "version 1.5"
+    assert version == "version 1.6"
     assert _TAPE_ITEMS <= items
     assert _classify(items - _TAPE_ITEMS, _abi_items(_text())) == "minor"
 
