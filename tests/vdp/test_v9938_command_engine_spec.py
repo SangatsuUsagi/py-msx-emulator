@@ -27,12 +27,15 @@ from msx.vdp.v9938 import (
     _ARG_MAJ,
     _ARG_MXD,
     _ARG_MXS,
-    _HMMM_CYCLES_PER_BYTE,
-    _HMMV_CYCLES_PER_BYTE,
-    _LMMM_CYCLES_PER_DOT,
-    _LMMV_CYCLES_PER_DOT,
+    _COST_BLANK,
+    _COST_SPRITES_OFF,
+    _COST_SPRITES_ON,
+    _HMMM_COST16,
+    _HMMV_COST16,
+    _LMMM_COST16,
+    _LMMV_COST16,
     _TR_REASSERT_CYCLES,
-    _YMMM_CYCLES_PER_BYTE,
+    _YMMM_COST16,
     V9938,
 )
 
@@ -243,7 +246,7 @@ def test_hmmv_ny_zero_means_1024_lines() -> None:
     1024 rows of VRAM."""
     vdp = _make_vdp()
     _dispatch(vdp, cmd_code=0xC, dx=0, dy=0, nx=8, ny=0, clr=0x00)
-    assert vdp._cmd_remaining == (8 // 2) * 1024 * _HMMV_CYCLES_PER_BYTE
+    assert vdp._cmd_remaining == (8 // 2) * 1024 * _HMMV_COST16[vdp._line_kind] // 16
 
 
 # ---------------------------------------------------------------------------
@@ -266,8 +269,9 @@ def test_ymmm_ce_duration_is_byte_unit() -> None:
     vdp = _make_vdp()
     # DIX clear, DX=0 -> the strip spans the whole 128-byte line.
     _dispatch(vdp, cmd_code=0xE, dx=0, sy=0, dy=1, ny=4)
-    assert vdp._cmd_remaining == 128 * 4 * _YMMM_CYCLES_PER_BYTE
-    vdp.tick(128 * 4 * _YMMM_CYCLES_PER_BYTE)
+    duration = 128 * 4 * _YMMM_COST16[vdp._line_kind] // 16
+    assert vdp._cmd_remaining == duration
+    vdp.tick(duration)
     assert vdp._status2 & _CE == 0
 
 
@@ -327,37 +331,131 @@ def test_search_result_high_reads_ones_when_bit_eight_is_clear() -> None:
 # Config defaults
 # ---------------------------------------------------------------------------
 
+def _on_line(vdp: V9938, line: int, sprites: bool = True, lines_212: bool = False) -> None:
+    """Start `line` with sprites on or off (R#8 SPD) and 192 or 212 lines (R#9 LN)."""
+    vdp.regs[8] = 0x08 if sprites else 0x0A
+    vdp.regs[9] = 0x80 if lines_212 else 0x00
+    vdp.begin_scanline(line)
+
+
 def test_cycle_cost_defaults() -> None:
-    """Per-command costs measured on a real HB-F1XD (2026-10-07), and the
-    HMMC/LMMC TR re-assert delay."""
-    assert _HMMV_CYCLES_PER_BYTE == 10
-    assert _HMMM_CYCLES_PER_BYTE == 21
-    assert _YMMM_CYCLES_PER_BYTE == 18
-    assert _LMMV_CYCLES_PER_DOT == 21
-    assert _LMMM_CYCLES_PER_DOT == 30
+    """Scenario: Each command uses its own cost -- 1/16 T-state per element for a
+    blank, sprites-off and sprites-on line (real HB-F1XD, CMDTIME2/CMDTIME3), and
+    the HMMC/LMMC TR re-assert delay."""
+    assert _HMMV_COST16 == (130, 170, 177)
+    assert _HMMM_COST16 == (246, 263, 366)
+    assert _YMMM_COST16 == (175, 186, 334)
+    assert _LMMV_COST16 == (261, 331, 368)
+    assert _LMMM_COST16 == (347, 356, 525)
+    assert (_COST_BLANK, _COST_SPRITES_OFF, _COST_SPRITES_ON) == (0, 1, 2)
     assert _TR_REASSERT_CYCLES == 8
 
 
-@pytest.mark.parametrize(("cmd_code", "dy", "expected"), [
-    (0xC, 0, 27136 * 10),    # HMMV
-    (0xD, 256, 27136 * 21),  # HMMM page 0 -> 1
-    (0xE, 256, 27136 * 18),  # YMMM page 0 -> 1
-    (0x8, 0, 54272 * 21),    # LMMV
-    (0x9, 256, 54272 * 30),  # LMMM page 0 -> 1
+@pytest.mark.parametrize(("cmd_code", "dy", "units", "cost16"), [
+    (0xC, 0, 27136, _HMMV_COST16),    # HMMV
+    (0xD, 256, 27136, _HMMM_COST16),  # HMMM page 0 -> 1
+    (0xE, 256, 27136, _YMMM_COST16),  # YMMM page 0 -> 1
+    (0x8, 0, 54272, _LMMV_COST16),    # LMMV
+    (0x9, 256, 54272, _LMMM_COST16),  # LMMM page 0 -> 1
 ])
-def test_full_page_command_durations(cmd_code: int, dy: int, expected: int) -> None:
-    """The real HB-F1XD timing cases (2026-10-07): each command covers the whole GRAPHIC 4 page."""
+@pytest.mark.parametrize(("line", "sprites", "kind"), [
+    (200, True, _COST_BLANK),
+    (0, False, _COST_SPRITES_OFF),
+    (0, True, _COST_SPRITES_ON),
+])
+def test_full_page_command_durations(cmd_code: int, dy: int, units: int,
+                                     cost16: tuple[int, int, int], line: int,
+                                     sprites: bool, kind: int) -> None:
+    """Each command covers the whole GRAPHIC 4 page, on each line kind."""
     vdp = _make_vdp()
+    _on_line(vdp, line, sprites)
     _dispatch(vdp, cmd_code=cmd_code, sx=0, sy=0, dx=0, dy=dy, nx=256, ny=212)
-    assert vdp._cmd_remaining == expected
+    assert vdp._cmd_remaining == units * cost16[kind] // 16
 
 
-def test_minimum_command_duration() -> None:
-    """config.minimum_command_cycles: even the smallest command holds CE for a
-    non-zero time."""
+def test_hmmv_ce_held_on_a_sprites_on_line() -> None:
+    """Scenario: HMMV CE held after dispatch."""
     vdp = _make_vdp()
-    _dispatch(vdp, cmd_code=0xC, dx=0, dy=0, nx=1, ny=1, clr=0x00)
-    assert vdp._cmd_remaining >= 4
+    _on_line(vdp, 0)
+    _dispatch(vdp, cmd_code=0xC, dx=0, dy=0, nx=256, ny=212, clr=0x00)
+    assert vdp._status2 & _CE
+    assert vdp._cmd_remaining == 300192
+    vdp.tick(300191)
+    assert vdp._status2 & _CE
+    vdp.tick(1)
+    assert vdp._status2 & _CE == 0
+
+
+def test_lmmm_uses_pixel_unit_coefficient() -> None:
+    """Scenario: LMMM uses pixel-unit coefficient (on a blank line)."""
+    vdp = _make_vdp()
+    _on_line(vdp, 250)
+    _dispatch(vdp, cmd_code=0x9, sx=0, sy=0, dx=0, dy=4, nx=256, ny=1)
+    assert vdp._cmd_remaining == 5552
+
+
+@pytest.mark.parametrize(("r1", "r8", "r9", "line", "kind"), [
+    (0x60, 0x08, 0x00, 0, _COST_SPRITES_ON),
+    (0x60, 0x08, 0x00, 191, _COST_SPRITES_ON),
+    (0x60, 0x08, 0x00, 192, _COST_BLANK),      # 192-line mode
+    (0x60, 0x08, 0x80, 192, _COST_SPRITES_ON),  # 212-line mode
+    (0x60, 0x08, 0x80, 212, _COST_BLANK),
+    (0x60, 0x08, 0x00, 261, _COST_BLANK),
+    (0x60, 0x0A, 0x00, 0, _COST_SPRITES_OFF),  # SPD
+    (0x20, 0x08, 0x00, 0, _COST_BLANK),        # BL = 0
+    (0x20, 0x0A, 0x00, 0, _COST_BLANK),        # BL = 0, SPD makes no difference
+])
+def test_line_kinds(r1: int, r8: int, r9: int, line: int, kind: int) -> None:
+    """Scenario: Line kinds -- from BL, the display height and SPD."""
+    vdp = _make_vdp(r1=r1)
+    vdp.regs[8] = r8
+    vdp.regs[9] = r9
+    vdp.begin_scanline(line)
+    assert vdp._line_kind == kind
+
+
+def test_line_kind_ignores_the_sprite_attribute_table() -> None:
+    """Scenario: Line kinds -- sprites at Y 216, or on the line, do not change
+    the kind; only SPD does."""
+    vdp = _make_vdp()
+    vdp.regs[5] = 0xEF  # sprite attribute table at 0x7600 (SCREEN 5)
+    vdp.regs[11] = 0x00
+    vdp.vram[0x7600] = 216
+    _on_line(vdp, 10)
+    assert vdp._line_kind == _COST_SPRITES_ON
+    vdp.vram[0x7600] = 5
+    _on_line(vdp, 10)
+    assert vdp._line_kind == _COST_SPRITES_ON
+
+
+def test_rescale_when_the_line_kind_changes() -> None:
+    """Scenario: Rescale when the line kind changes."""
+    vdp = _make_vdp()
+    _on_line(vdp, 211, lines_212=True)
+    _dispatch(vdp, cmd_code=0xC, dx=0, dy=0, nx=256, ny=212, clr=0x00)
+    vdp._cmd_remaining = 100000
+    vdp.begin_scanline(212)
+    assert vdp._line_kind == _COST_BLANK
+    assert vdp._cmd_remaining == 73446
+
+
+def test_no_rescale_on_the_same_line_kind() -> None:
+    """Scenario: No rescale on the same line kind."""
+    vdp = _make_vdp()
+    _on_line(vdp, 10)
+    _dispatch(vdp, cmd_code=0xD, sx=0, sy=0, dx=0, dy=256, nx=256, ny=212)
+    before = vdp._cmd_remaining
+    vdp.begin_scanline(11)
+    assert vdp._cmd_remaining == before
+
+
+def test_smallest_command_duration() -> None:
+    """One element still holds CE for more than 8 T-states, so no minimum is
+    needed."""
+    vdp = _make_vdp()
+    _dispatch(vdp, cmd_code=0xC, dx=0, dy=0, nx=2, ny=1, clr=0x00)  # one byte
+    assert vdp._cmd_remaining == _HMMV_COST16[vdp._line_kind] // 16
+    assert vdp._cmd_remaining >= 8
 
 
 # ---------------------------------------------------------------------------
@@ -455,7 +553,7 @@ def test_origin_past_the_right_edge_processes_one_element_per_line() -> None:
     element per row rather than a full-width run."""
     vdp = _make_vdp()
     _dispatch(vdp, cmd_code=0x8, dx=300, dy=0, nx=8, ny=1, clr=0xF)
-    assert vdp._cmd_remaining == 1 * 1 * _LMMV_CYCLES_PER_DOT
+    assert vdp._cmd_remaining == 1 * 1 * _LMMV_COST16[vdp._line_kind] // 16
 
 
 def test_copy_clips_against_whichever_operand_is_nearer_the_edge() -> None:
@@ -651,7 +749,7 @@ def test_hmmv_outside_with_ny_0_covers_all_128_kb() -> None:
     vdp = _hmmv_outside(dy=0, nx=16, ny=0)
     assert _written(vdp) == {(block << 8) | 0xFF: 0xA5 for block in range(512)}
     assert vdp._status2 & _CE
-    assert vdp._cmd_remaining == 1024 * _HMMV_CYCLES_PER_BYTE
+    assert vdp._cmd_remaining == 1024 * _HMMV_COST16[vdp._line_kind] // 16
 
 
 def test_hmmv_outside_runs_upward_with_diy() -> None:

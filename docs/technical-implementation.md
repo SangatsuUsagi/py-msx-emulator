@@ -310,17 +310,17 @@ The V9938 hardware command engine supports byte-level and pixel-level VRAM opera
 
 The engine executes each command immediately. To model the command duration, `V9938.tick(n)` decrements an approximate cycle budget (`_cmd_remaining`). While a command runs, the machine calls `tick(n)` after each instruction with the T-states that the instruction used. While no command runs, the machine only adds the T-states to `_line_cycle`, the horizontal-retrace timer that `tick(n)` also advances (see [H-line interrupt](#h-line-interrupt)). Software that busy-waits on S#2 bit 0 (CE) sees CE clear after the budget expires.
 
-Each block command has its own cost per element, in T-states:
+Each block command has three costs per element, in 1/16 T-state, one for each kind of raster line. A line is blank when it is in the border or vertical blanking, or when the display is off (R#1 BL = 0). An active line is sprites-off when R#8 SPD = 1, and sprites-on otherwise. The number of sprites does not change the cost.
 
-| Constant                | Cost | Unit          |
-| ----------------------- | ---- | ------------- |
-| `_HMMV_CYCLES_PER_BYTE` | 10   | per VRAM byte |
-| `_HMMM_CYCLES_PER_BYTE` | 21   | per VRAM byte |
-| `_YMMM_CYCLES_PER_BYTE` | 18   | per VRAM byte |
-| `_LMMV_CYCLES_PER_DOT`  | 21   | per dot       |
-| `_LMMM_CYCLES_PER_DOT`  | 30   | per dot       |
+| Constant       | Blank | Sprites off | Sprites on | Unit          |
+| -------------- | ----- | ----------- | ---------- | ------------- |
+| `_HMMV_COST16` | 130   | 170         | 177        | per VRAM byte |
+| `_HMMM_COST16` | 246   | 263         | 366        | per VRAM byte |
+| `_YMMM_COST16` | 175   | 186         | 334        | per VRAM byte |
+| `_LMMV_COST16` | 261   | 331         | 368        | per dot       |
+| `_LMMM_COST16` | 347   | 356         | 525        | per dot       |
 
-These values come from timing full-page commands on a real SONY HB-F1XD with the display and sprites on, the slowest case. The emulator does not model the speed-up with less display or sprite VRAM traffic.
+At dispatch, `_cmd_remaining` is the element count times the cost of the current line kind, divided by 16. `begin_scanline()` finds the kind of each new line. When the kind changes while a command runs, it converts `_cmd_remaining` to the new cost. `_cmd_remaining` therefore stays a count of T-states. The costs come from timing full-page SCREEN 5 commands on a real SONY HB-F1XD with the display on and off, 192 and 212 lines, and sprites on and off. The emulator gives each of these times within 2 jiffies (1/60 s). The cost does not change inside a line, and GRAPHIC 4, 6 and 7 use the SCREEN 5 costs.
 
 A write to R#44 (COL) sets the HMMC/LMMC transfer latch (`_cmd_transfer`). The first pixel or byte of a transfer comes from a pending COL write. The engine does not load it automatically when the command starts. This matches the openMSX behavior.
 
@@ -328,7 +328,7 @@ A write to R#44 (COL) sets the HMMC/LMMC transfer latch (`_cmd_transfer`). The f
 
 ### Known limitations
 
-- Command timing is approximate. The engine uses one measured cost per element (see above). It does not use the per-command cycle counts of the V9938 data book.
+- Command timing is approximate. The engine uses measured costs per element for each line kind (see above). It does not model the VRAM access slots inside a line, and it does not use the per-command cycle counts of the V9938 data book.
 - The engine writes the VRAM results when the command starts, not incrementally. Software that reads VRAM while a command is nominally in progress can see the completed result before CE clears.
 - The emulator renders each frame after the CPU runs it. The CPU runs a full frame, VDP commands write into VRAM instantly, and then a single render pass covers the whole frame. Both the V9938 and the TMS9918A do this render pass at the start of vertical blanking. The emulator does not faithfully reproduce VRAM updates that follow the raster within a frame (beam-raced blits, double-buffered title screens). The banded renderer above recovers mid-frame _register_ changes, but not mid-frame VRAM content.
 

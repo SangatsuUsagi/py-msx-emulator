@@ -1,7 +1,7 @@
 """Tests for V9938 hardware command engine."""
 from __future__ import annotations
 
-from msx.vdp.v9938 import V9938
+from msx.vdp.v9938 import _HMMV_COST16, _LMMV_COST16, V9938
 
 
 def _make_vdp() -> V9938:
@@ -756,8 +756,9 @@ def test_lmmv_ce_duration_is_pixel_unit() -> None:
     _dispatch_cmd(lmmv, cmd_code=0x8, dx=0, dy=0, nx=8, ny=2, clr=0x01)
     hmmv = _make_vdp()
     _dispatch_cmd(hmmv, cmd_code=0xC, dx=0, dy=0, nx=8, ny=2, clr=0x01)
-    assert lmmv._cmd_remaining == 8 * 2 * 21         # nx*ny*_LMMV_CYCLES_PER_DOT
-    assert hmmv._cmd_remaining == (8 // 2) * 2 * 10  # (nx/ppb)*ny*_HMMV_CYCLES_PER_BYTE
+    kind = lmmv._line_kind
+    assert lmmv._cmd_remaining == 8 * 2 * _LMMV_COST16[kind] // 16         # nx*ny dots
+    assert hmmv._cmd_remaining == (8 // 2) * 2 * _HMMV_COST16[kind] // 16  # (nx/ppb)*ny bytes
 
 
 def test_lmmm_ce_clears_after_full_tick() -> None:
