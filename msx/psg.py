@@ -112,6 +112,10 @@ class PSG:
     # The port 0xA2 read-back mask per register, fixed by build_machine for
     # the machine's life (YM2149_READ_MASK or AY8910_READ_MASK).
     read_mask: tuple[int, ...] = YM2149_READ_MASK
+    # The gated pin 6/7 read form, fixed by build_machine for the machine's
+    # life: a register 14 read ANDs bits 4-5 with the selected port's pin
+    # 6/7 outputs (register 15 bits 0-1 for Joy1, 2-3 for Joy2).
+    pin67_gated: bool = False
     _input: InputLines | None = field(default=None, repr=False)
     _mouse: MouseSlot | None = field(default=None, repr=False)
     # The mouse port's pins 6, 7 and 8 (bits 0-2) at the last register 15
@@ -232,9 +236,17 @@ class PSG:
                     high |= self._cassette.read_level() << _PORT_A_TAPE_SHIFT
                 joy_select = JoystickPort((self.regs[15] >> 6) & 1)
                 if self._mouse is not None and joy_select == self._mouse.port:
-                    return (self._mouse.device.read() & 0x3F) | high
-                sel = self._input.joy1 if joy_select == JoystickPort.JOY1 else self._input.joy2
-                return (sel & 0x3F) | high
+                    low = self._mouse.device.read() & 0x3F
+                elif joy_select == JoystickPort.JOY1:
+                    low = self._input.joy1 & 0x3F
+                else:
+                    low = self._input.joy2 & 0x3F
+                if self.pin67_gated:
+                    # An output pin at 0 pulls its input pin low, for a
+                    # joystick and a mouse alike (real SONY HB-F1XD).
+                    out = (self.regs[15] >> (2 * joy_select)) & 0x03
+                    low &= 0x0F | (out << 4)
+                return low | high
             return self.regs[self.latch] & self.read_mask[self.latch]
         return 0xFF
 

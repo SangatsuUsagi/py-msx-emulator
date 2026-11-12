@@ -40,6 +40,13 @@ class PsgReadBack(str, Enum):
     AY8910 = "ay8910"  # the AY-3-8910 latch widths, unused bits 0
 
 
+class PsgPin67Read(str, Enum):
+    """What a PSG register 14 read gives on bits 4-5, the joystick pins 6/7."""
+
+    PLAIN = "plain"  # the port's input lines only
+    GATED = "gated"  # each input ANDed with its own R15 output bit
+
+
 class RtcReadBack(str, Enum):
     """What the RTC ports read (msx/rtc.py read values)."""
 
@@ -144,6 +151,10 @@ class MachineSpec:
     # What a PSG register read returns, resolved from the psg_ay8910
     # device's read_back option.
     psg_read_back: PsgReadBack = PsgReadBack.YM2149
+
+    # What a PSG register 14 read gives on the pin 6/7 bits, resolved from
+    # the psg_ay8910 device's pin67_read option.
+    psg_pin67_read: PsgPin67Read = PsgPin67Read.PLAIN
 
     # What the RTC ports read, resolved from the rtc_rp5c01 device's
     # read_back option.

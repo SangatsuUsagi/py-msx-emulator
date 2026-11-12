@@ -9,3 +9,7 @@ controls: programmable_sound_generator
 # or "ay8910" (the AY-3-8910 latch widths: R1/R3/R5/R13 4 bits, R6 and
 # R8-R10 5 bits, unused bits 0). Machines override it.
 read_back: ym2149
+# What a register 14 read gives on bits 4-5 (joystick pins 6/7): "plain" (the
+# port's input lines) or "gated" (each input ANDed with its own register 15
+# output bit). Machines override it.
+pin67_read: plain

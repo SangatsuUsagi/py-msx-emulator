@@ -102,9 +102,9 @@ def test_machine_properties_are_integers() -> None:
 # The canonical documents' SHA-256, recorded at format version 2. The video
 # standard and the keyboard layout stay text in the document.
 _DOCUMENT_SHA256 = {
-    "cbios_msx1_eu": "15621f247f8e9b0be0b5da0d1b037992968ff18b726fa5dd1a7ca7753047749f",
-    "cbios_msx1_jp": "b3e4dee1854bc7a01b5b47486b437a48a6342a353bde8e6021ef906043574551",
-    "hb_f1xd": "8fa7a54e0db4854bbd5fabca244298c4b32647471879dd95de6998b8c839b52b",
+    "cbios_msx1_eu": "a599559d7ab11bd0d2da0a16896f151ceffdabf2fd20d2cf89bee549811ef24c",
+    "cbios_msx1_jp": "ac71696b425bc0b22209283ebbd16d0dde02f27371abc58666eeaaa79dbb3cac",
+    "hb_f1xd": "f14b9a7d9a74241afd71b81511acf00c6b1c96db63e054c3ee159714eefd51d6",
 }
 
 
@@ -193,7 +193,7 @@ def test_the_same_inputs_give_the_same_document_bytes(
     first = _document(cartridge1=_CART, mapper1="ASCII8")
     second = _document(cartridge1=_CART, mapper1="ASCII8")
     assert first == second
-    assert json.loads(first)["format_version"] == 7
+    assert json.loads(first)["format_version"] == 8
 
 
 def test_run_inputs_do_not_change_the_document(
@@ -297,6 +297,7 @@ def format_1_config(machine_id: str = "hb_10", keep_printer_port: bool = False):
     del document["machine"]["mapper_io"]
     del document["machine"]["psg_read_back"]
     del document["machine"]["rtc_read_back"]
+    del document["machine"]["psg_pin67_read"]
     del document["machine"]["cassette_port"]
     del document["machine"]["ram_mapper_subslot"]
     if not keep_printer_port:
@@ -314,6 +315,7 @@ def format_2_config(machine_id: str = "hb_10", keep_cassette_port: bool = False)
     del document["machine"]["mapper_io"]
     del document["machine"]["psg_read_back"]
     del document["machine"]["rtc_read_back"]
+    del document["machine"]["psg_pin67_read"]
     del document["machine"]["ram_mapper_subslot"]
     if not keep_cassette_port:
         del document["machine"]["cassette_port"]
@@ -330,6 +332,7 @@ def format_3_config(machine_id: str = "cbios_msx2", keep_subslot: bool = False):
     del document["machine"]["mapper_io"]
     del document["machine"]["psg_read_back"]
     del document["machine"]["rtc_read_back"]
+    del document["machine"]["psg_pin67_read"]
     if not keep_subslot:
         del document["machine"]["ram_mapper_subslot"]
     config.document = json.dumps(document).encode("utf-8")
@@ -357,6 +360,7 @@ def format_4_config(machine_id: str = "hb_f1xd", keep_mapper_io: bool = False):
     document["format_version"] = 4
     del document["machine"]["psg_read_back"]
     del document["machine"]["rtc_read_back"]
+    del document["machine"]["psg_pin67_read"]
     if not keep_mapper_io:
         del document["machine"]["mapper_io"]
     config.document = json.dumps(document).encode("utf-8")
@@ -392,6 +396,7 @@ def format_5_config(machine_id: str = "hb_f1xd", keep_psg_read_back: bool = Fals
     document = json.loads(config.document)
     document["format_version"] = 5
     del document["machine"]["rtc_read_back"]
+    del document["machine"]["psg_pin67_read"]
     if not keep_psg_read_back:
         del document["machine"]["psg_read_back"]
     config.document = json.dumps(document).encode("utf-8")
@@ -429,6 +434,7 @@ def format_6_config(machine_id: str = "hb_f1xd", keep_rtc_read_back: bool = Fals
     document["format_version"] = 6
     if not keep_rtc_read_back:
         del document["machine"]["rtc_read_back"]
+    del document["machine"]["psg_pin67_read"]
     config.document = json.dumps(document).encode("utf-8")
     return config
 
@@ -454,6 +460,41 @@ def test_the_rtc_read_back_form_round_trips_through_the_document() -> None:
 
     parsed = parse_machine_config(_document("hb_f1xd"))
     assert parsed.spec.rtc_read_back is RtcReadBack.S1985
+
+
+def format_7_config(machine_id: str = "hb_f1xd", keep_psg_pin67_read: bool = False):
+    """A machine's config with its document written as format version 7."""
+    spec = _spec(machine_id)
+    config = load_machine_config(spec, **_overrides(spec)).config
+    document = json.loads(config.document)
+    document["format_version"] = 7
+    if not keep_psg_pin67_read:
+        del document["machine"]["psg_pin67_read"]
+    config.document = json.dumps(document).encode("utf-8")
+    return config
+
+
+def test_a_format_7_document_has_the_plain_psg_pin67_read_form() -> None:
+    # machine-loader "A format 7 document has the plain PSG pin 6/7 read form".
+    from msx.machine_spec import PsgPin67Read
+
+    assert parse_machine_config(format_7_config().document).spec.psg_pin67_read is (
+        PsgPin67Read.PLAIN
+    )
+
+
+def test_a_format_7_document_with_psg_pin67_read_is_rejected() -> None:
+    # machine-loader "A format 7 document with psg_pin67_read is rejected".
+    with pytest.raises(MachineLoadError, match="psg_pin67_read"):
+        build_machine(format_7_config(keep_psg_pin67_read=True))
+
+
+def test_the_pin67_read_form_round_trips_through_the_document() -> None:
+    # machine-loader "The pin 6/7 read form round-trips through the document".
+    from msx.machine_spec import PsgPin67Read
+
+    parsed = parse_machine_config(_document("hb_f1xd"))
+    assert parsed.spec.psg_pin67_read is PsgPin67Read.GATED
 
 
 def test_a_ram_mapper_subslot_without_a_mapper_is_rejected() -> None:
@@ -493,7 +534,7 @@ def test_a_format_1_document_with_printer_port_is_rejected() -> None:
         build_machine(format_1_config(keep_printer_port=True))
 
 
-@pytest.mark.parametrize("version", [0, 8])
+@pytest.mark.parametrize("version", [0, 9])
 def test_an_unsupported_format_version_is_rejected(version: int) -> None:
     # machine-loader "An unsupported format version is rejected".
     config = format_1_config()
@@ -504,7 +545,7 @@ def test_an_unsupported_format_version_is_rejected(version: int) -> None:
         build_machine(config)
 
 
-@pytest.mark.parametrize(("version", "message"), [(8, "version 8, expected 1 to 7"),
+@pytest.mark.parametrize(("version", "message"), [(9, "version 9, expected 1 to 8"),
                                                   (1, "not valid JSON")])
 def test_a_document_that_is_not_strict_json_names_an_unsupported_version(
     version: int, message: str
