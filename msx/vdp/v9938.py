@@ -227,6 +227,11 @@ _YMMM_CYCLES_PER_BYTE: int = 18
 _LMMV_CYCLES_PER_DOT: int = 21
 _LMMM_CYCLES_PER_DOT: int = 30
 
+# HMMV outside GRAPHIC 4-7 writes one byte per line, at (Y * 128) | 0xFF
+# (real SONY HB-F1XD, 2026-11-12: Y 0-1023, DX and NX have no effect).
+_NON_BITMAP_LINE_BYTES: int = 128
+_NON_BITMAP_LINE_OFFSET: int = 0xFF
+
 # Display-relevant registers tracked in _reg_write_log for banded rendering.
 # Command-engine registers (R#32-R#46) and SAT registers are excluded. R#18 is
 # tracked so a mid-frame display-adjust change (per-region dot scroll, e.g. a
@@ -1227,9 +1232,17 @@ class V9938:
         self._status2 &= ~_S2_CE  # completion leaves TR alone (openMSX commandDone)
 
         # Commands are only defined in the bitmap modes; anywhere else the
-        # dispatch finishes immediately without touching VRAM. Codes 1-3 are
-        # reserved and behave as STOP, as does STOP itself.
-        if cmd == _CMD_ABRT or cmd < _CMD_POINT or not _is_command_mode(self.regs[0]):
+        # dispatch finishes immediately without touching VRAM, except HMMV
+        # (a real HB-F1XD writes one byte per line). Codes 1-3 are reserved
+        # and behave as STOP, as does STOP itself.
+        if cmd == _CMD_ABRT or cmd < _CMD_POINT:
+            self._cmd_code = _CMD_ABRT
+            self._cmd_remaining = 0
+            return
+        if not _is_command_mode(self.regs[0]):
+            if cmd == _CMD_HMMV:
+                self._cmd_hmmv_non_bitmap(ops)
+                return
             self._cmd_code = _CMD_ABRT
             self._cmd_remaining = 0
             return
@@ -1421,6 +1434,22 @@ class V9938:
         self._cmd_active = True
         self._status2 |= _S2_CE
         self._cmd_remaining = self._cmd_cycles(byte_cols, actual_ny, _HMMV_CYCLES_PER_BYTE)
+
+    def _cmd_hmmv_non_bitmap(self, ops: _CmdOperands) -> None:
+        # Outside GRAPHIC 4-7: one CLR byte per line at (Y * 128) | 0xFF, so a
+        # pair of lines shares a byte. DX and NX are ignored.
+        dy = ops.dy
+        ys = ops.ys
+        clr = ops.clr
+        lines = _clip_ny(dy, ops.ny, ops.diy)
+        if not ops.dst_ext:
+            for row in range(lines):
+                y = dy + row * ys
+                addr = ((y * _NON_BITMAP_LINE_BYTES) | _NON_BITMAP_LINE_OFFSET) & 0x1FFFF
+                self.vram[addr] = clr
+        self._cmd_active = True
+        self._status2 |= _S2_CE
+        self._cmd_remaining = self._cmd_cycles(1, lines, _HMMV_CYCLES_PER_BYTE)
 
     def _cmd_hmmm(self, ops: _CmdOperands) -> None:
         sx = ops.sx

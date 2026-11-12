@@ -607,8 +607,73 @@ def test_nx_is_ten_bits() -> None:
 
 def test_commands_do_nothing_outside_the_bitmap_modes() -> None:
     vdp = _make_vdp(r0=0x00, r1=0x70)  # TEXT1
-    _dispatch(vdp, cmd_code=0xC, dx=0, dy=0, nx=8, ny=2, clr=0xAB)
-    assert vdp.vram[0] == 0x00
+    vdp.vram[0] = 0xAB
+    _dispatch(vdp, cmd_code=0xD, sx=0, sy=0, dx=0, dy=4, nx=8, ny=2)  # HMMM
+    assert not any(vdp.vram[1:])
+    assert vdp._status2 & _CE == 0
+
+
+# ---------------------------------------------------------------------------
+# HMMV outside the bitmap modes (real SONY HB-F1XD, CMDSCAN2/CMDSCAN3)
+# ---------------------------------------------------------------------------
+
+_GRAPHIC1 = (0x00, 0x60)
+_TEXT2 = (0x04, 0x70)
+
+
+def _written(vdp: V9938) -> dict[int, int]:
+    return {addr: value for addr, value in enumerate(vdp.vram) if value}
+
+
+def _hmmv_outside(mode: tuple[int, int] = _GRAPHIC1, **kwargs: int) -> V9938:
+    vdp = _make_vdp(r0=mode[0], r1=mode[1])
+    kwargs.setdefault("clr", 0xA5)
+    _dispatch(vdp, cmd_code=0xC, **kwargs)
+    return vdp
+
+
+def test_hmmv_outside_writes_one_byte_per_line_pair() -> None:
+    vdp = _hmmv_outside(dx=0, dy=0, nx=16, ny=4)
+    assert _written(vdp) == {0x000FF: 0xA5, 0x001FF: 0xA5}
+
+
+def test_hmmv_outside_crosses_y_255_without_wrapping() -> None:
+    vdp = _hmmv_outside(dy=254, nx=16, ny=4)
+    assert _written(vdp) == {0x07FFF: 0xA5, 0x080FF: 0xA5}
+
+
+def test_hmmv_outside_reaches_the_end_of_the_first_bank() -> None:
+    vdp = _hmmv_outside(dy=511, nx=16, ny=1)
+    assert _written(vdp) == {0x0FFFF: 0xA5}
+
+
+def test_hmmv_outside_with_ny_0_covers_all_128_kb() -> None:
+    vdp = _hmmv_outside(dy=0, nx=16, ny=0)
+    assert _written(vdp) == {(block << 8) | 0xFF: 0xA5 for block in range(512)}
+    assert vdp._status2 & _CE
+    assert vdp._cmd_remaining == 1024 * _HMMV_CYCLES_PER_BYTE
+
+
+def test_hmmv_outside_runs_upward_with_diy() -> None:
+    vdp = _hmmv_outside(dy=3, nx=16, ny=4, arg=_ARG_DIY)
+    assert _written(vdp) == {0x000FF: 0xA5, 0x001FF: 0xA5}
+
+
+@pytest.mark.parametrize("dx, nx", [(16, 16), (0, 0)])
+def test_hmmv_outside_ignores_dx_and_nx(dx: int, nx: int) -> None:
+    vdp = _hmmv_outside(dx=dx, dy=0, nx=nx, ny=4)
+    assert _written(vdp) == {0x000FF: 0xA5, 0x001FF: 0xA5}
+
+
+def test_hmmv_outside_in_text2_does_the_same() -> None:
+    vdp = _hmmv_outside(_TEXT2, dx=0, dy=0, nx=16, ny=4)
+    assert _written(vdp) == {0x000FF: 0xA5, 0x001FF: 0xA5}
+
+
+def test_lmmv_outside_still_writes_nothing() -> None:
+    vdp = _make_vdp(r0=_GRAPHIC1[0], r1=_GRAPHIC1[1])
+    _dispatch(vdp, cmd_code=0x8, dx=0, dy=0, nx=1, ny=1, clr=0xFF)
+    assert _written(vdp) == {}
     assert vdp._status2 & _CE == 0
 
 
