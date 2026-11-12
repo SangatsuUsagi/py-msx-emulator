@@ -40,6 +40,13 @@ class PsgReadBack(str, Enum):
     AY8910 = "ay8910"  # the AY-3-8910 latch widths, unused bits 0
 
 
+class RtcReadBack(str, Enum):
+    """What the RTC ports read (msx/rtc.py read values)."""
+
+    PLAIN = "plain"  # 0xB5 0xF0 | nibble, 0xB4 0xFF
+    S1985 = "s1985"  # 0xB5 the nibble, 0xB4/0xB6/0xB7 0x8B
+
+
 class PpiControlRead(str, Enum):
     """What a port 0xAB read returns; the 8255A data sheet calls it illegal."""
 
@@ -137,6 +144,10 @@ class MachineSpec:
     # What a PSG register read returns, resolved from the psg_ay8910
     # device's read_back option.
     psg_read_back: PsgReadBack = PsgReadBack.YM2149
+
+    # What the RTC ports read, resolved from the rtc_rp5c01 device's
+    # read_back option.
+    rtc_read_back: RtcReadBack = RtcReadBack.PLAIN
 
     # RAM mapper's configured size (MSX2, when has_ram_mapper is True), resolved
     # from the mapper: standard sub-slot's size_kb -- default 128 preserves

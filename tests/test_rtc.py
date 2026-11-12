@@ -1,4 +1,5 @@
 """Tests for the RP-5C01 RTC (register banks + CMOS RAM + running clock)."""
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -7,8 +8,9 @@ from host.machine_config import LoadedMachineConfig, load_machine_config, sram_p
 from host.media import persist_dirty_media
 from msx.boundary import RTC_CMOS_SIZE, MediaId, RtcTime
 from msx.clock import CoreClock
+from msx.machine import Machine
 from msx.machine_loader import build_machine
-from msx.machine_spec import MachineSpec, RomEntry
+from msx.machine_spec import MachineSpec, RomEntry, RtcReadBack
 from msx.rtc import (
     HOUR_MODE_REG,
     MODE_REG,
@@ -16,6 +18,7 @@ from msx.rtc import (
     RESET_FRACTION,
     RESET_REG,
     RTC,
+    S1985_READ_VALUES,
     TEST_REG,
     TEST_SECONDS,
 )
@@ -73,6 +76,70 @@ def test_register_select_only_low_nibble_decoded() -> None:
     rtc.write_port(0xB5, 0x0B)
     _select(rtc, MODE_REG)
     assert rtc.read_port(0xB5) & 0x0F == 0x0B
+
+
+def test_register_select_port_reads_0x8b_with_the_s1985_form() -> None:
+    # io-rtc "register-select port reads 0x8B with the s1985 form": a real
+    # HB-F1XD reads 8B whatever the latch and MODE hold (RTCRAW.BAS).
+    rtc = RTC(read_values=S1985_READ_VALUES)
+    rtc.write_port(0xB4, 0x05)
+    first = rtc.read_port(0xB4)
+    _select(rtc, MODE_REG)
+    rtc.write_port(0xB5, 0x0)
+    assert (first, rtc.read_port(0xB4)) == (0x8B, 0x8B)
+
+
+def test_data_read_has_the_high_nibble_0_with_the_s1985_form() -> None:
+    # io-rtc "data read has the high nibble 0 with the s1985 form".
+    rtc = RTC(read_values=S1985_READ_VALUES)
+    _set_block(rtc, 2)
+    _select(rtc, 0)
+    rtc.write_port(0xB5, 0xA)
+    data = rtc.read_port(0xB5)
+    _select(rtc, MODE_REG)
+    assert (data, rtc.read_port(0xB5)) == (0x0A, 0x0A)  # MODE: Timer-EN, block 2
+
+
+@pytest.mark.parametrize("reg, value", [(TEST_REG, 0x5), (RESET_REG, 0x3)])
+def test_test_and_reset_registers_read_0_with_the_s1985_form(reg: int, value: int) -> None:
+    # io-rtc "TEST and RESET registers read 0 with the s1985 form" (a real
+    # HB-F1XD, RTCSIDE.BAS).
+    rtc = RTC(read_values=S1985_READ_VALUES)
+    _select(rtc, reg)
+    rtc.write_port(0xB5, value)
+    assert rtc.read_port(0xB5) == 0x00
+
+
+def _form_machine(form: RtcReadBack) -> Machine:
+    spec = replace(_rtc_spec("rtc_form"), rtc_read_back=form)
+    return build_machine(
+        load_machine_config(spec, bios_override=_ROM, extrom_override=_EXTROM).config
+    )
+
+
+def test_ports_0xb6_and_0xb7_read_0x8b_with_the_s1985_form() -> None:
+    # io-rtc "ports 0xB6 and 0xB7 read 0x8B with the s1985 form".
+    machine = _form_machine(RtcReadBack.S1985)
+    machine.io.write_port(0xB4, MODE_REG)
+    assert (machine.io.read_port(0xB6), machine.io.read_port(0xB7)) == (0x8B, 0x8B)
+    assert machine.io.read_port(0xB5) == 0x08  # MODE, high nibble 0
+
+
+def test_ports_0xb6_and_0xb7_are_not_connected_with_the_plain_form() -> None:
+    # io-rtc "ports 0xB6 and 0xB7 are not connected with the plain form".
+    machine = _form_machine(RtcReadBack.PLAIN)
+    assert (machine.io.read_port(0xB6), machine.io.read_port(0xB7)) == (0xFF, 0xFF)
+    assert machine.io.read_port(0xB5) & 0xF0 == 0xF0
+
+
+def test_a_write_to_0xb6_or_0xb7_does_not_reach_the_rtc() -> None:
+    # io-rtc "a write to 0xB6 or 0xB7 does not reach the RTC".
+    machine = _form_machine(RtcReadBack.S1985)
+    machine.io.write_port(0xB4, 0)
+    before = machine.io.read_port(0xB5)
+    machine.io.write_port(0xB6, 0x0D)
+    machine.io.write_port(0xB7, 0x05)
+    assert machine.io.read_port(0xB5) == before
 
 
 def test_cmos_ram_persists_written_values() -> None:

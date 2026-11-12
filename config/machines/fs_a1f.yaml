@@ -85,6 +85,8 @@ builtin_devices:
     # Port decode (openMSX; not verified on a real FS-A1F).
     overrides: { form: s1985 }
   - ref: rtc_rp5c01
+    # Port reads: 0xB5 high nibble 0, 0xB4/0xB6/0xB7 0x8B (same S1985 MSX-ENGINE as the HB-F1XD; not verified on a real FS-A1F).
+    overrides: { read_back: s1985 }
   - ref: mapper_io
     # S1985 MSX-ENGINE latch: 0xFC-0xFF read (last write & 0x1F) | 0x80 (S1985 MSX-ENGINE as in openMSX; not verified on a real FS-A1F).
     overrides: { form: s1985 }

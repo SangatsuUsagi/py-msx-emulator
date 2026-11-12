@@ -19,8 +19,10 @@ is deterministic. A write to block 0 or 1 sets the counters from the digits,
 which is how software sets the clock.
 
 The chip is a 4-bit device: only the low nibble of each data byte is
-meaningful, and the MSX floats the high nibble to 1s (reads return 0xF0 |
-nibble).
+meaningful. What the rest of a port read returns depends on the machine
+(RtcReadValues): most MSX float the high nibble to 1s (0xF0 | nibble); a
+real HB-F1XD (S1985 MSX-ENGINE) reads it as 0 and reads 0x8B on 0xB4, 0xB6
+and 0xB7.
 """
 from __future__ import annotations
 
@@ -96,6 +98,24 @@ _MASK: tuple[tuple[int, ...], ...] = (
     (0xF,) * 13,                                                        # block 3: RAM
 )
 
+
+
+@dataclass(frozen=True)
+class RtcReadValues:
+    """The machine-dependent parts of an RTC port read."""
+
+    select: int      # a read of 0xB4 (and of 0xB6/0xB7 where they are decoded)
+    data_high: int   # ORed into a 0xB5 read
+    write_only: int  # the nibble registers 14 (TEST) and 15 (RESET) read
+
+
+# The high nibble floats to 1s; 0xB4 reads 0xFF.
+PLAIN_READ_VALUES = RtcReadValues(select=0xFF, data_high=0xF0, write_only=0x0F)
+# A real HB-F1XD (RTCSIDE.BAS 2026-11-11, RTCRAW.BAS 2026-11-12): the high
+# nibble and registers 14/15 read 0; 0xB4, 0xB6 and 0xB7 read 0x8B whatever
+# the latch and MODE hold. Where 0x8B comes from is not known.
+S1985_READ_VALUES = RtcReadValues(select=0x8B, data_high=0x00, write_only=0x00)
+
 _DAYS_IN_MONTH: tuple[int, ...] = (31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
 
 
@@ -140,6 +160,9 @@ class RTC:
     cmos: SramImage = field(init=False, repr=False)
     # The time the counters start from at creation, supplied by the host.
     start: RtcTime = RTC_DEFAULT_START
+    # What a port read returns besides the register nibble; build_machine
+    # sets it from the machine's form. Fixed for the machine's life.
+    read_values: RtcReadValues = PLAIN_READ_VALUES
     # The emulated time (msx/clock.py); build_machine gives the machine's
     # record. A bare RTC reads its own record, which stays at cycle 0, so
     # it stays at its start time.
@@ -274,13 +297,14 @@ class RTC:
     # argument; __post_init__ blanks a wrong-size image.
 
     def read_port(self, port: int) -> int:
-        """Read the register-select port (0xB4, write-only) or data port (0xB5)."""
-        if (port & 1) == 0:
-            return 0xFF  # 0xB4 is write-only; high bits float to 1
+        """Read the data port (0xB5) or the register-select port (0xB4,
+        write-only); 0xB6/0xB7 read as 0xB4 where the machine decodes them."""
+        if (port & 0x03) != 1:
+            return self.read_values.select
         reg = self._addr
         if reg < MODE_REG and _is_clock_block(self._mode & MODE_BLOCK_SELECT):
             self._count_time()
-        return 0xF0 | self._read_reg(reg)
+        return self.read_values.data_high | self._read_reg(reg)
 
     def write_port(self, port: int, value: int) -> None:
         """Write the register-select latch (0xB4) or the selected register (0xB5)."""
@@ -295,7 +319,7 @@ class RTC:
         if reg == MODE_REG:
             return self._mode & 0x0F
         if reg in (TEST_REG, RESET_REG):
-            return 0x0F  # write-only
+            return self.read_values.write_only  # write-only
         return self._read_masked(self._mode & MODE_BLOCK_SELECT, reg)
 
     def _write_reg(self, reg: int, value: int) -> None:

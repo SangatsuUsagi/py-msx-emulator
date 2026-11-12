@@ -34,6 +34,7 @@ from msx.machine_spec import (
     PrinterPortForm,
     PsgReadBack,
     RomEntry,
+    RtcReadBack,
     Slot0RamEntry,
 )
 from msx.snapshot_schema import (
@@ -56,15 +57,17 @@ _T = TypeVar("_T")
 # Version 4: machine.ram_mapper_subslot added.
 # Version 5: machine.mapper_io added.
 # Version 6: machine.psg_read_back added.
-MACHINE_CONFIG_FORMAT_VERSION: int = 6
+# Version 7: machine.rtc_read_back added.
+MACHINE_CONFIG_FORMAT_VERSION: int = 7
 # The oldest version the parser accepts (machine-loader "build_machine checks
 # the document and its ROM images"). A key that a later version adds has a
 # default for an older document: version 1 has no printer_port, so its form
 # is none, versions 1 and 2 have no cassette_port, so the machine has none,
 # versions 1 to 3 have no ram_mapper_subslot, so the mapper has no
 # sub-slot (Memory's legacy slot-3 dispatch), versions 1 to 4 have no
-# mapper_io, so its form is plain, and versions 1 to 5 have no
-# psg_read_back, so its form is ym2149.
+# mapper_io, so its form is plain, versions 1 to 5 have no
+# psg_read_back, so its form is ym2149, and versions 1 to 6 have no
+# rtc_read_back, so its form is plain.
 MACHINE_CONFIG_MIN_FORMAT_VERSION: int = 1
 
 _SHA1_HEX_LEN = 40
@@ -249,6 +252,7 @@ def _machine_object(
         "cassette_port": spec.cassette_port,
         "mapper_io": spec.mapper_io.value,
         "psg_read_back": spec.psg_read_back.value,
+        "rtc_read_back": spec.rtc_read_back.value,
         "has_v9938": spec.has_v9938,
         "has_rtc": spec.has_rtc,
         "main_rom": main_ref,
@@ -318,6 +322,7 @@ _TOP_KEYS = frozenset({"format_version", "machine", "cartridges", "extensions"})
 _MACHINE_KEYS = frozenset({
     "id", "name", "generation", "video_standard", "m1_wait_states", "keyboard_layout",
     "ppi_control_read", "printer_port", "cassette_port", "mapper_io", "psg_read_back",
+    "rtc_read_back",
     "has_v9938", "has_rtc", "main_rom",
     "logo_rom",
     "slot0_ram", "ram_size_kb", "sub_rom", "sub_rom_subslot", "has_ram_mapper",
@@ -332,6 +337,7 @@ _KEY_SINCE_VERSION: tuple[tuple[str, int], ...] = (
     ("ram_mapper_subslot", 4),
     ("mapper_io", 5),
     ("psg_read_back", 6),
+    ("rtc_read_back", 7),
 )
 _ROM_KEYS = frozenset({"name", "size", "sha1", "pages"})
 _SLOT0_RAM_KEYS = frozenset({"size_kb", "page"})
@@ -464,6 +470,15 @@ def _psg_read_back(obj: dict[str, object], label: str) -> PsgReadBack:
     )
 
 
+def _rtc_read_back(obj: dict[str, object], label: str) -> RtcReadBack:
+    if "rtc_read_back" not in obj:  # format version 1 to 6
+        return RtcReadBack.PLAIN
+    return _enum(
+        obj["rtc_read_back"], f"{label}.rtc_read_back", RtcReadBack,
+        [form.value for form in RtcReadBack],
+    )
+
+
 def _ram_mapper_subslot(obj: dict[str, object], label: str) -> int | None:
     if "ram_mapper_subslot" not in obj:  # format version 1 to 3
         return None
@@ -551,6 +566,7 @@ def _parse_machine(value: object, roms: dict[str, RomRef], version: int) -> Mach
         cassette_port=_cassette_port(obj, label),
         mapper_io=_mapper_io(obj, label),
         psg_read_back=_psg_read_back(obj, label),
+        rtc_read_back=_rtc_read_back(obj, label),
         ram_mapper_size_kb=mapper_kb,
         machine_id=check_str(obj["id"], f"{label}.id"),
         device_io_ports=io_ports,
