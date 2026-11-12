@@ -132,6 +132,14 @@ REG_DRIVE: int = 0x3FFD           # drive select (bits 1:0) / motor (bit 7)
 REG_UNCONNECTED: int = 0x3FFE     # not wired to anything; reads open bus
 REG_CONTROL_STATUS: int = 0x3FFF  # active-low INTRQ (bit 6) / DRQ (bit 7)
 
+# Sony/Philips side and drive register read values (real SONY HB-F1XD):
+# 0x3FFD keeps bits 7 and 1-0 of the written byte, bits 5-3 read 1 and
+# bit 6 reads 0; 0x3FFC keeps bit 0, bits 7-6 read 1 and bits 5-1 read as
+# 0x3FFD. Bit 2 of both is the disk-change flag (see _read_reg).
+SONY_DRIVE_KEPT_BITS: int = 0x83
+SONY_DRIVE_ONE_BITS: int = 0x38
+SONY_SIDE_ONE_BITS: int = 0xC0
+
 
 class FloppyDiskState(Generic[S]):
     """Owned device state every connection style composes: controller, drives,
@@ -501,18 +509,17 @@ class SonyPhilipsInterface(FloppyDiskBase[WD2793State, SonyPhilipsConnectionStat
         if reg == REG_DATA:
             return self._wd.get_data()
         if reg == REG_SIDE:
-            return self.side_reg & 0xFF
+            # Shows the disk-change flag in bit 2 but does not clear it.
+            return SONY_SIDE_ONE_BITS | (self._drive_read_value() & 0x3E) | (self.side_reg & 0x01)
         if reg == REG_DRIVE:
-            # bit 2 = 0 iff the disk changed since the last status read. The read
+            # bit 2 = 0 iff the disk changed since the last 0x3FFD read. The read
             # is consuming (openMSX PhilipsFDC / diskChanged): it reports the
             # change once, then reverts to "not changed" so the DISK ROM re-reads
             # a swapped-in disk once instead of looping.
-            res = self.drive_reg & ~0x04
+            res = self._drive_read_value()
             drive = self._wd.drive
             if drive is not None and drive.disk_changed:
                 drive.disk_changed = False  # consume
-            else:
-                res |= 0x04  # not changed
             return res
         if reg == REG_UNCONNECTED:
             return 0xFF  # not connected
@@ -523,6 +530,17 @@ class SonyPhilipsInterface(FloppyDiskBase[WD2793State, SonyPhilipsConnectionStat
         if self._wd.get_drq():
             value &= ~0x80
         return value
+
+    def _disk_change_pending(self) -> bool:
+        drive = self._wd.drive
+        return drive is not None and drive.disk_changed
+
+    def _drive_read_value(self) -> int:
+        # 0x3FFD as read, without clearing the disk-change flag.
+        res = (self.drive_reg & SONY_DRIVE_KEPT_BITS) | SONY_DRIVE_ONE_BITS
+        if not self._disk_change_pending():
+            res |= 0x04  # not changed
+        return res
 
     def _write_reg(self, reg: int, value: int) -> None:
         if reg == REG_STATUS_CMD:

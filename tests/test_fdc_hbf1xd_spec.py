@@ -181,10 +181,12 @@ def test_track_and_sector_registers_read_back_through_memory_window() -> None:
 # ReadSideRegister
 # ---------------------------------------------------------------------------
 
-def test_side_register_reads_back_whole_written_byte() -> None:
+def test_side_register_keeps_only_bit_0_of_the_written_byte() -> None:
     iface = _iface()
-    iface.write_mem(_SIDE, 0x01)
-    assert iface.read_mem(_SIDE) == 0x01  # whole byte echoed, not masked to bit 0
+    iface.read_mem(_DRIVE)  # consume the power-on change
+    iface.write_mem(_SIDE, 0xFF)
+    # bits 7-6 read 1, bits 5-1 as 0x7FFD (0x3C after the power-on 0x00)
+    assert iface.read_mem(_SIDE) == 0xFD
 
 
 # ---------------------------------------------------------------------------
