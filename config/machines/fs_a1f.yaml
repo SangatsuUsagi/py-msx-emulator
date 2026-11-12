@@ -77,7 +77,9 @@ builtin_devices:
     overrides: { vram_kb: 128 }
   - ref: psg_ay8910
     # Register read-back has the AY-3-8910 mask (same S1985 MSX-ENGINE as the HB-F1XD; not verified on a real FS-A1F).
-    overrides: { read_back: ay8910 }
+    # Register 14 bits 4-5 (pins 6/7) are ANDed with the selected port's
+    # register 15 output bits (same S1985 MSX-ENGINE as the HB-F1XD; not verified on a real FS-A1F).
+    overrides: { read_back: ay8910, pin67_read: gated }
   - ref: cassette_port
     # Cassette input on PSG R#14 bit 7, motor on PPI Port C bit 4 (openMSX
     # machine files have a CassettePort).

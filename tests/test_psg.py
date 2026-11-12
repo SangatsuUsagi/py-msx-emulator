@@ -505,3 +505,72 @@ def test_an_ay8910_machine_reads_back_the_mask_on_the_io_bus() -> None:
     io.write_port(0xA0, 6)
     io.write_port(0xA1, 0xFF)
     assert io.read_port(0xA2) == 0x1F
+
+
+# -- audio-psg "Register 14 pins 6 and 7 follow the outputs with the gated form"
+
+
+def _pin67_digits(psg: PSG, base: int) -> str:
+    """Write register 15 = base | 0-F and read register 14 after each; return
+    bits 5-4 of the reads as one digit each (PIN67.BAS)."""
+    digits = ""
+    for low in range(16):
+        psg.write_port(0xA0, 15)
+        psg.write_port(0xA1, base | low)
+        psg.write_port(0xA0, 14)
+        digits += str((psg.read_port(0xA2) >> 4) & 0x03)
+    return digits
+
+
+def test_port_1_pins_6_and_7_follow_r15_bits_0_and_1_with_the_gated_form() -> None:
+    psg = _psg(InputLines())
+    psg.pin67_gated = True
+    assert _pin67_digits(psg, 0x80) == "0123" * 4
+
+
+def test_port_2_pins_6_and_7_follow_r15_bits_2_and_3_with_the_gated_form() -> None:
+    psg = _psg(InputLines())
+    psg.pin67_gated = True
+    assert _pin67_digits(psg, 0xC0) == "0000111122223333"
+
+
+def test_a_pressed_trigger_reads_0_whatever_the_output() -> None:
+    state = InputLines()
+    _press(state, 0, 4)  # Joy1 Trigger A
+    psg = _psg(state)
+    psg.pin67_gated = True
+    psg.write_port(0xA0, 15)
+    psg.write_port(0xA1, 0x8F)
+    psg.write_port(0xA0, 14)
+    assert psg.read_port(0xA2) & 0x10 == 0
+
+
+def test_the_gate_applies_to_a_selected_mouse() -> None:
+    psg = _psg(InputLines())
+    psg.pin67_gated = True
+    psg._mouse = MouseSlot(MouseDevice(), JoystickPort.JOY2)  # no button pressed
+    psg.write_port(0xA0, 15)
+    psg.write_port(0xA1, 0xC0)
+    psg.write_port(0xA0, 14)
+    assert psg.read_port(0xA2) & 0x30 == 0
+
+
+def test_the_plain_form_ignores_the_outputs() -> None:
+    psg = _psg(InputLines())
+    assert _pin67_digits(psg, 0x80)[0] == "3"
+    assert _pin67_digits(psg, 0xC0)[0] == "3"
+
+
+def test_an_hb_f1xd_machine_gates_the_pins_on_the_io_bus() -> None:
+    from host.machine_config import load_machine_config
+    from msx.machine_loader import build_machine
+    from tests.test_machine_config import _overrides, _spec
+
+    spec = _spec("hb_f1xd")
+    io = build_machine(load_machine_config(spec, **_overrides(spec)).config).io
+    io.write_port(0xA0, 15)
+    io.write_port(0xA1, 0x8E)
+    io.write_port(0xA0, 14)
+    value = io.read_port(0xA2)
+    assert value & 0x10 == 0
+    assert value & 0x20 == 0x20

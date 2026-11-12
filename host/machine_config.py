@@ -101,6 +101,7 @@ from msx.machine_spec import (
     MapperPortForm,
     PpiControlRead,
     PrinterPortForm,
+    PsgPin67Read,
     PsgReadBack,
     RomEntry,
     RtcReadBack,
@@ -717,6 +718,7 @@ class _BuiltinDevices(NamedTuple):
     cassette_port: bool
     mapper_io: MapperPortForm
     psg_read_back: PsgReadBack
+    psg_pin67_read: PsgPin67Read
     rtc_read_back: RtcReadBack
     io_ports: dict[str, tuple[int, int]]
 
@@ -762,8 +764,8 @@ def _parse_form_option(
     device: str, key: str, form_type: type[_FormT], default: _FormT, other: _FormT,
 ) -> _FormT:
     """A two-valued device option (printer_port and mapper_io `form`,
-    psg_ay8910 and rtc_rp5c01 `read_back`): `default` when absent, else
-    `default` or `other`."""
+    psg_ay8910 and rtc_rp5c01 `read_back`, psg_ay8910 `pin67_read`):
+    `default` when absent, else `default` or `other`."""
     form = _device_option(dev, entry.get("overrides"), key, default.value)
     if form != default.value and form != other.value:
         raise MachineLoadError(
@@ -787,6 +789,7 @@ def _parse_builtin_devices(
     cassette_port = False
     mapper_io = MapperPortForm.PLAIN
     psg_read_back = PsgReadBack.YM2149
+    psg_pin67_read = PsgPin67Read.PLAIN
     rtc_read_back = RtcReadBack.PLAIN
     device_io_ports: dict[str, tuple[int, int]] = {}
 
@@ -835,13 +838,17 @@ def _parse_builtin_devices(
                 dev, entry, machine_path, "psg_ay8910", "read_back",
                 PsgReadBack, PsgReadBack.YM2149, PsgReadBack.AY8910,
             )
+            psg_pin67_read = _parse_form_option(
+                dev, entry, machine_path, "psg_ay8910", "pin67_read",
+                PsgPin67Read, PsgPin67Read.PLAIN, PsgPin67Read.GATED,
+            )
         ports_raw: Any = dev.raw.get("io_ports")
         if isinstance(ports_raw, list) and len(ports_raw) >= 1:
             device_io_ports[ref_str] = (int(ports_raw[0]), int(ports_raw[-1]))
 
     return _BuiltinDevices(
         has_v9938, has_rtc, keyboard_type, ppi_control_read, printer_port, cassette_port,
-        mapper_io, psg_read_back, rtc_read_back, device_io_ports,
+        mapper_io, psg_read_back, psg_pin67_read, rtc_read_back, device_io_ports,
     )
 
 
@@ -947,7 +954,7 @@ def load_machine_spec(
     # --- Builtin device resolution ---
     (
         has_v9938, has_rtc, keyboard_type, ppi_control_read, printer_port, cassette_port,
-        mapper_io, psg_read_back, rtc_read_back, device_io_ports,
+        mapper_io, psg_read_back, psg_pin67_read, rtc_read_back, device_io_ports,
     ) = _parse_builtin_devices(raw, device_registry, machine_path)
 
     # --- Machine-level global I/O device (e.g. a built-in Kanji font ROM) ---
@@ -981,6 +988,7 @@ def load_machine_spec(
         cassette_port=cassette_port,
         mapper_io=mapper_io,
         psg_read_back=psg_read_back,
+        psg_pin67_read=psg_pin67_read,
         rtc_read_back=rtc_read_back,
         device_io_ports=device_io_ports,
         video_standard=video_standard,

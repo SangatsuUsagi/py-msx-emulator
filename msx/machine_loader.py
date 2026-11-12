@@ -49,6 +49,7 @@ from msx.machine_spec import (
     MachineSpec,
     MapperPortForm,
     PrinterPortForm,
+    PsgPin67Read,
     PsgReadBack,
     RtcReadBack,
 )
@@ -951,7 +952,11 @@ def _build(machine_config: MachineConfig) -> "Machine":
 
     input_state = InputLines()
     read_mask = AY8910_READ_MASK if spec.psg_read_back is PsgReadBack.AY8910 else YM2149_READ_MASK
-    psg = PSG(read_mask=read_mask, _input=input_state)
+    psg = PSG(
+        read_mask=read_mask,
+        pin67_gated=spec.psg_pin67_read is PsgPin67Read.GATED,
+        _input=input_state,
+    )
     io = IOBus()
     if wiring.fmpac_device is not None:
         io.register_read(0x7C, 0x7D, wiring.fmpac_device.read_port)

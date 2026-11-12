@@ -28,6 +28,7 @@ from msx.machine_spec import (
     MapperPortForm,
     PpiControlRead,
     PrinterPortForm,
+    PsgPin67Read,
     PsgReadBack,
     RomEntry,
     RtcReadBack,
@@ -609,7 +610,10 @@ def test_an_unknown_psg_read_back_form_is_rejected(tmp_path: Path) -> None:
     config_dir = tmp_path / "config"
     _write(
         config_dir / "machines" / "hb_f1xd.yaml",
-        source.replace("overrides: { read_back: ay8910 }", "overrides: { read_back: ym2413 }"),
+        source.replace(
+            "overrides: { read_back: ay8910, pin67_read: gated }",
+            "overrides: { read_back: ym2413, pin67_read: gated }",
+        ),
     )
     (config_dir / "devices").mkdir()
     for path in Path("config/devices").glob("*.yaml"):
@@ -656,6 +660,46 @@ def test_an_unknown_rtc_read_back_form_is_rejected(tmp_path: Path) -> None:
         (config_dir / "devices" / path.name).write_bytes(path.read_bytes())
     reg = load_device_registry(config_dir)
     with pytest.raises(MachineLoadError, match="mirror"):
+        load_machine_spec("hb_f1xd", config_dir, reg, tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# PSG pin 6/7 read form resolution (machine-loader "A machine declares its
+# PSG pin 6/7 read form")
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("machine_id", ["hb_f1xd", "hb_f1xd_256k", "fs_a1f"])
+def test_s1985_machines_declare_the_gated_pin67_form(machine_id: str) -> None:
+    # machine-loader "S1985 machines declare the gated pin 6/7 form".
+    reg = load_device_registry(Path("config"))
+    spec = load_machine_spec(machine_id, Path("config"), reg, Path("."))
+    assert spec.psg_pin67_read is PsgPin67Read.GATED
+
+
+@pytest.mark.parametrize(
+    "machine_id",
+    ["hb_10", "hb_10_64k", *sorted(p.stem for p in Path("config/machines").glob("cbios_*.yaml"))],
+)
+def test_other_machines_have_the_plain_pin67_form(machine_id: str) -> None:
+    # machine-loader "Other machines have the plain pin 6/7 form".
+    reg = load_device_registry(Path("config"))
+    spec = load_machine_spec(machine_id, Path("config"), reg, Path("."))
+    assert spec.psg_pin67_read is PsgPin67Read.PLAIN
+
+
+def test_an_unknown_pin67_read_form_is_rejected(tmp_path: Path) -> None:
+    # machine-loader "An unknown pin 6/7 read form is rejected".
+    source = Path("config/machines/hb_f1xd.yaml").read_text(encoding="utf-8")
+    config_dir = tmp_path / "config"
+    _write(
+        config_dir / "machines" / "hb_f1xd.yaml",
+        source.replace("pin67_read: gated", "pin67_read: open"),
+    )
+    (config_dir / "devices").mkdir()
+    for path in Path("config/devices").glob("*.yaml"):
+        (config_dir / "devices" / path.name).write_bytes(path.read_bytes())
+    reg = load_device_registry(config_dir)
+    with pytest.raises(MachineLoadError, match="open"):
         load_machine_spec("hb_f1xd", config_dir, reg, tmp_path)
 
 
