@@ -804,7 +804,7 @@ io_device:
 |  | `read_memory(addr, length) -> bytes` | 今のスロットの選択で、CPU と同じように読みます。0xFFFF で折り返します。ウォッチポイントには反応しません。メモリに割り当てられたデバイスのレジスタは、副作用も含めて CPU と同じように読みます。長さが 0〜0x10000 の外なら `b""` を返し、`last_error_text()` を設定します |
 |  | `vram_size()`、`read_vram(addr, length) -> bytes` | 0x4000 か 0x20000。読み出しはアドレスの下位ビットで VRAM のサイズに折り返すので、負のアドレスは末尾に折り返します。長さが 0〜VRAM のサイズの外なら `b""` を返し、`last_error_text()` を設定します |
 |  | `vdp_info() -> VdpInfo` | ステータスのフラグを消しません |
-|  | `frame_number()`、`cycle_count()`、`drive_count()`、`main_ram_range()` | `cycle_count()` は電源投入からの T ステート数。フロッピーインターフェースがなければ `drive_count()` は 0 |
+|  | `frame_number()`、`cycle_count`、`drive_count()`、`main_ram_range()` | `cycle_count` はプロパティで、電源投入からの T ステート数。フロッピーインターフェースがなければ `drive_count()` は 0 |
 |  | `slot_layout() -> SlotLayout` | ポート 0xA8 の値、拡張されたプライマリスロットのビットマスク、4 つのサブスロットレジスタ（拡張されていないスロットは 0）。デバッガの `sl` と `st` が使います |
 |  | `slot_info(primary, secondary, page) -> SlotInfo` | 1 つのスロットを整数で返します。`sl` と `st` が使います。内容の種類（`SLOT_CONTENT_*`）、カートリッジの `MapperId`、KB 単位のサイズ、バンクの種類（`BANK_*`）、2 つのウィンドウ（それぞれ `WINDOW_*` の種類と値）、Halnote のサブバンクとその ROM 上の位置からなります。文字列は `host/debugger/slots.py` が組み立てるので、表示の書式は境界を越えません。`secondary` と `page` は、指定しないとき -1。0-3 の外の値には、内容、マッパー、サイズに -1 を返します |
 |  | `render_preview() -> RgbFrame` | 今のフレーム。スクリーンショットとステートセーブのサムネイルに使います |
