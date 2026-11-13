@@ -327,9 +327,10 @@ def test_slot2_read_ffff_when_page3_is_slot3_reads_slot3_register() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Slot 1 sub-slot dispatch and 0xFFFF intercept (openspec/changes/
-# slot1-slot2-symmetrization): the identical mechanism the slot2 section
-# above exercises, applied independently to slot 1.
+# Slot 1 sub-slot dispatch and 0xFFFF intercept (memory-slot-bus "Slot 1
+# sub-slot dispatch via a per-sub-slot Mapper array"): the identical
+# mechanism the slot2 section above exercises, applied independently to
+# slot 1.
 # ---------------------------------------------------------------------------
 
 def _make_memory_slot1(

@@ -16,7 +16,7 @@
       "fields": ["ports"],
       "core": "OUTI/OUTD/OTIR/OTDR put B before its decrement on A8-A15 (openMSX)",
       "tests": "B after the decrement (as references/z80); MSX decodes only A0-A7",
-      "reference": "openspec change add-z80-singlestep-tests design; not decided"
+      "reference": "openspec cpu-z80 scenario 'Block I/O drives B in the high byte'; not decided"
     }
   ]
 }

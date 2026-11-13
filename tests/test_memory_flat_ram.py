@@ -136,9 +136,9 @@ def test_sub_rom_write_is_ignored() -> None:
 # -- Independently-configurable SUB ROM / FDC sub-slots (parameterize-subslot-index) --
 
 def test_sub_rom_and_fdc_in_independent_subslots() -> None:
-    """FS-A1F's real hardware shape: SUB ROM in sub-slot 1, FDC in sub-slot 2,
-    RAM in sub-slot 0 -- all three resolved independently from one another,
-    unlike HB-F1XD's/FS-A1F's provisional layout (both combined in sub-slot 0)."""
+    """SUB ROM in sub-slot 1, FDC in sub-slot 2 (the FS-A1F's placement),
+    flat RAM in sub-slot 0 -- all three resolved independently from one
+    another, unlike HB-F1XD's layout (SUB ROM and FDC both in sub-slot 0)."""
     sub_rom = bytes([0x41] + [0x00] * 0x3FFF)
     fdc = _StubFdc()
     mem = Memory(

@@ -4,6 +4,7 @@ import struct
 import pytest
 
 from msx.boundary import AUDIO_SAMPLE_RATE
+from msx.clock import CPU_CLOCK_HZ
 from msx.scc import SCC
 from tests.factories import restore_state
 
@@ -505,3 +506,42 @@ def test_052539_plus_mode_unaffected_by_is_052539() -> None:
     scc.write(0x80, 0x11)
     assert scc.read(0x80) == 0x11
     assert scc.read(0xA0) == 0xFF  # Plus mode's freq/vol block, unaffected
+
+
+# ---------------------------------------------------------------------------
+# Frequency writes and low periods
+# ---------------------------------------------------------------------------
+
+def test_frequency_write_restarts_period_count() -> None:
+    scc = _make_scc_tone(freq=253)
+    scc.generate_samples(7)
+    idx = scc._phase_idx[0]
+    scc._phase_cnt[0] = 100
+    scc.write(0x80, 200)
+    assert scc._phase_cnt[0] == 0
+    assert scc._phase_idx[0] == idx
+
+
+def test_frequency_8_or_less_holds_output() -> None:
+    scc = _make_scc_tone(freq=8)
+    samples = _samples_as_int16(scc.generate_samples(100))
+    assert scc._phase_idx[0] == 0
+    assert scc._phase_cnt[0] == 0
+    assert len(set(samples)) == 1
+
+
+def test_frequency_9_advances_every_10_ticks() -> None:
+    scc = _make_scc_tone(freq=9)
+    scc.generate_samples(100)
+    ticks = 100 * CPU_CLOCK_HZ // AUDIO_SAMPLE_RATE
+    assert scc._phase_idx[0] == (ticks // 10) % 32
+    assert scc._phase_cnt[0] == ticks % 10
+
+
+def test_volume_scales_by_one_sixteenth_before_scale() -> None:
+    scc = _make_scc_tone(freq=253, vol=15)
+    for i in range(32):
+        scc.write(i, 0x80)  # -128
+    samples = _samples_as_int16(scc.generate_samples(50))
+    assert samples == [((-128 * 15) >> 4) * 96] * 50
+    assert samples[0] == -11520

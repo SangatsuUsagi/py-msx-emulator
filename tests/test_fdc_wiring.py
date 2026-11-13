@@ -15,6 +15,7 @@ from host.machine_config import (
 )
 from msx.boundary import DiskMount, MediaId, MediaImage, RomImage
 from msx.fdc.disk_image import DskDiskImage
+from msx.fdc.interface import SonyPhilipsInterface
 from msx.machine_loader import build_machine
 from msx.machine_spec import FdcDef, MachineLoadError, MachineSpec, RomEntry
 
@@ -123,7 +124,7 @@ def test_sub_rom_and_fdc_default_to_subslot_0_when_combined() -> None:
 
 
 def test_sub_rom_and_fdc_resolve_to_independent_subslots() -> None:
-    """FS-A1F's real hardware shape: SUB ROM in one secondary slot, the fdc:
+    """The FS-A1F's shape: SUB ROM in one secondary slot, the fdc:
     block in a different one -- each resolves to its own declared index."""
     slot3 = {
         "expanded": True,
@@ -181,6 +182,14 @@ def test_build_wires_fdc_device(tmp_path: Path) -> None:
     machine = build_machine_from_spec(_fdc_spec(tmp_path))
     assert machine.fdc is not None
     assert machine.memory.fdc is machine.fdc
+
+
+def test_wd2793_reads_the_machine_clock(tmp_path: Path) -> None:
+    # Type I step times count machine cycles (fdc-wd2793 "Type I step timing").
+    _make_roms(tmp_path)
+    machine = build_machine_from_spec(_fdc_spec(tmp_path))
+    assert isinstance(machine.fdc, SonyPhilipsInterface)
+    assert machine.fdc.controller._clock is machine.clock
 
 
 def test_disk_rom_and_registers_routed_through_memory(tmp_path: Path) -> None:
@@ -317,3 +326,15 @@ def test_a_disk_of_a_bad_size_is_rejected(tmp_path: Path, size: int) -> None:
     assert result.status == STATUS_BAD_CONFIG
     assert result.machine is None
     assert f"size {size}".encode() in result.error_text
+
+
+def test_fdc_register_read_in_the_page_after_the_configured_page(
+    tmp_path: Path,
+) -> None:
+    _make_roms(tmp_path)
+    machine = build_machine_from_spec(_fdc_spec(tmp_path))
+    mem = machine.memory
+    mem.set_slot_register(0xFF)  # all pages -> slot 3
+    mem.set_sub_slot_reg(0x00)  # all pages -> sub-slot 0
+    assert mem.read(0xBFF8) == mem.read(0x7FF8)  # WD2793 STATUS via page 2
+    assert mem.read(0x8000) == 0xFF  # no DISK ROM in page 2

@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TypedDict
 
+from msx.clock import CoreClock
 from msx.fdc.disk_drive import DiskDrive
 from msx.snapshot_schema import (
     check_bool,
@@ -47,9 +48,10 @@ MSR_DIO: int = 0x40  # data direction: 1 = FDC -> processor
 MSR_NDM: int = 0x20  # non-DMA mode (always set by this model)
 MSR_CB: int = 0x10   # FDC busy (Command/Execution/Result Phase in progress)
 
-# Command opcodes (low 5 bits of the command byte; READ/WRITE DATA also use
-# the top 3 bits for MT/MFM/SK, ignored by this functional model).
-_CMD_MASK: int = 0x1F
+# Command opcodes. _decode() matches each against its own mask: READ DATA,
+# WRITE DATA and FORMAT allow some of the MT/MFM/SK flag bits (ignored by
+# this functional model), the other commands match the whole byte (openMSX
+# TC8566AF::idlePhaseWrite).
 CMD_SPECIFY: int = 0x03
 CMD_SENSE_DEVICE_STATUS: int = 0x04
 CMD_WRITE_DATA: int = 0x05
@@ -74,10 +76,26 @@ _PARAM_COUNT: dict[int, int] = {
     CMD_SEEK: 2,
 }
 
+# (command, mask) pairs for _decode().
+_DECODE: tuple[tuple[int, int], ...] = (
+    (CMD_READ_DATA, 0x1F),
+    (CMD_WRITE_DATA, 0x3F),
+    (CMD_FORMAT, 0xBF),
+    (CMD_SEEK, 0xFF),
+    (CMD_RECALIBRATE, 0xFF),
+    (CMD_SENSE_INTERRUPT_STATUS, 0xFF),
+    (CMD_SPECIFY, 0xFF),
+    (CMD_SENSE_DEVICE_STATUS, 0xFF),
+)
+
+# RECALIBRATE gives up after this many step pulses without seeing track 0.
+_RECALIBRATE_STEPS: int = 255
+
 # ST0 bits.
 ST0_ABNORMAL: int = 0x40
 ST0_INVALID: int = 0x80
 ST0_SEEK_END: int = 0x20
+ST0_EQUIPMENT_CHECK: int = 0x10
 ST0_NOT_READY: int = 0x08
 
 # ST1 bits.
@@ -88,6 +106,33 @@ ST1_NOT_WRITABLE: int = 0x02
 ST3_WRITE_PROTECTED: int = 0x40
 ST3_READY: int = 0x20
 ST3_TRACK0: int = 0x10
+ST3_TWO_SIDE: int = 0x08
+
+
+def _decode(command: int) -> int | None:
+    """The command a command byte selects, or None for an unrecognised one."""
+    for opcode, mask in _DECODE:
+        if (command & mask) == opcode:
+            return opcode
+    return None
+
+
+def _sector_id_found(drive: DiskDrive, hd_ds: int, c: int, h: int, r: int) -> bool:
+    """The head's track, on the side the HD bit selects, has a sector with
+    ID (C, H, R). An ID's C is its track and its H its side, so only C equal
+    to the head's track and H equal to HD can match (openMSX
+    TC8566AF::locateSector)."""
+    side = (hd_ds >> 2) & 0x01
+    if c != drive.track or h != side:
+        return False
+    return drive.has_sector(drive.track, side, r)
+
+
+def _locate_sector(drive: DiskDrive, hd_ds: int, c: int, h: int, r: int) -> bytes | None:
+    """The data of the sector _sector_id_found finds, or None."""
+    if not _sector_id_found(drive, hd_ds, c, h, r):
+        return None
+    return drive.read_sector(drive.track, (hd_ds >> 2) & 0x01, r)
 
 
 class Phase(Enum):
@@ -109,6 +154,7 @@ class TC8566AFState(TypedDict):
     selected_drive_index: int
     last_st0: int
     last_pcn: int
+    pcn: list[int]  # present cylinder number per drive
     phase: int
     command: int
     cmd_buffer: bytearray
@@ -142,7 +188,7 @@ class TC8566AF:
     chip's Control Register 0 addresses one of up to four drives it owns
     directly, and READ DATA/WRITE DATA/SEEK/RECALIBRATE/SENSE DEVICE STATUS
     each carry their own target drive in their first parameter byte (DS1:DS0)
-    -- see openspec/changes/archive/2026-08-21-add-tc8566af-fdc/design.md.
+    -- see openspec/specs/fdc-tc8566af/spec.md.
     """
 
     drives: list[DiskDrive]
@@ -175,6 +221,9 @@ class TC8566AF:
     _selected_drive_index: int = 0
     _last_st0: int = ST0_INVALID  # SENSE INTERRUPT STATUS with nothing pending
     _last_pcn: int = 0
+    # Present cylinder number per drive: the cylinder the controller counts
+    # the head at, separate from the head itself (DiskDrive.track).
+    _pcn: list[int] = field(default_factory=lambda: [0, 0, 0, 0])
 
     def reset(self) -> None:
         self.control_reg0 = 0
@@ -182,7 +231,17 @@ class TC8566AF:
         self._selected_drive_index = 0
         self._last_st0 = ST0_INVALID
         self._last_pcn = 0
+        self._pcn = [0, 0, 0, 0]
         self.abort()
+
+    def catch_up(self) -> None:
+        """Nothing to run: no TC8566AF state advances with time (the
+        FdcController contract; WD2793.catch_up runs its timed Type I
+        events)."""
+
+    def attach_clock(self, clock: CoreClock) -> None:
+        """Nothing to keep: the TC8566AF reads no emulated time (the
+        FdcController contract; WD2793 times its Type I steps)."""
 
     def abort(self) -> None:
         """Cancel any in-progress command, back to Command-Phase idle.
@@ -212,6 +271,25 @@ class TC8566AF:
         if not (0 <= index <= 3):
             return False
         return bool(self.control_reg0 & (0x10 << index))
+
+    # The FS-A1F's drives give Track 0 and Write Protected only with the
+    # motor on (openMSX RealDrive with signalsNeedMotorOn, set by the MSXFDC
+    # constructor when the machine names no connection style; see
+    # RealDrive::isWriteProtected and RealDrive::isTrack00). A nonexistent drive
+    # never reports track 0 and always reports write protected (openMSX
+    # DummyDrive).
+
+    def _track00(self, index: int) -> bool:
+        drive = self._drive(index)
+        return drive is not None and self.motor_on(index) and drive.track == 0
+
+    def _write_protect_signal(self, index: int) -> bool:
+        drive = self._drive(index)
+        if drive is None:
+            return True
+        if not self.motor_on(index):
+            return False
+        return not drive.has_disk or drive.write_protected
 
     # -- register reads --------------------------------------------------------
 
@@ -268,7 +346,7 @@ class TC8566AF:
         elif self._phase is Phase.EXECUTION and self._exec_is_write:
             self._exec_buffer.append(value)
             if len(self._exec_buffer) >= self._exec_needed:
-                if (self._command & _CMD_MASK) == CMD_FORMAT:
+                if _decode(self._command) == CMD_FORMAT:
                     self._complete_format()
                 else:
                     c, h, r, _n = self._exec_ctr
@@ -285,11 +363,11 @@ class TC8566AF:
 
     def _start_command(self, value: int) -> None:
         self._command = value
-        opcode = value & _CMD_MASK
-        needed = _PARAM_COUNT.get(opcode)
-        if needed is None:
+        opcode = _decode(value)
+        if opcode is None:
             self._invalid_command()
             return
+        needed = _PARAM_COUNT[opcode]
         self._cmd_buffer = bytearray()
         self._cmd_needed = needed
         if needed == 0:
@@ -303,7 +381,7 @@ class TC8566AF:
         self._phase = Phase.RESULT
 
     def _execute_command(self) -> None:
-        opcode = self._command & _CMD_MASK
+        opcode = _decode(self._command)
         params = self._cmd_buffer
         if opcode == CMD_SPECIFY:
             self._phase = Phase.IDLE
@@ -315,20 +393,17 @@ class TC8566AF:
             # result: a second, spurious call with no new seek in between
             # reports "nothing pending" (matches the power-on/reset default,
             # see ST0_INVALID) instead of replaying the same stale abnormal
-            # status forever. Without this, a DISK ROM probing for a second
-            # drive that doesn't exist (RECALIBRATE index=1 -> not ready ->
-            # SENSE INTERRUPT STATUS) never sees its own acknowledgement take
-            # effect and loops on SENSE INTERRUPT STATUS indefinitely --
-            # matches openMSX's TC8566AF::resultsPhaseRead, which zeroes
-            # status0 as soon as its first result byte is read.
+            # status forever. The reset value is ST0 = 0x80 and PCN = 0, per
+            # the datasheet; openMSX reports 0x00 here, an open question in
+            # the fdc-tc8566af spec.
             self._last_st0 = ST0_INVALID
             self._last_pcn = 0
         elif opcode == CMD_SENSE_DEVICE_STATUS:
             self._cmd_sense_device_status(params)
         elif opcode == CMD_RECALIBRATE:
-            self._cmd_seek_class(params, ncn=0)
+            self._cmd_recalibrate(params)
         elif opcode == CMD_SEEK:
-            self._cmd_seek_class(params, ncn=params[1])
+            self._cmd_seek(params)
         elif opcode == CMD_READ_DATA:
             self._cmd_read_data(params)
         elif opcode == CMD_WRITE_DATA:
@@ -341,63 +416,75 @@ class TC8566AF:
     def _cmd_sense_device_status(self, params: bytearray) -> None:
         hd_ds = params[0]
         index = hd_ds & 0x03
-        head = (hd_ds >> 2) & 0x01
         drive = self._drive(index)
-        st3 = index & 0x03
-        if head:
-            st3 |= 0x04
-        if drive is not None and drive.has_disk:
-            st3 |= ST3_READY
-            if drive.write_protected:
-                st3 |= ST3_WRITE_PROTECTED
-            if drive.track == 0:
-                st3 |= ST3_TRACK0
+        st3 = hd_ds & 0x07  # DS1:DS0 and HD echoed
+        if self._track00(index):
+            st3 |= ST3_TRACK0
+        if self._write_protect_signal(index):
+            st3 |= ST3_WRITE_PROTECTED
+        if drive is not None:
+            # openMSX's empty-drive disk counts as double-sided.
+            if drive.image is None or drive.image.sides == 2:
+                st3 |= ST3_TWO_SIDE
+            if drive.has_disk:
+                st3 |= ST3_READY
         self._result_buffer = bytearray([st3 & 0xFF])
         self._result_index = 0
         self._phase = Phase.RESULT
 
-    def _cmd_seek_class(self, params: bytearray, *, ncn: int) -> None:
-        """Shared SEEK/RECALIBRATE handling: both move a drive's head and
-        report only through a later SENSE INTERRUPT STATUS (no Result Phase).
+    def _seek_st0(self, index: int) -> int:
+        """ST0 base for SEEK/RECALIBRATE: the drive index, plus bit 7 and Not
+        Ready for a nonexistent drive (openMSX TC8566AF::commandPhase1 and
+        doSeek). A drive with no disk is not Not Ready: the head mechanism
+        works without media."""
+        st0 = index & 0x03
+        if self._drive(index) is None:
+            st0 |= ST0_INVALID | ST0_NOT_READY
+        return st0
 
-        Readiness here depends only on the drive existing, not on whether a
-        disk is inserted -- the head/track-0 sensor is purely mechanical, so a
-        real drive homes/seeks fine with no media loaded (matching openMSX's
-        TC8566AF::doSeek, which sets Not Ready only for a non-existent
-        "dummy" drive and otherwise runs the seek to completion regardless of
-        isDiskInserted()). This differs from READ DATA/WRITE DATA/SENSE
-        DEVICE STATUS, which genuinely do require a disk.
+    def _end_seek(self, index: int, st0: int) -> None:
+        """Record the result SENSE INTERRUPT STATUS reports. SEEK and
+        RECALIBRATE have no Result Phase."""
+        self._last_st0 = (st0 | ST0_SEEK_END) & 0xFF
+        self._last_pcn = self._pcn[index]
+        self._phase = Phase.IDLE
 
-        A nonexistent drive (index beyond the configured drive count -- e.g.
-        a DISK ROM probing for a second drive the machine doesn't have)
-        still reports Seek End, not Abnormal Termination: openMSX's
-        DummyDrive.isTrack00() always returns false ("National_FS-5500F1 2nd
-        drive detection depends on this"), so TC8566AF::doSeek's RECALIBRATE
-        path never takes its immediate-completion shortcut and instead steps
-        the full 255-pulse limit before giving up -- reported as Seek End
-        (+ Equipment Check, not modelled here -- see Deferred
-        Specifications) rather than Abnormal Termination, since the seek
-        mechanism itself did finish trying. This model's SEEK/RECALIBRATE
-        are already instantaneous (no real step timing, a documented
-        simplification), so that eventual completion is reported
-        immediately here too, rather than looping. A DISK ROM polling SENSE
-        INTERRUPT STATUS for Seek End to learn "no second drive" would
-        otherwise never see it (found via FS-A1F hanging at boot on its
-        drive-B probe)."""
+    def _cmd_seek(self, params: bytearray) -> None:
+        """SEEK: step the PCN one cylinder at a time to NCN, stepping the
+        head with it (openMSX TC8566AF::doSeek). The steps take no time in
+        this model."""
+        index = params[0] & 0x03
+        ncn = params[1]
+        self._selected_drive_index = index
+        drive = self._drive(index)
+        st0 = self._seek_st0(index)
+        while self._pcn[index] != ncn:
+            inward = ncn > self._pcn[index]
+            self._pcn[index] += 1 if inward else -1
+            if drive is not None:
+                drive.step(inward)
+        self._end_seek(index, st0)
+
+    def _cmd_recalibrate(self, params: bytearray) -> None:
+        """RECALIBRATE: step the head out until the drive reports track 0,
+        at most _RECALIBRATE_STEPS pulses, then set the PCN to 0. Running out
+        of pulses adds Equipment Check -- always so for a nonexistent drive,
+        and for a drive whose motor is off (no track-0 signal), which is how
+        a DISK ROM learns that a second drive is missing (openMSX
+        TC8566AF::doSeek)."""
         index = params[0] & 0x03
         self._selected_drive_index = index
         drive = self._drive(index)
-        st0 = index & 0x03
-        if (params[0] >> 2) & 1:
-            st0 |= 0x04  # HD echoed
-        if drive is None:
-            st0 |= ST0_NOT_READY | ST0_SEEK_END
-        else:
-            drive.track = ncn & 0xFF
-            st0 |= ST0_SEEK_END
-        self._last_st0 = st0 & 0xFF
-        self._last_pcn = drive.track if drive is not None else 0
-        self._phase = Phase.IDLE
+        st0 = self._seek_st0(index)
+        remaining = _RECALIBRATE_STEPS
+        while remaining > 0 and not self._track00(index):
+            if drive is not None:
+                drive.step(False)
+            remaining -= 1
+        if remaining == 0:
+            st0 |= ST0_EQUIPMENT_CHECK
+        self._pcn[index] = 0
+        self._end_seek(index, st0)
 
     def _cmd_read_data(self, params: bytearray) -> None:
         hd_ds, c, h, r, n, _eot, _gpl, _dtl = params
@@ -407,7 +494,7 @@ class TC8566AF:
         if drive is None or not drive.has_disk:
             self._abnormal_result(index, ST0_NOT_READY, 0, c, h, r, n)
             return
-        data = drive.read_sector(c, h, r)
+        data = _locate_sector(drive, hd_ds, c, h, r)
         if data is None:
             self._abnormal_result(index, 0, ST1_NO_DATA, c, h, r, n)
             return
@@ -428,7 +515,7 @@ class TC8566AF:
         if drive.write_protected:
             self._abnormal_result(index, 0, ST1_NOT_WRITABLE, c, h, r, n)
             return
-        if drive.read_sector(c, h, r) is None:
+        if not _sector_id_found(drive, hd_ds, c, h, r):
             self._abnormal_result(index, 0, ST1_NO_DATA, c, h, r, n)
             return
         self._exec_buffer = bytearray()
@@ -502,6 +589,7 @@ class TC8566AF:
             "selected_drive_index": self._selected_drive_index,
             "last_st0": self._last_st0,
             "last_pcn": self._last_pcn,
+            "pcn": list(self._pcn),
             "phase": self._phase.value,
             "command": self._command,
             "cmd_buffer": bytearray(self._cmd_buffer),
@@ -538,6 +626,7 @@ class TC8566AF:
             ),
             "last_st0": check_int(fields["last_st0"], f"{label}.last_st0", 0, 0xFF),
             "last_pcn": check_int(fields["last_pcn"], f"{label}.last_pcn", 0, 0xFF),
+            "pcn": check_int_list(fields["pcn"], f"{label}.pcn", 4, 0, 0xFF),
             "phase": check_int(fields["phase"], f"{label}.phase", 0, 3),
             "command": check_int(fields["command"], f"{label}.command", 0, 0xFF),
             "cmd_buffer": check_bytes(
@@ -570,6 +659,7 @@ class TC8566AF:
         self._selected_drive_index = state["selected_drive_index"]
         self._last_st0 = state["last_st0"]
         self._last_pcn = state["last_pcn"]
+        self._pcn = list(state["pcn"])
         self._phase = Phase(state["phase"])
         self._command = state["command"]
         self._cmd_buffer = bytearray(state["cmd_buffer"])

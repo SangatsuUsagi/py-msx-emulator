@@ -31,9 +31,8 @@ class Memory:
 
     Resolves the current `slot_register`/`sub_slot_reg` into a per-page
     (16 KB) dispatch cache (`_page_read`/`_page_write`) rather than
-    re-deriving the routing decision on every access; see
-    `openspec/changes/archive/2026-08-09-memory-dispatch-cache/design.md`
-    for the full design history, including two benchmark-driven revisions.
+    re-deriving the routing decision on every access; see memory-slot-bus
+    "Page-routing cache stays consistent with slot state".
     """
 
     rom: bytes
@@ -93,6 +92,12 @@ class Memory:
     # and open bus everywhere else. None keeps the legacy mapper / MSX1 flat-top
     # behaviour.
     flat_ram_subslot: int | None = field(default=None)
+    # The slot-3 sub-slot that holds ram_mapper (e.g. 2 on C-BIOS MSX2): when
+    # set, the mapper answers in this sub-slot only and the data-driven
+    # dispatch below leaves every other sub-slot open bus, as for
+    # flat_ram_subslot. None (a slot 3 with no sub-slots) keeps the legacy
+    # dispatch. Construction-time-fixed, like flat_ram_subslot -- no setter.
+    ram_mapper_subslot: int | None = field(default=None)
     # Optional flat RAM region in primary slot 0, coexisting with the main
     # ROM at the slot's other pages (e.g. Sony HB-10: 32 KB ROM in pages 0-1,
     # 16 KB RAM in page 3). Construction-time-fixed like flat_ram_subslot
@@ -102,7 +107,7 @@ class Memory:
     slot0_ram: bytearray | None = field(default=None, repr=False)
     slot0_ram_page: int = field(default=3)
     # Which sub-slot owns the SUB ROM (page 0 of that sub-slot) and which owns
-    # the FDC (`fdc_page` of that sub-slot) -- independent of each other and of
+    # the FDC (`fdc_page` and the next page of that sub-slot) -- independent of each other and of
     # flat_ram_subslot. Both default to 0, still true for every MSX2 machine
     # except FS-A1F (HB-F1XD combines SUB ROM + FDC in sub-slot 0); FS-A1F
     # resolves them to sub-slot 1 and 2 respectively, its real hardware's
@@ -114,8 +119,8 @@ class Memory:
     sub_rom_subslot: int = field(default=0)
     fdc_subslot: int = field(default=0)
     fdc_page: int = field(default=1)
-    # Memory-mapped floppy interface in slot 3 sub-slot `fdc_subslot` page
-    # `fdc_page` (0x4000-0x7FFF by default); the concrete FloppyDisk base
+    # Memory-mapped floppy interface in slot 3 sub-slot `fdc_subslot` pages
+    # `fdc_page` and `fdc_page + 1` (0x4000-0xBFFF by default); the concrete FloppyDisk base
     # exposes read_mem(addr)/write_mem(addr, value). None when the machine has
     # no FDC.
     fdc: FloppyDisk | None = field(default=None, repr=False)
@@ -176,6 +181,8 @@ class Memory:
                 "Memory: ram_mapper and flat_ram_subslot are mutually "
                 "exclusive slot-3 RAM strategies"
             )
+        if self.ram_mapper_subslot is not None and ram_mapper is None:
+            raise ValueError("Memory: ram_mapper_subslot requires a ram_mapper")
         if fdc is not None and flat_ram_subslot is None and ram_mapper is None:
             raise ValueError(
                 "Memory: fdc requires a slot-3 RAM strategy "
@@ -299,35 +306,51 @@ class Memory:
     #   per memory access, so a plain guard chain costs nothing here that a
     #   match/switch would save.
 
+    def _is_fdc_page(self, page: int) -> bool:
+        """The FDC covers fdc_page and the page after it: a 32 KB window,
+        as openMSX maps the interface (base 0x4000, size 0x8000)."""
+        return page == self.fdc_page or page == self.fdc_page + 1
+
+    def _is_data_driven_slot3(self) -> bool:
+        """True when slot 3's RAM has a configured sub-slot (flat RAM or
+        the mapper), so every sub-slot without a role is open bus."""
+        return self.flat_ram_subslot is not None or self.ram_mapper_subslot is not None
+
     def _resolve_slot3_read_leaf(self, page: int) -> Callable[[int], int]:
         sub = (self.sub_slot_reg >> (page * 2)) & 0x03
-        if self.flat_ram_subslot is not None:
+        if self._is_data_driven_slot3():
             return self._resolve_slot3_read_leaf_data_driven(page, sub)
         return self._resolve_slot3_read_leaf_legacy(page, sub)
 
     def _resolve_slot3_read_leaf_data_driven(self, page: int, sub: int) -> Callable[[int], int]:
         """Data-driven MSX2 slot-3 (e.g. HB-F1XD, FS-A1F): SUB ROM in
         sub-slot `sub_rom_subslot` page 0, memory-mapped FDC in sub-slot
-        `fdc_subslot` page `fdc_page` -- independently configurable
-        sub-slots, both defaulting to sub-slot 0 (page 1 for the FDC) so
+        `fdc_subslot` pages `fdc_page` and `fdc_page + 1` -- independently
+        configurable sub-slots, both defaulting to sub-slot 0 (pages 1-2 for
+        the FDC) so
         every existing machine resolves identically to the
         pre-generalisation `if sub == 0: ...` special case -- flat 64 KB RAM
-        (offset == address) in `self.flat_ram_subslot`, else open bus."""
+        (offset == address) in `self.flat_ram_subslot` or the RAM mapper in
+        `self.ram_mapper_subslot`, else open bus."""
         if sub == self.sub_rom_subslot and page == 0 and self.sub0_rom is not None:
             return self._read_sub0_rom
-        if sub == self.fdc_subslot and page == self.fdc_page and self.fdc is not None:
+        if sub == self.fdc_subslot and self._is_fdc_page(page) and self.fdc is not None:
             return self.fdc.read_mem
         if sub == self.flat_ram_subslot:
             return self._read_flat_ram
+        ram_mapper = self.ram_mapper
+        if sub == self.ram_mapper_subslot and ram_mapper is not None:
+            return ram_mapper.read
         return self._read_open_bus
 
     def _resolve_slot3_read_leaf_legacy(self, page: int, sub: int) -> Callable[[int], int]:
         """Legacy sub-slot dispatch: same four-role priority list as
         `_resolve_slot3_read_leaf_data_driven` (SUB ROM page 0, then FDC,
         then RAM), adapted for this branch's RAM fallback (RAM mapper or
-        MSX1 flat RAM, rather than a single flat_sub match) --
+        MSX1 flat RAM, rather than a single RAM sub-slot match) --
           sub_rom_subslot page 0: extension ROM (if present)
-          fdc_subslot/fdc_page: memory-mapped FDC (if present) -- an FDC
+          fdc_subslot pages fdc_page/fdc_page + 1: memory-mapped FDC (if
+            present) -- an FDC
             may coexist with a RAM mapper here, just as it already does
             with the data-driven flat-RAM strategy above
           sub_rom_subslot (other pages, with a sub0_rom present): open bus
@@ -346,7 +369,7 @@ class Memory:
         """
         if sub == self.sub_rom_subslot and self.sub0_rom is not None and page == 0:
             return self._read_sub0_rom
-        if sub == self.fdc_subslot and page == self.fdc_page and self.fdc is not None:
+        if sub == self.fdc_subslot and self._is_fdc_page(page) and self.fdc is not None:
             return self.fdc.read_mem
         if sub == self.sub_rom_subslot and self.sub0_rom is not None:
             return self._read_open_bus  # sub0_rom present, addr out of page-0 range
@@ -359,7 +382,7 @@ class Memory:
 
     def _resolve_slot3_write_leaf(self, page: int) -> Callable[[int, int], None]:
         sub = (self.sub_slot_reg >> (page * 2)) & 0x03
-        if self.flat_ram_subslot is not None:
+        if self._is_data_driven_slot3():
             return self._resolve_slot3_write_leaf_data_driven(page, sub)
         return self._resolve_slot3_write_leaf_legacy(page, sub)
 
@@ -371,10 +394,13 @@ class Memory:
         needs no explicit check here: it is read-only, so it falls through
         to the same write_noop every other non-FDC, non-RAM sub-slot/page
         gets."""
-        if sub == self.fdc_subslot and page == self.fdc_page and self.fdc is not None:
+        if sub == self.fdc_subslot and self._is_fdc_page(page) and self.fdc is not None:
             return self.fdc.write_mem
         if sub == self.flat_ram_subslot:
             return self._write_flat_ram
+        ram_mapper = self.ram_mapper
+        if sub == self.ram_mapper_subslot and ram_mapper is not None:
+            return ram_mapper.write
         return self._write_noop  # SUB ROM / reserved / empty sub-slots ignore writes
 
     def _resolve_slot3_write_leaf_legacy(
@@ -396,7 +422,7 @@ class Memory:
         not an oversight, do not add a `sub_rom_subslot` exclusion here to
         "match" the read leaf.
         """
-        if sub == self.fdc_subslot and page == self.fdc_page and self.fdc is not None:
+        if sub == self.fdc_subslot and self._is_fdc_page(page) and self.fdc is not None:
             return self.fdc.write_mem
         if sub == 1 and sub != self.fdc_subslot:
             return self._write_noop  # reserved, ignore
@@ -589,14 +615,15 @@ class Memory:
         # ROM, 1 empty, 2-3 RAM). _resolve_slot3_read_leaf_legacy decides what a
         # read of one page returns, so it also checks the page and whether the
         # ROM is loaded: the two answer different questions.
-        flat_sub = self.flat_ram_subslot
-        if flat_sub is not None:
+        if self._is_data_driven_slot3():
             # Data-driven layout (e.g. FS-A1F): mirror
             # _resolve_slot3_read_leaf's precedence -- SUB ROM at page 0
-            # of sub_rom_subslot, FDC at fdc_page of fdc_subslot, flat
-            # RAM in flat_sub, open bus elsewhere. Page -1 (the
+            # of sub_rom_subslot, FDC at pages fdc_page and fdc_page + 1
+            # of fdc_subslot, flat
+            # RAM in flat_ram_subslot, the RAM mapper in
+            # ram_mapper_subslot, open bus elsewhere. Page -1 (the
             # `st` tree view, one line per sub-slot) matches the
-            # page-0/fdc_page role regardless of page, same as the
+            # page-0/FDC-page role regardless of page, same as the
             # legacy branch below always describing sub-slot 0 as ROM.
             if (
                 secondary == self.sub_rom_subslot
@@ -607,11 +634,13 @@ class Memory:
             if (
                 secondary == self.fdc_subslot
                 and self.fdc is not None
-                and page in (self.fdc_page, -1)
+                and (page == -1 or self._is_fdc_page(page))
             ):
                 return SLOT_CONTENT_FDC
-            if secondary == flat_sub:
+            if secondary == self.flat_ram_subslot:
                 return SLOT_CONTENT_RAM
+            if secondary == self.ram_mapper_subslot:
+                return SLOT_CONTENT_RAM_MAPPER
             return SLOT_CONTENT_EMPTY
         if secondary == -1:
             return self._describe_plain_slot3(page)
@@ -645,7 +674,11 @@ class Memory:
 
     def _slot_bank(self, primary: int, secondary: int, page: int) -> BankView:
         """The bank at `page` for the `sl` active-slot view."""
-        if primary == 3 and secondary in (2, 3) and page != -1:
+        if self._is_data_driven_slot3():
+            is_mapper_subslot = secondary == self.ram_mapper_subslot
+        else:
+            is_mapper_subslot = secondary in (2, 3)
+        if primary == 3 and is_mapper_subslot and page != -1:
             rm = self.ram_mapper
             if rm is not None:
                 segment = rm.debug_bank(page).window_values[0]
@@ -671,9 +704,8 @@ class Memory:
         if primary == 3 and secondary == self.sub_rom_subslot:
             sub = self.sub0_rom
             return len(sub) // 1024 if sub is not None else 0
-        flat_sub = self.flat_ram_subslot
-        if flat_sub is not None:
-            is_ram_subslot = secondary == flat_sub
+        if self._is_data_driven_slot3():
+            is_ram_subslot = secondary in (self.flat_ram_subslot, self.ram_mapper_subslot)
         else:
             # A non-expanded slot 3 (secondary -1) is its RAM, as in sub-slots 2-3.
             is_ram_subslot = secondary in (-1, 2, 3)

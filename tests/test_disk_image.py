@@ -1,4 +1,4 @@
-"""Tests for DskDiskImage and DiskDrive (fixed 2DD geometry)."""
+"""Tests for DskDiskImage and DiskDrive."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -147,50 +147,91 @@ def test_blank_image_falls_back_to_2dd(tmp_path: Path) -> None:
     assert (img.sectors_per_track, img.sides) == (9, 2)
 
 
-def test_invalid_bpb_falls_back_to_2dd(tmp_path: Path) -> None:
-    # Wrong bytes-per-sector (not 512) -> not a recognised BPB.
-    img = dsk_image(_bpb_image(tmp_path / "bad.dsk", total=1440, spt=8,
-                                  heads=1, bytes_per_sector=256))
+def test_720k_image_is_2dd_whatever_its_bpb_says(tmp_path: Path) -> None:
+    # openMSX SectorBasedDisk::detectGeometry: a 1440-sector image is 9/2.
+    img = dsk_image(_bpb_image(tmp_path / "ss.dsk", total=1440, spt=8, heads=1))
     assert (img.sectors_per_track, img.sides) == (9, 2)
 
 
-def test_bpb_total_mismatch_falls_back(tmp_path: Path) -> None:
-    # BPB total (700) disagrees with the actual file size (1440 sectors).
-    p = tmp_path / "mismatch.dsk"
-    _make_dsk(p)  # 1440-sector file
+def test_bpb_needs_a_boot_jump(tmp_path: Path) -> None:
+    # Without 0xE9/0xEB the BPB is ignored; an all-zero FAT gives no media
+    # byte, so a 640-sector image falls back to 9 sectors, 2 sides.
+    p = _bpb_image(tmp_path / "nojmp.dsk", total=640, spt=8, heads=2)
     data = bytearray(p.read_bytes())
-    data[0x0B:0x0D] = b"\x00\x02"  # 512
-    data[0x13:0x15] = (700).to_bytes(2, "little")
-    data[0x18:0x1A] = (9).to_bytes(2, "little")
-    data[0x1A:0x1C] = (1).to_bytes(2, "little")
+    data[0] = 0x00
     p.write_bytes(data)
     img = dsk_image(p)
     assert (img.sectors_per_track, img.sides) == (9, 2)
 
 
-def test_bpb_spt_boundary_values_recognized(tmp_path: Path) -> None:
-    # spt=1 and spt=63 are the min/max in-range boundary values (config.
-    # min_sectors_per_track/max_sectors_per_track) -- both must be recognised,
-    # not just mid-range values like 9.
-    img_min = dsk_image(_bpb_image(tmp_path / "min.dsk", total=80, spt=1, heads=1))
-    assert img_min.sectors_per_track == 1
-    img_max = dsk_image(_bpb_image(tmp_path / "max.dsk", total=63 * 2, spt=63, heads=2))
-    assert img_max.sectors_per_track == 63
+def test_bpb_values_are_taken_without_a_size_check(tmp_path: Path) -> None:
+    # openMSX checks only 1..255; the BPB total and bytes/sector are unused.
+    img = dsk_image(_bpb_image(tmp_path / "odd.dsk", total=640, spt=8,
+                               heads=2, bytes_per_sector=256))
+    assert (img.sectors_per_track, img.sides) == (8, 2)
+    img_big = dsk_image(_bpb_image(tmp_path / "big.dsk", total=80, spt=255, heads=3))
+    assert (img_big.sectors_per_track, img_big.sides) == (255, 3)
 
 
-def test_bpb_spt_out_of_range_falls_back(tmp_path: Path) -> None:
-    # spt=0 (below min) and spt=64 (above max) are each one step outside the
-    # recognised range and must fall back to the 720 KB 2DD default.
-    img_zero = dsk_image(_bpb_image(tmp_path / "zero.dsk", total=1440, spt=0, heads=2))
-    assert (img_zero.sectors_per_track, img_zero.sides) == (9, 2)
-    img_over = dsk_image(_bpb_image(tmp_path / "over.dsk", total=1440, spt=64, heads=2))
-    assert (img_over.sectors_per_track, img_over.sides) == (9, 2)
+def test_bogus_bpb_values_fall_back(tmp_path: Path) -> None:
+    for name, spt, heads in (("zero", 0, 2), ("over", 256, 2), ("noheads", 9, 0)):
+        img = dsk_image(_bpb_image(tmp_path / f"{name}.dsk", total=640,
+                                   spt=spt, heads=heads))
+        assert (img.sectors_per_track, img.sides) == (9, 2)
 
 
-def test_bpb_invalid_heads_falls_back(tmp_path: Path) -> None:
-    # heads must be exactly 1 or 2; any other value is an unrecognised BPB.
-    img = dsk_image(_bpb_image(tmp_path / "heads3.dsk", total=1440, spt=9, heads=3))
+def test_bogus_bpb_on_360k_image_falls_back_to_one_side(tmp_path: Path) -> None:
+    img = dsk_image(_bpb_image(tmp_path / "bogus.dsk", total=720, spt=0, heads=2))
+    assert (img.sectors_per_track, img.sides) == (9, 1)
+
+
+@pytest.mark.parametrize(
+    ("media", "geometry"),
+    [(0xF8, (9, 1)), (0xF9, (9, 2)), (0xFA, (8, 1)), (0xFB, (8, 2))],
+)
+def test_fat_media_byte_gives_geometry_without_boot_jump(
+    tmp_path: Path, media: int, geometry: tuple[int, int],
+) -> None:
+    p = tmp_path / "media.dsk"
+    data = bytearray(640 * SECTOR_SIZE)
+    data[SECTOR_SIZE] = media
+    p.write_bytes(data)
+    img = dsk_image(p)
+    assert (img.sectors_per_track, img.sides) == geometry
+
+
+def test_media_byte_below_f8_falls_back(tmp_path: Path) -> None:
+    p = tmp_path / "media.dsk"
+    data = bytearray(640 * SECTOR_SIZE)
+    data[SECTOR_SIZE] = 0xF7
+    p.write_bytes(data)
+    img = dsk_image(p)
     assert (img.sectors_per_track, img.sides) == (9, 2)
+
+
+def test_blank_360k_image_is_single_sided(tmp_path: Path) -> None:
+    p = tmp_path / "blank1dd.dsk"
+    p.write_bytes(bytes(720 * SECTOR_SIZE))
+    img = dsk_image(p)
+    assert (img.sectors_per_track, img.sides) == (9, 1)
+
+
+def test_sector_number_outside_track_is_not_found(tmp_path: Path) -> None:
+    # Sector 10 on a 9-sector track must not read LSN 9 (track 0 side 1),
+    # and sector 0 must not read LSN -1.
+    drive = DiskDrive(dsk_image(_make_dsk(tmp_path / "d.dsk")))
+    assert drive.read_sector(0, 0, 10) is None
+    assert drive.read_sector(0, 0, 0) is None
+    assert drive.write_sector(0, 0, 10, b"\x00" * SECTOR_SIZE) is False
+
+
+def test_sector_9_on_8_sector_image_reads_next_side(tmp_path: Path) -> None:
+    # openMSX's raw track always carries sector IDs 1-9, so on an 8-sector
+    # image R = 9 maps through the geometry to side 1 sector 1 (LSN 8).
+    drive = DiskDrive(dsk_image(_bpb_image(tmp_path / "8s.dsk", total=640,
+                                           spt=8, heads=2)))
+    assert drive.lsn(0, 0, 9) == 8
+    assert drive.read_sector(0, 0, 9) == drive.read_sector(0, 1, 1)
 
 
 def test_clean_image_is_not_dirty(tmp_path: Path) -> None:

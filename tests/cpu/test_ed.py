@@ -410,7 +410,7 @@ def test_ld_a_r_reads_refresh_and_sets_pv_from_iff2() -> None:
 
 def test_fetch_operand_byte_leaves_r_alone() -> None:
     """`_fetch()` reads operand/displacement/immediate bytes, which are not
-    M1 cycles, so R does not change (HB-F1XD ZRREG.BAS)."""
+    M1 cycles, so R does not change (real HB-F1XD, 2026-10-07)."""
     cpu = make_cpu([0xED, 0x5E, 0x00])
     cpu.registers.R = 0xC8
     cpu._fetch()
@@ -436,7 +436,7 @@ def test_fetch_opcode_preserves_r_bit7() -> None:
     ([0xED, 0x44], 2),              # NEG
 ])
 def test_r_counts_m1_cycles_only(code: list[int], m1_cycles: int) -> None:
-    # HB-F1XD ZRREG.BAS: NOP, LD HL,nn, LD A,(nn), LD (IX+d),n, RLC B add
+    # Real HB-F1XD (2026-10-07): NOP, LD HL,nn, LD A,(nn), LD (IX+d),n, RLC B add
     # 1 1 1 2 2 (plus LD A,R's own two).
     cpu = make_cpu(code)
     cpu.registers.R = 0x00

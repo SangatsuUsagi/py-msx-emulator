@@ -1,7 +1,7 @@
 """Tests for V9938 hardware command engine."""
 from __future__ import annotations
 
-from msx.vdp.v9938 import V9938
+from msx.vdp.v9938 import _HMMV_COST16, _LMMV_COST16, V9938
 
 
 def _make_vdp() -> V9938:
@@ -214,7 +214,7 @@ def test_hmmc_clears_ce_when_done() -> None:
 
 
 def test_hmmc_tr_after_last_byte_matches_hb_f1xd() -> None:
-    # HB-F1XD VDPCMD2.BAS line 4: TR/CE 81 after the start, 80 after the
+    # Real HB-F1XD (2026-10-07), a 2-byte HMMC: TR/CE 81 after the start, 80 after the
     # second byte and after waiting, 00 after an idle R#44 write; VRAM 12 34.
     vdp = _make_vdp()
     _dispatch_cmd(vdp, cmd_code=0xF, dx=0, dy=0, nx=4, ny=1, clr=0x12)
@@ -545,8 +545,8 @@ def test_lmcm_clears_ce_when_last_dot_is_fetched() -> None:
 
 
 def test_lmcm_tr_ce_sequence_matches_hb_f1xd() -> None:
-    # HB-F1XD VDPCMD2.BAS line 1: TR/CE 81 after the start, then
-    # 81 81 80 00 after each of the four S#7 reads.
+    # Real HB-F1XD (2026-10-07), a four-dot LMCM: TR/CE 81 after the start,
+    # then 81 81 80 00 after each of the four S#7 reads.
     vdp = _make_vdp()
     vdp.vram[0] = 0x12
     vdp.vram[1] = 0x34
@@ -756,8 +756,9 @@ def test_lmmv_ce_duration_is_pixel_unit() -> None:
     _dispatch_cmd(lmmv, cmd_code=0x8, dx=0, dy=0, nx=8, ny=2, clr=0x01)
     hmmv = _make_vdp()
     _dispatch_cmd(hmmv, cmd_code=0xC, dx=0, dy=0, nx=8, ny=2, clr=0x01)
-    assert lmmv._cmd_remaining == 8 * 2 * 21         # nx*ny*_LMMV_CYCLES_PER_DOT
-    assert hmmv._cmd_remaining == (8 // 2) * 2 * 10  # (nx/ppb)*ny*_HMMV_CYCLES_PER_BYTE
+    kind = lmmv._line_kind
+    assert lmmv._cmd_remaining == 8 * 2 * _LMMV_COST16[kind] // 16         # nx*ny dots
+    assert hmmv._cmd_remaining == (8 // 2) * 2 * _HMMV_COST16[kind] // 16  # (nx/ppb)*ny bytes
 
 
 def test_lmmm_ce_clears_after_full_tick() -> None:

@@ -1,8 +1,8 @@
 """Tests for FDC + RAM mapper coexistence in the legacy slot-3 strategy.
 
-Before openspec/changes/archive/2026-09-09-slot3-fdc-ram-mapper-coexistence,
-an FDC required flat_ram_subslot (the data-driven strategy); this file
-covers the newly allowed combination of an FDC with a RAM mapper instead.
+An FDC once required flat_ram_subslot (the data-driven strategy); this file
+covers the newly allowed combination of an FDC with a RAM mapper instead
+(memory-slot-bus "FDC composes with a RAM mapper").
 
 slot_register 0xFF selects slot 3 for every page, so sub_slot_reg alone
 drives the sub-slot dispatch. sub_slot_reg bit pairs: page0=1:0, page1=3:2,
@@ -110,8 +110,8 @@ def test_write_to_other_subslot_reaches_ram_mapper() -> None:
 
 
 def test_sub_rom_and_fdc_in_independent_subslots_with_mapper() -> None:
-    """FS-A1F-style independent sub-slots, but with a RAM mapper instead of
-    flat RAM: SUB ROM in sub-slot 1, FDC in sub-slot 2, RAM mapper elsewhere."""
+    """FS-A1F-style independent sub-slots with a RAM mapper: SUB ROM in
+    sub-slot 1, FDC in sub-slot 2, RAM mapper elsewhere."""
     sub_rom = bytes([0x41] + [0x00] * 0x3FFF)
     fdc = _StubFdc()
     mem = Memory(

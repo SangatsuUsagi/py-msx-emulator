@@ -9,8 +9,8 @@ motor change, a seek or a save), so the port does no work between those
 events.
 
 The input reads 1 in three cases: no tape, motor off, or past the end of the
-tape. This matches openMSX's cassette port: the player gives sample 0, and the
-port reads `sample >= 0`. A machine with no cassette port builds no
+tape. This matches openMSX, where the input reads 1 in the same three
+cases. A machine with no cassette port builds no
 CassettePort, and PSG register 14 bit 7 then reads 0.
 """
 from __future__ import annotations

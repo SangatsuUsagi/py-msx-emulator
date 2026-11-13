@@ -4,7 +4,7 @@ from msx.cassette import CassettePort
 from msx.clock import CoreClock
 from msx.input import InputLines
 from msx.mouse import MouseDevice
-from msx.psg import PSG, PSG_CLOCK, JoystickPort, MouseSlot
+from msx.psg import AY8910_READ_MASK, PSG, PSG_CLOCK, JoystickPort, MouseSlot
 from tests.factories import restore_psg_synth
 
 
@@ -217,13 +217,49 @@ def test_reg15_write_forwards_pin8_bit_for_mouse_port() -> None:
     assert mouse.pin8_calls[-1] == 0
 
 
-def test_reg15_other_port_pin8_bit_does_not_affect_mouse() -> None:
+def test_reg15_other_port_pin8_bit_is_not_forwarded() -> None:
+    # input-mouse "Pin 8 write for the other port is not forwarded".
     psg = _psg(InputLines())
     mouse = _FakeMouse()
     psg._mouse = MouseSlot(mouse, JoystickPort.JOY2)  # bit 5
     psg.write_port(0xA0, 15)
-    psg.write_port(0xA1, 0x10)  # bit 4 (Joy1 pin 8) = 1, bit 5 = 0
-    assert mouse.pin8_calls[-1] == 0  # derived from bit 5 only
+    psg.write_port(0xA1, 0x00)  # the first write always reaches the mouse
+    assert mouse.pin8_calls == [0]
+    psg.write_port(0xA1, 0x10)  # bit 4 (Joy1 pin 8) only
+    assert mouse.pin8_calls == [0]
+
+
+def test_reg15_pin6_change_on_the_mouse_port_is_forwarded() -> None:
+    # input-mouse "A pin 6 change on the mouse's port is forwarded".
+    psg = _psg(InputLines())
+    mouse = _FakeMouse()
+    psg._mouse = MouseSlot(mouse, JoystickPort.JOY2)
+    psg.write_port(0xA0, 15)
+    psg.write_port(0xA1, 0x20)
+    psg.write_port(0xA1, 0x24)  # bit 2: Joy2 pin 6
+    assert mouse.pin8_calls == [1, 1]
+
+
+def test_reg15_repeated_value_is_not_forwarded() -> None:
+    # input-mouse "A repeated register 15 value is not forwarded".
+    psg = _psg(InputLines())
+    mouse = _FakeMouse()
+    psg._mouse = MouseSlot(mouse, JoystickPort.JOY1)
+    psg.write_port(0xA0, 15)
+    psg.write_port(0xA1, 0x13)
+    psg.write_port(0xA1, 0x13)
+    assert mouse.pin8_calls == [1]
+
+
+def test_a_state_load_takes_the_mouse_pins_from_register_15() -> None:
+    psg = _psg(InputLines())
+    mouse = _FakeMouse()
+    psg._mouse = MouseSlot(mouse, JoystickPort.JOY2)
+    psg.regs[15] = 0x20
+    psg.sync_mouse_pins()
+    psg.write_port(0xA0, 15)
+    psg.write_port(0xA1, 0x20)  # the loaded pins: no change
+    assert mouse.pin8_calls == []
 
 
 def test_reg14_delegates_to_mouse_when_its_port_is_selected() -> None:
@@ -423,3 +459,118 @@ def test_snapshot_synth_on_silent_psg_round_trips() -> None:
     snapshot = psg.snapshot_synth()
     restore_psg_synth(psg, snapshot)
     assert psg.snapshot_synth() == snapshot
+
+
+# -- audio-psg "Register read-back mask" ---------------------------------------
+
+
+def _write_ff_and_read_back(psg: PSG) -> list[int]:
+    """Write 0xFF to registers 0-13 except 7 and read each back."""
+    values = []
+    for reg in range(14):
+        if reg == 7:
+            continue
+        psg.write_port(0xA0, reg)
+        psg.write_port(0xA1, 0xFF)
+        values.append(psg.read_port(0xA2))
+    return values
+
+
+def test_the_ym2149_form_reads_back_every_bit() -> None:
+    assert _write_ff_and_read_back(PSG()) == [0xFF] * 13
+
+
+def test_the_ay8910_form_reads_back_the_unused_bits_as_0() -> None:
+    psg = PSG(read_mask=AY8910_READ_MASK)
+    assert _write_ff_and_read_back(psg) == [
+        0xFF, 0x0F, 0xFF, 0x0F, 0xFF, 0x0F, 0x1F, 0x1F, 0x1F, 0x1F, 0xFF, 0xFF, 0x0F,
+    ]
+
+
+def test_the_ay8910_mask_does_not_change_the_stored_register() -> None:
+    psg = PSG(read_mask=AY8910_READ_MASK)
+    psg.write_port(0xA0, 1)
+    psg.write_port(0xA1, 0xFF)
+    assert psg.regs[1] == 0xFF
+    assert psg.read_port(0xA2) == 0x0F
+
+
+def test_an_ay8910_machine_reads_back_the_mask_on_the_io_bus() -> None:
+    from host.machine_config import load_machine_config
+    from msx.machine_loader import build_machine
+    from tests.test_machine_config import _overrides, _spec
+
+    spec = _spec("hb_f1xd")
+    io = build_machine(load_machine_config(spec, **_overrides(spec)).config).io
+    io.write_port(0xA0, 6)
+    io.write_port(0xA1, 0xFF)
+    assert io.read_port(0xA2) == 0x1F
+
+
+# -- audio-psg "Register 14 pins 6 and 7 follow the outputs with the gated form"
+
+
+def _pin67_digits(psg: PSG, base: int) -> str:
+    """Write register 15 = base | 0-F and read register 14 after each; return
+    bits 5-4 of the reads as one digit each (PIN67.BAS)."""
+    digits = ""
+    for low in range(16):
+        psg.write_port(0xA0, 15)
+        psg.write_port(0xA1, base | low)
+        psg.write_port(0xA0, 14)
+        digits += str((psg.read_port(0xA2) >> 4) & 0x03)
+    return digits
+
+
+def test_port_1_pins_6_and_7_follow_r15_bits_0_and_1_with_the_gated_form() -> None:
+    psg = _psg(InputLines())
+    psg.pin67_gated = True
+    assert _pin67_digits(psg, 0x80) == "0123" * 4
+
+
+def test_port_2_pins_6_and_7_follow_r15_bits_2_and_3_with_the_gated_form() -> None:
+    psg = _psg(InputLines())
+    psg.pin67_gated = True
+    assert _pin67_digits(psg, 0xC0) == "0000111122223333"
+
+
+def test_a_pressed_trigger_reads_0_whatever_the_output() -> None:
+    state = InputLines()
+    _press(state, 0, 4)  # Joy1 Trigger A
+    psg = _psg(state)
+    psg.pin67_gated = True
+    psg.write_port(0xA0, 15)
+    psg.write_port(0xA1, 0x8F)
+    psg.write_port(0xA0, 14)
+    assert psg.read_port(0xA2) & 0x10 == 0
+
+
+def test_the_gate_applies_to_a_selected_mouse() -> None:
+    psg = _psg(InputLines())
+    psg.pin67_gated = True
+    psg._mouse = MouseSlot(MouseDevice(), JoystickPort.JOY2)  # no button pressed
+    psg.write_port(0xA0, 15)
+    psg.write_port(0xA1, 0xC0)
+    psg.write_port(0xA0, 14)
+    assert psg.read_port(0xA2) & 0x30 == 0
+
+
+def test_the_plain_form_ignores_the_outputs() -> None:
+    psg = _psg(InputLines())
+    assert _pin67_digits(psg, 0x80)[0] == "3"
+    assert _pin67_digits(psg, 0xC0)[0] == "3"
+
+
+def test_an_hb_f1xd_machine_gates_the_pins_on_the_io_bus() -> None:
+    from host.machine_config import load_machine_config
+    from msx.machine_loader import build_machine
+    from tests.test_machine_config import _overrides, _spec
+
+    spec = _spec("hb_f1xd")
+    io = build_machine(load_machine_config(spec, **_overrides(spec)).config).io
+    io.write_port(0xA0, 15)
+    io.write_port(0xA1, 0x8E)
+    io.write_port(0xA0, 14)
+    value = io.read_port(0xA2)
+    assert value & 0x10 == 0
+    assert value & 0x20 == 0x20

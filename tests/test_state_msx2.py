@@ -181,8 +181,8 @@ def test_slot2_sub_slot_disabled_none_in_snapshot(saves_dir):
 
 
 # ---------------------------------------------------------------------------
-# slot1_sub_slot_reg round-trip (openspec/changes/slot1-slot2-symmetrization
-# -- the identical mechanism the slot2 section above exercises, applied
+# slot1_sub_slot_reg round-trip (memory-slot-bus "State save/load includes
+# slot1_sub_slot_reg" -- the identical mechanism the slot2 section above exercises, applied
 # independently to slot 1; no machine-loader wiring exists yet to build one
 # end-to-end via --extension1, so the flag/sub-slot mappers are set directly
 # for test purposes, matching the slot2 tests' own precedent)
@@ -396,22 +396,22 @@ def test_msx2_v9938_state_is_one_object(saves_dir):
         assert key not in data["vdp"]
 
 
-def test_new_save_uses_format_version_23(saves_dir):
+def test_new_save_uses_format_version_25(saves_dir):
     # machine-state "New save uses the current format version".
     machine = make_machine_msx2(_ROM, _EXTROM)
     state_path = save_state(machine, _RGB_MSX2, "test")
 
-    assert _load_state_json(state_path)["format_version"] == 23
+    assert _load_state_json(state_path)["format_version"] == 25
 
 
-def test_format_version_22_rejected(saves_dir):
+def test_format_version_23_rejected(saves_dir):
     # machine-state "An earlier format version is rejected".
     machine = make_machine_msx2(_ROM, _EXTROM)
     state_path = save_state(machine, _RGB_MSX2, "test")
 
-    _rewrite_state_version(state_path, 22)
+    _rewrite_state_version(state_path, 23)
 
-    with pytest.raises(ValueError, match="version 22"):
+    with pytest.raises(ValueError, match="version 23"):
         load_state_file(machine, state_path)
 
 

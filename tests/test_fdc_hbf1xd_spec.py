@@ -9,13 +9,12 @@ Already covered, no new test added for these:
     iface.mount() calls; tests/test_debugger_fdd.py::test_fdd1_mounts_file,
     test_fdd1_status_shows_path, test_fdd1_eject, test_fdd1_missing_file_
     keeps_disk
-  - SwapDisk (success, including the flush/no-flush and eject branches)
-    -- tests/test_fdc_disk_swap.py::test_swap_mounts_new_image_for_
-    controller, test_swap_flushes_outgoing_image, test_swap_aborts_in_
-    progress_transfer, test_swap_sets_disk_change, test_eject_empties_
+  - SwapDisk (success, including the dirty/clean outgoing image and
+    eject branches) -- tests/test_fdc_disk_swap.py::test_swap_mounts_new_
+    image_for_controller, test_swap_returns_the_dirty_outgoing_image,
+    test_swap_returns_none_for_a_clean_outgoing_image, test_swap_aborts_
+    in_progress_transfer, test_swap_sets_disk_change, test_eject_empties_
     drive; tests/test_rpc_fdd.py::test_fdd_mount, test_fdd_eject
-  - FlushAllDrives -- tests/test_fdc_acceptance.py::test_format_write_
-    read_roundtrip_and_persist (iface.flush() then remount-and-verify)
   - ForwardStatusRead, ForwardCommandWrite, ForwardTrackWrite,
     ForwardSectorWrite, ForwardDataRead, ForwardDataWrite -- exercised
     throughout tests/test_fdc_interface.py, test_fdc_acceptance.py,
@@ -84,14 +83,11 @@ Gaps this file fills:
     inferred-but-untested. It holds: closes that open question.
   - invariant.FloppyDiskHasAtLeastOneDrive, invariant.RegisterBytesAreBytes
     -- no property-based tests exist for either
-  - config-default.* -- msx/fdc/interface.py has no exported named
-    constants for its register offsets or bit positions (unlike
-    msx/fdc/wd2793.py's BUSY/S_DRQ/etc.), so there is nothing to assert
-    against as a standalone value-equality test. Every config default is
-    instead exercised behaviourally, by address, in the register tests
-    above and below (e.g. reading exactly 0x7FFC exercises
-    config.side_offset = 16380; the drive-B test below exercises
-    config.drive_b_select_code = 1).
+  - config-default.* -- exercised behaviourally, by address, in the
+    register tests above and below (e.g. reading exactly 0x7FFC exercises
+    config.side_offset = 16380, msx/fdc/interface.py's REG_SIDE; the
+    drive-B test below exercises config.drive_b_select_code = 1), not by
+    value-equality tests against the REG_* constants.
 """
 from __future__ import annotations
 
@@ -185,10 +181,12 @@ def test_track_and_sector_registers_read_back_through_memory_window() -> None:
 # ReadSideRegister
 # ---------------------------------------------------------------------------
 
-def test_side_register_reads_back_whole_written_byte() -> None:
+def test_side_register_keeps_only_bit_0_of_the_written_byte() -> None:
     iface = _iface()
-    iface.write_mem(_SIDE, 0x01)
-    assert iface.read_mem(_SIDE) == 0x01  # whole byte echoed, not masked to bit 0
+    iface.read_mem(_DRIVE)  # consume the power-on change
+    iface.write_mem(_SIDE, 0xFF)
+    # bits 7-6 read 1, bits 5-1 as 0x7FFD (0x3C after the power-on 0x00)
+    assert iface.read_mem(_SIDE) == 0xFD
 
 
 # ---------------------------------------------------------------------------

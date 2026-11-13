@@ -276,7 +276,7 @@ def test_the_devices_take_their_media_size_from_the_boundary() -> None:
     rtc = RTC()
     halnote = HalnoteMapper(rom=bytes(0x100000))
     assert len(fmpac.sram_image.data()) == FMPAC_SRAM_SIZE == 8192
-    assert len(rtc.cmos.data()) == RTC_CMOS_SIZE == 26
+    assert len(rtc.cmos.data()) == RTC_CMOS_SIZE == 52
     assert len(halnote.sram_image.data()) == HALNOTE_SRAM_SIZE == 16384
 
 

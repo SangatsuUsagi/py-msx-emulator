@@ -181,7 +181,7 @@ def test_build_machine_rejects_scc_plus_when_slot1_is_konamiscc(tmp_path: Path) 
 
 def test_machine_reset_restores_scci_cartridge_to_compatible_mode(tmp_path: Path) -> None:
     """Machine.reset() resets both the carried SCC chip (scc.reset()) and,
-    as of openspec/changes/wire-cartridge-mapper-and-ppi-reset, the SCCICart
+    as of change `2026-09-28-wire-cartridge-mapper-and-ppi-reset`, the SCCICart
     itself (memory.mapper2.reset()): the mode register and bank registers
     return to their power-on values (0x00, [0, 1, 2, 3]), so a Plus-mode
     cartridge does not survive a reset -- it comes back in Compatible mode

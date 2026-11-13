@@ -110,8 +110,8 @@ class MapperKind(str, Enum):
     # Memory.mapper2, see machine_loader.py), so it needs a kind too --
     # msx/state.py's mapper2_kind identity check covers slot 2 (Memory.
     # mapper2/mapper2_subslots) the same way mapper_kind already covers
-    # slot 1 (Memory.mapper1), see openspec/changes/
-    # generalize-slot2-mapper-state.
+    # slot 1 (Memory.mapper1), see machine-state "Slot 2 mapper state save
+    # and restore".
     FMPAC = "fmpac"
     # RamMapper (msx/ram_mapper.py) structurally satisfies Mapper so it can be
     # placed in Memory.mapper2_subslots (an expanded slot 2's --extension
@@ -368,8 +368,9 @@ class FlatMapper(_NoStateMapperMixin):
 class FixedPageMapper(_NoStateMapperMixin):
     """Non-bank-switched cartridge mapper: ROM appears only at a fixed base address;
     every other page in the cartridge region reads as 0xFF (open bus). Reproduces
-    openMSX RomPageNN / RomPlain(mirrored=False) for the Page2 / 0x4000 / 0x8000
-    ROM database mapper types.
+    openMSX RomPlain(mirrored=False) for the 0x4000 / 0x8000 ROM database mapper
+    types, RomPageNN for "Page2" given page2_rom_image(rom), and RomPlain NORMAL
+    for "Normal" given guess_plain_rom_base(rom) as the base.
     """
 
     kind: ClassVar[MapperKind] = MapperKind.FIXED_PAGE
@@ -387,6 +388,65 @@ class FixedPageMapper(_NoStateMapperMixin):
         if 0 <= offset < self._rom_len:
             return self.rom[offset]
         return 0xFF
+
+
+def _resolve_block(value: int, count: int) -> int:
+    """The ROM block that a block number selects, as openMSX
+    RomBlocks::setRom resolves it with the default block mask (count - 1):
+    the block itself when the ROM has it, else value & (count - 1). The
+    mask keeps only low bits when count is a power of two. For another
+    count it differs from value % count (24 blocks: 25 selects block 17,
+    not block 1). With count >= 1 the result is always below count."""
+    if value < count:
+        return value
+    return value & (count - 1)
+
+
+def page2_rom_image(rom: bytes) -> bytes:
+    """The 16 KB that a "Page2" ROM shows at 0x8000-0xBFFF: 8 KB blocks 0 and
+    1, each resolved as openMSX RomBlocks::setRom does (_resolve_block). An
+    8 KB ROM therefore repeats at 0xA000, and a ROM longer than 16 KB shows
+    only its first 16 KB (openMSX RomPageNN maps page 2 only)."""
+    block_count = max(1, (len(rom) + _PAGE_8K - 1) // _PAGE_8K)
+    padded = rom + b"\xff" * (block_count * _PAGE_8K - len(rom))
+    image = bytearray()
+    for block in (0, 1):
+        resolved = _resolve_block(block, block_count)
+        image += padded[resolved * _PAGE_8K:(resolved + 1) * _PAGE_8K]
+    return bytes(image)
+
+
+def _count_header_pointers(rom: bytes, offset: int, pages: list[int]) -> None:
+    """Add one to pages[p] for each non-zero routine pointer of an "AB"
+    header at `offset` that points into page p (0-2) relative to the header."""
+    if rom[offset] != 0x41 or rom[offset + 1] != 0x42:  # "AB"
+        return
+    for i in range(4):
+        pointer = rom[offset + 2 + 2 * i] | (rom[offset + 3 + 2 * i] << 8)
+        if pointer != 0:
+            page = (pointer >> 14) - (offset >> 14)
+            if 0 <= page <= 2:
+                pages[page] += 1
+
+
+def guess_plain_rom_base(rom: bytes) -> int:
+    """Where a "Normal" (plain, unmirrored) ROM starts, guessed as openMSX
+    RomPlain::guessLocation does: count the header pointers at ROM offset
+    0x0000 and, for a ROM of at least 0x4010 bytes, 0x4000 (each counted by
+    the page it points into relative to its header), then prefer 0x4000,
+    then 0x0000, then 0x8000. With no count the ROM starts at 0x0000."""
+    pages = [0, 0, 0]
+    if len(rom) >= 0x0010:
+        _count_header_pointers(rom, 0x0000, pages)
+    if len(rom) >= 0x4010:
+        _count_header_pointers(rom, 0x4000, pages)
+    if pages[1] and pages[1] >= pages[0] and pages[1] >= pages[2]:
+        return 0x4000
+    if pages[0] and pages[0] >= pages[2]:
+        return 0x0000
+    if pages[2]:
+        return 0x8000
+    return 0x0000
 
 
 class _WindowedRomMapperMixin:
@@ -453,21 +513,11 @@ class _WindowedRomMapperMixin:
         return max(1, len(self.rom) // self._MAPPER_PAGE_SIZE)
 
     def _select_page(self, value: int) -> int:
-        # openMSX RomBlocks::setRom's two-tier resolution (neither
-        # RomAscii8kB.cc nor RomAscii16kB.cc installs a setBlockMask
-        # override, so the mask is the default `nrBlocks - 1`, matching
-        # KonamiSCCMapper's own _select_page -- not KonamiMapper's fixed
-        # 5-bit mask): a raw value already below the ROM's real page count
-        # selects that page directly; otherwise it is masked with
-        # (pages - 1), which is only a contiguous-low-bits mask when pages
-        # is itself a power of two. This replaces a prior `value % pages`
-        # resolution, which diverges from this for a non-power-of-two page
-        # count (e.g. 24 pages: value=25 gives page 1 under modulo but page
-        # 17 under this mask).
-        pages = self._num_pages()
-        if value < pages:
-            return value
-        return value & (pages - 1)
+        # Neither RomAscii8kB nor RomAscii16kB installs a setBlockMask
+        # override, so openMSX uses the default mask (_resolve_block),
+        # matching KonamiSCCMapper's own _select_page -- not KonamiMapper's
+        # fixed 5-bit mask.
+        return _resolve_block(value, self._num_pages())
 
     def _sync_window(self, window: int) -> None:
         page_size = self._MAPPER_PAGE_SIZE
@@ -531,10 +581,11 @@ class Ascii8Mapper(_WindowedRomMapperMixin, BankTracingMapper):
     No mirroring outside 0x4000-0xBFFF: unlike the Konami-family mappers,
     real ASCII8 cartridges do not mirror their windows into 0x0000-0x3FFF or
     0xC000-0xFFFF (openMSX RomAscii8kB.cc reset() wires those pages
-    permanently to unmapped/open bus; openMSX/openMSX issue #1213, opened as
-    an ASCII8 mirroring report, was investigated and closed against that
-    claim -- real ASCII8 hardware's /SLTSL wiring returns nothing outside
-    its own windows, unlike the 32 KB-ROM-specific /CS12 mirror).
+    permanently to unmapped/open bus; in openMSX/openMSX issue #1213,
+    testers of original ASCII-mapper cartridges reported no mirroring in
+    pages 0 and 3 -- the mapper chip returns nothing outside its own
+    windows, unlike the 32 KB-ROM-specific /CS12 mirror -- and the issue
+    was closed as a duplicate of #1149).
     """
 
     kind: ClassVar[MapperKind] = MapperKind.ASCII8
@@ -604,8 +655,8 @@ class Ascii16Mapper(_WindowedRomMapperMixin, BankTracingMapper):
     """ASCII16 mapper: two 16 KB windows at 0x4000 and 0x8000.
 
     Control registers: window 0 at 0x6000–0x67FF, window 1 at 0x7000–0x77FF
-    -- the low half of each 4 KB zone only (openMSX RomAscii16kB.cc:32:
-    `(0x6000 <= address) && (address < 0x7800) && !(address & 0x0800)`;
+    -- the low half of each 4 KB zone only (openMSX RomAscii16kB::writeMem
+    accepts 0x6000-0x77FF only with address bit 11 clear;
     confirmed against references/docs/"MegaROM Mappers - MSX Wiki.md" and
     "Megabit ROM Cartridges.md", both of which give the same narrower
     range). The high half of each zone (0x6800–0x6FFF, 0x7800–0x7FFF) does
@@ -644,11 +695,10 @@ class Ascii16Mapper(_WindowedRomMapperMixin, BankTracingMapper):
     def _read_out_of_window(self, addr: int) -> int:
         # Outside the two 16 KB windows (addr < 0x4000 or addr >= 0xC000):
         # open bus, not a mirror of either bank -- matching Ascii8Mapper's
-        # "no mirroring" contract (openMSX's RomAscii16kB.cc does not
-        # override reset() for the fixed-unmapped pages 0/3, and its SRAM
-        # sibling RomAscii16_2.cc doesn't either, so both leave those pages
-        # at the VDP/CPU's open-bus default rather than routing them
-        # through either bank register). Real-hardware verification is
+        # "no mirroring" contract (openMSX's RomAscii16kB::reset sets pages
+        # 0 and 3 unmapped, and its SRAM sibling RomAscii16_2::reset calls
+        # it, so neither routes those pages through a bank register).
+        # Real-hardware verification is
         # limited to this openMSX-source agreement -- no ASCII16-specific
         # cartridge dump or real-machine trace has confirmed it directly;
         # see allium/ascii_mappers.allium's Open Questions.
@@ -690,14 +740,15 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
 
     Following openMSX RomAscii8_8: a window maps SRAM when its bank register
     value has the SRAM-enable bit set, where the enable bit equals the ROM's
-    8 KB page count (rom_size // 8192). SRAM is only selectable for windows in
-    _SRAM_PAGES (default 0x8000 and 0xA000; the region bit for window w is
-    1 << (w + 2)). The SRAM-page-select bits are masked with
+    8 KB page count (rom_size // 8192). Any window can map SRAM, but only
+    windows in _SRAM_PAGES (default 0x8000 and 0xA000; the region bit for
+    window w is 1 << (w + 2)) take SRAM writes; elsewhere the SRAM is
+    read-only. The SRAM-page-select bits are masked with
     round_up(sram_size / 8192) - 1. Writes to 0x6000–0x7FFF always update bank
     registers (raw value, never SRAM).
 
-    KOEI and Wizardry variants (different enable bit / SRAM windows) are out of
-    scope here and are not covered by this generic mapper.
+    The KOEI variant (different enable bit / SRAM windows) is
+    KoeiSRAM32Mapper below. The Wizardry variant is out of scope.
 
     No mirroring outside 0x4000-0xBFFF: same as Ascii8Mapper (see that
     class's own docstring note); ROM or SRAM content outside the four
@@ -746,9 +797,13 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
         return blocks - 1
 
     def _is_sram_bank(self, window: int) -> bool:
-        if not (self._SRAM_PAGES & (1 << (window + 2))):
-            return False
+        # Any window maps SRAM for reading when its bank has the enable bit
+        # (openMSX RomAscii8_8::writeMem calls setBank for every region);
+        # only _SRAM_PAGES windows also take writes (_is_sram_writable).
         return bool(self._banks[window] & self._sram_enable_bit())
+
+    def _is_sram_writable(self, window: int) -> bool:
+        return bool(self._SRAM_PAGES & (1 << (window + 2))) and self._is_sram_bank(window)
 
     def _sram_offset(self, window: int, addr: int, base: int) -> int:
         block = self._banks[window] & self._sram_block_mask()
@@ -804,7 +859,7 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
             window, base = 2, 0x8000
         else:
             window, base = 3, 0xA000
-        if self._is_sram_bank(window):
+        if self._is_sram_writable(window):
             self.sram_image.write(self._sram_offset(window, addr, base), value & 0xFF)
 
     def sram_medium(self) -> SramImage | None:
@@ -1184,8 +1239,8 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
         # Outside the two 16 KB windows: open bus, regardless of whether
         # either window is currently SRAM-selected -- see the base
         # Ascii16Mapper._read_out_of_window for the full rationale
-        # (openMSX's RomAscii16_2.cc, the SRAM variant, does not override
-        # reset() for the fixed-unmapped pages either, so it gets no
+        # (openMSX's RomAscii16_2::reset calls RomAscii16kB::reset, which
+        # sets pages 0 and 3 unmapped, so the SRAM variant gets no
         # special-cased behaviour there over the plain ROM variant).
         return 0xFF
 
@@ -1265,14 +1320,14 @@ class RTypeMapper(BankTracingMapper):
 
     Note on generality: this mirrors openMSX RomBlocks::setRom's own
     two-tier block resolution (direct index if below the ROM's page count,
-    else masked with page_count - 1, open bus if still out of range) for
-    _RTYPE_FIXED_BLOCK specifically. This has only been verified against
-    the one 384 KB (24-page) canonical R-Type dump the primary reference
-    and openMSX both describe, where 0x17 is directly selectable (23 < 24
-    pages). Behaviour on any other ROM size (untested by this codebase --
-    see tests/test_rtype_mapper.py's own 4-page fixture, which only
-    exercises the masked-fallback branch) is unconfirmed against real
-    hardware.
+    else masked with page_count - 1; see _resolve_block) for
+    _RTYPE_FIXED_BLOCK and for the switchable bank. A page that runs past
+    the end of a short ROM reads open bus there (_sync_window). This has
+    only been verified against the one 384 KB (24-page) cartridge image
+    the primary reference and openMSX both describe, where 0x17 is directly selectable (23 < 24
+    pages). Behaviour on any other ROM size (tests/test_rtype_mapper.py
+    covers the masked fallback with 4- and 8-page fixtures) follows openMSX
+    only and is unconfirmed against real hardware.
     """
 
     kind: ClassVar[MapperKind] = MapperKind.R_TYPE
@@ -1289,13 +1344,8 @@ class RTypeMapper(BankTracingMapper):
     _flat: bytearray = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        pages = self._num_pages()
-        # Two-tier resolution (see class docstring): direct index if in
-        # range, else masked with pages - 1.
-        if _RTYPE_FIXED_BLOCK < pages:
-            self._fixed_block = _RTYPE_FIXED_BLOCK
-        else:
-            self._fixed_block = _RTYPE_FIXED_BLOCK & (pages - 1)
+        # Two-tier resolution (see class docstring).
+        self._fixed_block = _resolve_block(_RTYPE_FIXED_BLOCK, self._num_pages())
         self._flat = bytearray(2 * _PAGE_16K)
         self._sync_window(0)
         self._sync_window(1)
@@ -1304,7 +1354,10 @@ class RTypeMapper(BankTracingMapper):
         return max(1, len(self.rom) // _PAGE_16K)
 
     def _sync_window(self, window: int) -> None:
-        page = self._fixed_block if window == 0 else self._bank
+        if window == 0:
+            page = self._fixed_block
+        else:
+            page = _resolve_block(self._bank, self._num_pages())
         src = self.rom[page * _PAGE_16K : (page + 1) * _PAGE_16K]
         dst = window * _PAGE_16K
         self._flat[dst : dst + len(src)] = src
@@ -1480,9 +1533,9 @@ class KonamiMapper(BankTracingMapper):
 
     def reset(self) -> None:
         """Restore all four bank registers to their power-on pages
-        (0, 1, 2, 3) and resync the flat read-path mirror. Inherited
-        unchanged by MajutsushiMapper -- it overrides only write()'s DAC
-        carve-out, never this method or _sync_window."""
+        (0, 1, 2, 3) and resync the flat read-path mirror.
+        MajutsushiMapper.reset() calls this and then also silences its
+        DAC."""
         self._banks[:] = [0, 1, 2, 3]
         for window in range(4):
             self._sync_window(window)
@@ -1502,7 +1555,7 @@ _MAJUTSUSHI_KEYS: frozenset[str] = frozenset(MajutsushiMapperState.__annotations
 
 @dataclass
 class MajutsushiMapper(KonamiMapper):
-    """Konami mapper + DAC for Hai no Majutsushi.
+    """Konami mapper + DAC (the Majutsushi mapper).
 
     Writes to 0x5000–0x5FFF are routed to the DAC (8-bit unsigned PCM; MSX
     Wiki "MegaROM Mappers", "Konami MegaROMs without SCC" notes);
@@ -1625,17 +1678,10 @@ class KonamiSCCMapper(BankTracingMapper):
         return max(1, len(self.rom) // _PAGE_8K)
 
     def _select_page(self, value: int) -> int:
-        # openMSX RomBlocks::setRom's two-tier resolution (RomKonamiSCC
-        # installs no setBlockMask override, so the mask is the default
-        # `nrBlocks - 1`, derived from this ROM's own page count -- unlike
-        # KonamiMapper's fixed 5-bit mask): a raw value already below the
-        # real page count selects that page directly; otherwise it is
-        # masked with (pages - 1), which is only a contiguous-low-bits mask
-        # when pages is itself a power of two.
-        pages = self._num_pages()
-        if value < pages:
-            return value
-        return value & (pages - 1)
+        # RomKonamiSCC installs no setBlockMask override, so openMSX uses
+        # the default mask derived from this ROM's own page count
+        # (_resolve_block) -- unlike KonamiMapper's fixed 5-bit mask.
+        return _resolve_block(value, self._num_pages())
 
     def _sync_window(self, window: int) -> None:
         page = self._banks[window]
@@ -1979,7 +2025,8 @@ class HalnoteMapper(BankTracingMapper):
     sram: InitVar[bytes | bytearray | None] = None
     sram_image: SramImage = field(init=False, repr=False)
 
-    _banks: list[int] = field(default_factory=lambda: [0, 1, 2, 3], repr=False)
+    # Every window starts at ROM page 0 (openMSX RomHalnote::reset).
+    _banks: list[int] = field(default_factory=lambda: [0, 0, 0, 0], repr=False)
     _subbanks: list[int] = field(default_factory=lambda: [0, 0], repr=False)
     _sram_enabled: bool = field(default=False, init=False, repr=False)
     _submapper_enabled: bool = field(default=False, init=False, repr=False)
@@ -2006,7 +2053,7 @@ class HalnoteMapper(BankTracingMapper):
         """Restore bank/sub-bank registers and both enable flags to their
         construction defaults, matching openMSX's RomHalnote::reset(). SRAM
         contents are left untouched -- only the enable flag resets."""
-        self._banks[:] = [0, 1, 2, 3]
+        self._banks[:] = [0, 0, 0, 0]
         self._subbanks[:] = [0, 0]
         self._sram_enabled = False
         self._submapper_enabled = False

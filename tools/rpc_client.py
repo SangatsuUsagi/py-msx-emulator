@@ -17,19 +17,16 @@ import argparse
 import json
 import socket
 import sys
-from typing import Any
+from typing import Any, BinaryIO
 
 DEFAULT_SOCKET = "/tmp/py_msx_emu.sock"
 
 
-def _readline(sock: socket.socket) -> bytes:
-    buf = b""
-    while not buf.endswith(b"\n"):
-        chunk = sock.recv(4096)
-        if not chunk:
-            break
-        buf += chunk
-    return buf.strip()
+def _readline(reader: BinaryIO) -> bytes:
+    """One frame: the next newline-terminated line. A buffered reader keeps
+    a second frame that arrived in the same recv (a push notification
+    followed by the response) for the next call."""
+    return reader.readline().strip()
 
 
 def _coerce(value: str) -> Any:
@@ -91,10 +88,11 @@ def main() -> None:
         sys.exit(1)
 
     try:
-        _readline(sock)  # drain the connection banner
+        reader = sock.makefile("rb")
+        _readline(reader)  # drain the connection banner
         sock.sendall((json.dumps(payload) + "\n").encode())
         while True:
-            resp = json.loads(_readline(sock))
+            resp = json.loads(_readline(reader))
             # Print (and skip) push notifications until our response arrives.
             if "notification" in resp:
                 print(json.dumps(resp), file=sys.stderr)

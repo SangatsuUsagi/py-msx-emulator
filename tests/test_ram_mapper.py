@@ -254,7 +254,7 @@ def test_restore_rejects_wrong_ram_length() -> None:
 
 
 def test_debug_bank_describes_page_bank() -> None:
-    # memory-ram-mapper "debug_bank_info describes the page's own bank".
+    # memory-ram-mapper "debug_bank describes the page's own bank".
     rm = RamMapper()
     rm.banks[2] = 5
     assert rm.debug_bank(2) == BankView(

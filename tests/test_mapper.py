@@ -10,6 +10,8 @@ from msx.mapper import (
     FlatMapper,
     KonamiMapper,
     MajutsushiMapper,
+    guess_plain_rom_base,
+    page2_rom_image,
 )
 from tests.factories import restore_state
 
@@ -145,6 +147,47 @@ def test_fixed_page_does_not_mirror_past_rom_end() -> None:
     m = FixedPageMapper(rom, base=0x8000)
     assert m.read(0x8000) == 0xAB
     assert m.read(0xA000) == 0xFF
+
+
+# ---------------------------------------------------------------------------
+# "Page2" image (openMSX RomPageNN, page 2 only)
+# ---------------------------------------------------------------------------
+
+def test_page2_8k_rom_mirrors_at_0xa000() -> None:
+    rom = bytes([0xAB] + [0] * (8192 - 1))
+    m = FixedPageMapper(page2_rom_image(rom), base=0x8000)
+    assert m.read(0x8000) == 0xAB
+    assert m.read(0xA000) == 0xAB
+
+
+def test_page2_32k_rom_maps_only_its_first_16k() -> None:
+    rom = bytes([0x11] * 16384 + [0x22] * 16384)
+    m = FixedPageMapper(page2_rom_image(rom), base=0x8000)
+    assert m.read(0x8000) == 0x11
+    assert m.read(0xBFFF) == 0x11
+    assert m.read(0xC000) == 0xFF
+
+
+# ---------------------------------------------------------------------------
+# "Normal" base guess (openMSX RomPlain::guessLocation)
+# ---------------------------------------------------------------------------
+
+def _ab_header_rom(init: int, size: int = 16384) -> bytes:
+    rom = bytearray(size)
+    rom[0:4] = bytes([0x41, 0x42, init & 0xFF, init >> 8])
+    return bytes(rom)
+
+
+def test_normal_rom_with_init_in_page_1_starts_at_0x4000() -> None:
+    assert guess_plain_rom_base(_ab_header_rom(0x4010)) == 0x4000
+
+
+def test_normal_rom_with_init_in_page_2_starts_at_0x8000() -> None:
+    assert guess_plain_rom_base(_ab_header_rom(0x8010)) == 0x8000
+
+
+def test_normal_rom_without_header_starts_at_0x0000() -> None:
+    assert guess_plain_rom_base(bytes(16384)) == 0x0000
 
 
 def test_fixed_page_snapshot_restore_is_empty_and_noop() -> None:

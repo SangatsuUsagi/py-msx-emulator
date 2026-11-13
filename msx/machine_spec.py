@@ -26,17 +26,44 @@ class PrinterPortForm(str, Enum):
     S1985 = "s1985"  # 0x90-0x97 with mirrors, unused status bits 0
 
 
+class MapperPortForm(str, Enum):
+    """What a read of the RAM mapper ports 0xFC-0xFF returns (msx/mapper_io.py)."""
+
+    PLAIN = "plain"  # the RAM mapper's bank register, unused bits 1
+    S1985 = "s1985"  # the S1985 latch of the last write, (latch & 0x1F) | 0x80
+
+
+class PsgReadBack(str, Enum):
+    """What a PSG register read on port 0xA2 returns (msx/psg.py read masks)."""
+
+    YM2149 = "ym2149"  # every bit as written
+    AY8910 = "ay8910"  # the AY-3-8910 latch widths, unused bits 0
+
+
+class PsgPin67Read(str, Enum):
+    """What a PSG register 14 read gives on bits 4-5, the joystick pins 6/7."""
+
+    PLAIN = "plain"  # the port's input lines only
+    GATED = "gated"  # each input ANDed with its own R15 output bit
+
+
+class RtcReadBack(str, Enum):
+    """What the RTC ports read (msx/rtc.py read values)."""
+
+    PLAIN = "plain"  # 0xB5 0xF0 | nibble, 0xB4 0xFF
+    S1985 = "s1985"  # 0xB5 the nibble, 0xB4/0xB6/0xB7 0x8B
+
+
 class PpiControlRead(str, Enum):
     """What a port 0xAB read returns; the 8255A data sheet calls it illegal."""
 
     # The last mode-set word: CMOS 82C55A, as openMSX I8255::readControlPort.
     CONTROL = "control"
     # 0xFF: nothing drives the bus. Verified on a real SONY HB-F1XD (S1985
-    # MSX-ENGINE), extras/HB-F1XD/PORTRD.BAS, 2026-10-05.
+    # MSX-ENGINE), 2026-10-05.
     OPEN_BUS = "open_bus"
     # The byte latched by the last PPI access (see msx/ppi.py PPI._bus_latch). Verified
-    # on a real SONY HB-10 (S3527 MSX-ENGINE), extras/HB-10/PORTRD1-4.BAS,
-    # 2026-10-08.
+    # on a real SONY HB-10 (S3527 MSX-ENGINE), 2026-10-08.
     BUS_LATCH = "bus_latch"
 
 
@@ -117,6 +144,22 @@ class MachineSpec:
     # from the cassette_port device.
     cassette_port: bool = False
 
+    # What a read of the mapper ports 0xFC-0xFF returns, resolved from the
+    # mapper_io device.
+    mapper_io: MapperPortForm = MapperPortForm.PLAIN
+
+    # What a PSG register read returns, resolved from the psg_ay8910
+    # device's read_back option.
+    psg_read_back: PsgReadBack = PsgReadBack.YM2149
+
+    # What a PSG register 14 read gives on the pin 6/7 bits, resolved from
+    # the psg_ay8910 device's pin67_read option.
+    psg_pin67_read: PsgPin67Read = PsgPin67Read.PLAIN
+
+    # What the RTC ports read, resolved from the rtc_rp5c01 device's
+    # read_back option.
+    rtc_read_back: RtcReadBack = RtcReadBack.PLAIN
+
     # RAM mapper's configured size (MSX2, when has_ram_mapper is True), resolved
     # from the mapper: standard sub-slot's size_kb -- default 128 preserves
     # every machine configured before this became configurable.
@@ -153,6 +196,9 @@ class MachineSpec:
     # None when RAM is mapper-backed (the common C-BIOS case).
     flat_ram_subslot: int | None = None
     flat_ram_size_kb: int = 64
+    # MSX2 RAM mapper sub-slot (e.g. C-BIOS MSX2's sub-slot 2) of an expanded
+    # slot 3. None for a non-expanded mapper slot 3 or no mapper.
+    ram_mapper_subslot: int | None = None
 
     # Which sub-slot the SUB ROM resolves to -- default 0 preserves every
     # existing machine's resolved layout (all predate this field and

@@ -1,7 +1,6 @@
 """Regression guard for msx/memory.py's Memory class.
 
-Memory has no __setattr__ hook (removed by the memory-explicit-setters
-OpenSpec change): writing directly to one of its 8 page-routing-affecting
+Memory has no __setattr__ hook: writing directly to one of its 8 page-routing-affecting
 fields (slot_register, sub_slot_reg, ram_mapper, sub0_rom, fdc,
 flat_ram_subslot, mapper1, mapper2) from outside Memory's own class body
 no longer raises or invalidates anything -- it just silently leaves the
@@ -13,9 +12,8 @@ they're only ever set once, as Memory(...) constructor kwargs, so any
 assignment to them outside __init__ is itself the bug, not just a missed
 setter call.
 
-This is a static, regex-based scan (not an AST-based one -- see
-openspec/changes/archive/*-memory-explicit-setters/design.md's Decision 3),
-scoped to the same directories that change's proposal covers. It
+This is a static, regex-based scan (not an AST-based one -- a grep is
+simpler to implement correctly), scoped to the directories in _SCAN_DIRS. It
 deliberately only flags assignments whose base expression looks like a
 Memory instance (`mem`, `memory`, or anything ending in `.memory`) -- a field
 name that collides with another class (`fdc` on Machine) is a real, legitimate,

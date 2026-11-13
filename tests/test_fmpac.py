@@ -381,8 +381,8 @@ def test_extension_overlay_unsupported_schema_version_rejected(tmp_path: Path) -
 
 
 def test_extension_overlay_slot_1_accepted(tmp_path: Path) -> None:
-    # Both slots 1 and 2 are valid `slot:` declarations (openspec/changes/
-    # slot1-slot2-symmetrization) -- this field documents the overlay
+    # Both slots 1 and 2 are valid `slot:` declarations -- this field
+    # documents the overlay
     # author's target/tested slot, it does not itself route placement (see
     # load_extension_overlay's own comment).
     ext_dir = tmp_path / "extensions"
@@ -487,7 +487,7 @@ def test_build_wires_fmpac_as_slot2_device(tmp_path: Path) -> None:
 
 
 def test_build_wires_fmpac_as_slot1_device(tmp_path: Path) -> None:
-    # openspec/changes/slot1-slot2-symmetrization Phase 6: fmpac_sram_save_path
+    # fmpac_sram_save_path
     # used to be resolved from build_machine's slot-2-specific
     # extension_overlay parameter directly, so an FM-PAC placed on slot 1
     # via --extension1 never got its SRAM save path wired at all (it built

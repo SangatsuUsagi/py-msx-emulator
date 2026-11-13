@@ -437,12 +437,14 @@ def test_single_midframe_write_takes_effect_near_half() -> None:
 
 def test_fast_path_when_no_frame_window() -> None:
     """generate_samples(n) with no frame window uses the final registers (fast
-    path) and equals a fresh PSG rendered from those same registers."""
+    path) and equals a fresh PSG rendered from those same registers and the
+    same generator state (a period write already moved the tone counter)."""
     a = PSG()
     b = PSG()
     for reg, val in ((7, 0x38), (8, 12), (0, 0x55), (1, 0x01)):
         _write(a, reg, val)
     b.regs = list(a.regs)  # same final registers, no events
+    b.apply_synth_state(a.snapshot_synth())
     assert a.generate_samples(64) == b.generate_samples(64)
 
 
@@ -495,3 +497,81 @@ def test_zero_period_tone_carrier_is_not_chopped() -> None:
     # Level sits near the 50% duty average (small ±ripple from 5-vs-6 ticks per
     # sample), never the full/zero alternation that point-sampling would alias to.
     assert full * 0.3 < lo <= hi < full * 0.7
+
+
+# ---------------------------------------------------------------------------
+# Tone and noise period writes take effect at once
+# ---------------------------------------------------------------------------
+
+def test_shorter_tone_period_toggles_on_next_tick() -> None:
+    psg = PSG()
+    _write(psg, 0, 0xE8)
+    _write(psg, 1, 0x03)        # period 1000
+    psg._tone_cnt[0] = 100      # 100 ticks of the half-cycle remain
+    out_before = psg._tone_out[0]
+    _write(psg, 0, 0xF4)        # period 0x3F4 (1012) on the way to 500
+    _write(psg, 1, 0x01)        # period 0x1F4 = 500
+    assert psg._tone_cnt[0] == 1
+    psg.generate_samples(1)     # one sample = 5 PSG ticks
+    assert psg._tone_out[0] != out_before
+    assert psg._tone_cnt[0] == 500 - 4
+
+
+def test_longer_tone_period_extends_running_half_cycle() -> None:
+    psg = PSG()
+    _write(psg, 0, 100)         # period 100
+    psg._tone_cnt[0] = 40
+    _write(psg, 1, 0x01)        # period 0x164 = 356
+    _write(psg, 0, 0x2C)        # period 0x12C = 300
+    assert psg._tone_cnt[0] == 240
+
+
+def test_noise_period_write_adjusts_by_twice_the_difference() -> None:
+    psg = PSG()
+    _write(psg, 6, 10)
+    psg._noise_cnt = 15
+    _write(psg, 6, 12)
+    assert psg._noise_cnt == 19
+
+
+def test_period_write_inside_frame_applies_at_its_sample_position() -> None:
+    """Period 1000 from the frame start keeps channel A low all frame; a write
+    of period 1 at the midpoint makes it toggle from that sample on, which only
+    happens if the running count is cut at the write's position."""
+    n, fs, fe = 100, 0, 1000
+
+    def frame(with_midpoint_write: bool) -> tuple[int, ...]:
+        psg = PSG()
+        psg._clock.cycle = 0
+        _write(psg, 7, 0x3E)    # tone A only
+        _write(psg, 8, 15)
+        _write(psg, 0, 0xE8)
+        _write(psg, 1, 0x03)    # period 1000
+        if with_midpoint_write:
+            psg._clock.cycle = 500
+            _write(psg, 0, 0x01)
+            _write(psg, 1, 0x00)  # period 1
+        return struct.unpack("<%dh" % n, bytes(psg.generate_samples(n, fs, fe)))
+
+    held = frame(False)
+    cut = frame(True)
+    assert cut[:50] == held[:50]
+    assert len(set(held[50:])) == 1     # no toggle in the second half
+    assert cut[55:] != held[55:]
+
+
+def test_power_on_envelope_state_equals_shape_0() -> None:
+    fresh = PSG()
+    shaped = PSG()
+    _write(shaped, 13, 0x00)
+    for psg in (fresh, shaped):
+        assert psg._env_hold_flag is True
+        assert psg._env_alternate is False
+        assert psg._env_holding is False
+        assert psg._env_attack == 0
+        assert psg._env_step == 0x1F
+    reset = PSG()
+    _write(reset, 13, 0x0E)
+    reset.reset()
+    assert reset._env_hold_flag is True
+    assert reset._env_alternate is False

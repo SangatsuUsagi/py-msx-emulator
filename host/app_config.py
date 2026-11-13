@@ -45,10 +45,10 @@ VALID_MAPPERS: tuple[str, ...] = (
 
 # --mapper1/--mapper2 both accept the identical VALID_MAPPERS list (slot 2
 # gained the same SRAM load-on-start/save-on-exit persistence slot 1 already
-# had -- see cart-sram-mapper's "machine_loader SRAM load/save integration"
-# Requirement, generalized to both slots by openspec/changes/
-# slot1-slot2-symmetrization). KonamiSCC in either slot shares Machine's
-# single scc field with the other slot -- rejected at build_machine time if
+# had -- see cart-sram-mapper's "Host SRAM load/save integration"
+# Requirement, which covers each cartridge slot). KonamiSCC in either slot
+# shares Machine's single scc field with the other slot -- rejected at
+# build_machine time if
 # both slots' mappers resolve to KonamiSCC, or one slot's mapper resolves to
 # KonamiSCC while the other slot's --extensionN is scc_plus (see
 # machine-loader's "Either slot's KonamiSCC mapper shares the machine's

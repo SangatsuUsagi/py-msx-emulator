@@ -107,8 +107,7 @@ def test_extension_hbi_j1_alone_boots_on_slot1() -> None:
 
 
 def test_extension1_fmpac_and_extension2_hbi_j1_wire_independently() -> None:
-    # openspec/changes/slot1-slot2-symmetrization Decision D5: two
-    # different extensions, one per slot, is a natural consequence of the
+    # Two different extensions, one per slot, is a natural consequence of the
     # --extension1/--extension2 split -- no separate mechanism needed.
     code, out, _err = _run_main(
         ["--extension1", "fmpac", "--extension2", "hbi_j1", "--count-frame", "1"]
@@ -302,7 +301,6 @@ def test_build_machine_expands_slot2_on_msx2_alongside_slot3(tmp_path: Path) -> 
 
 # ---------------------------------------------------------------------------
 # Slot 1: the identical expanded overlay, targeting slot 1 instead of slot 2
-# (openspec/changes/slot1-slot2-symmetrization Phase 5)
 # ---------------------------------------------------------------------------
 
 def _hbi_j1_machine_slot1(tmp_path: Path, name: str = "m") -> Machine:
@@ -362,7 +360,7 @@ def test_reset_restores_halnote_mapper_power_on_state_on_slot1(tmp_path: Path) -
     halnote.write(0x4FFF, 0x85)  # bank 0 -> page 5, SRAM enabled
     machine.reset()
     state = halnote.snapshot()
-    assert state["banks"] == [0, 1, 2, 3]
+    assert state["banks"] == [0, 0, 0, 0]
     assert halnote._sram_enabled is False
 
 
@@ -378,7 +376,8 @@ def test_reset_restores_power_on_slot2_sub_slot_register(tmp_path: Path) -> None
 
 
 def test_reset_restores_halnote_mapper_power_on_state(tmp_path: Path) -> None:
-    # openspec/changes/wire-kanji-and-halnote-reset: Machine.reset() now
+    # cart-halnote "HalnoteMapper reset() restores power-on state":
+    # Machine.reset() now
     # calls a present HalnoteMapper's reset(), restoring bank/sub-bank
     # registers and both enable flags to their construction defaults.
     machine = _hbi_j1_machine(tmp_path)
@@ -388,7 +387,7 @@ def test_reset_restores_halnote_mapper_power_on_state(tmp_path: Path) -> None:
     halnote.write(0x4FFF, 0x85)  # bank 0 -> page 5, SRAM enabled
     machine.reset()
     state = halnote.snapshot()
-    assert state["banks"] == [0, 1, 2, 3]
+    assert state["banks"] == [0, 0, 0, 0]
     # sram_enabled is not part of HalnoteMapperState (see
     # trim-halnote-derived-state-fields) -- check the runtime attribute
     # reset() itself cleared, not a persisted field.
@@ -673,7 +672,7 @@ def test_loading_state_with_mismatched_subslot_kind_raises(
     """A per-sub-slot kind mismatch (both machines have slot 2 expanded,
     but sub-slot 0 holds a different device kind on each side) raises
     ValueError naming the sub-slot index and both kinds -- see
-    openspec/changes/generalize-slot2-mapper-state."""
+    machine-state "Slot 2 mapper state mismatch is rejected"."""
     hbi_machine = _hbi_j1_machine(tmp_path, name="hbi")
     save_state(hbi_machine, _RGB, "test")
 
@@ -708,7 +707,6 @@ def test_loading_state_with_mismatched_subslot_kind_raises(
 
 # ---------------------------------------------------------------------------
 # HalnoteMapper save-state round-trip, slot 1
-# (openspec/changes/slot1-slot2-symmetrization Phase 5)
 # ---------------------------------------------------------------------------
 
 def test_roundtrip_preserves_halnote_sram_and_banks_on_slot1(

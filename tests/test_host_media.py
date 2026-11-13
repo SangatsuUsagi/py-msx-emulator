@@ -90,7 +90,7 @@ def test_rtc_file_is_created_on_first_shutdown(
     m.rtc.write_port(0xB5, 0x0A)  # CMOS write
     persist_dirty_media(m, sram_paths(config))
     data = (tmp_path / sram_paths(config)[MediaId.RTC_CMOS]).read_bytes()
-    assert len(data) == 26 and data[0] == 0x0A
+    assert len(data) == 52 and data[2 * 13] == 0x0A
 
 
 # --- fdc-interface swap through the host --------------------------------------

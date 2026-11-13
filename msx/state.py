@@ -50,26 +50,25 @@ if TYPE_CHECKING:
 # Version 5: stdlib JSON container replacing the legacy pickle format (<= 4).
 # Version 6: mapper_class: str (Python class name) replaced with
 #   mapper_kind: MapperKind (closed enum, decoupled from class names) --
-#   see openspec/changes/mapper-state-tagged-union. No other field changed.
+#   see machine-state "Closed mapper-kind discriminant for save-state". No
+#   other field changed.
 # Version 7: fdc_state: dict[str, object] | None added (WD2793/TC8566AF/
-#   DiskDrive/connection-style state, see
-#   openspec/changes/2026-08-31-fdc-state-save-load). No other field
-#   changed.
+#   DiskDrive/connection-style state, see machine-state "FDC state save
+#   and restore"). No other field changed.
 # Version 8: scci_state: dict[str, object] | None added (SCCICart's
 #   RAM/banks/mode-register state, now needed since --extension scc_plus
 #   moved SCCICart from primary slot 1 -- covered by the generic
 #   mapper_kind/mapper_state fields -- to slot 2, which has no generic
-#   mapper2 state path; see openspec/changes/add-extension-flag). No other
-#   field changed.
+#   mapper2 state path). No other field changed.
 # Version 9: slot2_sub_slot_reg: int | None added (primary slot 2's own
 #   secondary slot register, independent of sub_slot_reg -- see
-#   openspec/changes/add-hbi-j1-support). No other field changed.
+#   memory-slot-bus "State save/load includes slot2_sub_slot_reg"). No
+#   other field changed.
 # Version 10: halnote_state: dict[str, object] | None added (HBI-J1's
 #   Halnote-mapped MSX-JE cartridge's bank/sub-bank registers, SRAM-enable/
 #   submapper-enable flags, and 16 KB SRAM contents, since slot 2's
 #   sub-slots have no generic mapper-state path -- mirrors scci_state's
-#   own precedent; see openspec/changes/add-hbi-j1-support). No other field
-#   changed.
+#   own precedent). No other field changed.
 # Version 11: fmpac_state/scci_state/halnote_state (three bespoke, per-
 #   device-kind fields) replaced by a generic slot-2 mechanism mirroring
 #   slot 1's mapper_kind/mapper_state: mapper2_kind: MapperKind and
@@ -80,21 +79,20 @@ if TYPE_CHECKING:
 #   cartridge -- otherwise both None). A slot-2 mapper-kind or wiring
 #   mismatch now raises ValueError, matching slot 1's existing strict
 #   check, in place of the prior three fields' silent-skip-on-mismatch
-#   behavior. See openspec/changes/generalize-slot2-mapper-state.
+#   behavior. See machine-state "Slot 2 mapper state save and restore".
 # Version 12: HalnoteMapperState's sram_enabled/submapper_enabled fields
 #   removed -- write-only in the persisted payload (HalnoteMapper.restore()
 #   has always re-derived both flags from the restored bank registers'
 #   top bit, never from these two fields). No behavior change; only the
-#   persisted schema shrinks. See
-#   openspec/changes/trim-halnote-derived-state-fields.
+#   persisted schema shrinks.
 # Version 13: slot1_sub_slot_reg/mapper1_subslot_kinds/
 #   mapper1_subslot_states added -- the identical mechanism
 #   slot2_sub_slot_reg/mapper2_subslot_kinds/mapper2_subslot_states already
 #   provides for slot 2's own expansion (version 9/11), now that slot 1 can
 #   also be expanded (an extension needing an expanded slot 1, e.g. HBI-J1
 #   or FM-PAC placed via --extension1). All three are None unless
-#   machine.memory.slot1_sub_slot_enabled. See
-#   openspec/changes/slot1-slot2-symmetrization.
+#   machine.memory.slot1_sub_slot_enabled. See memory-slot-bus
+#   "State save/load includes slot1_sub_slot_reg".
 # Version 14: every V9938-only field (palette, command registers and engine
 #   progress, S#1/S#2/S#8/S#9, collision coordinates, the shared first-byte
 #   latch) in one `vdp9938` object produced and validated by the V9938
@@ -108,32 +106,42 @@ if TYPE_CHECKING:
 # Version 16: rtc_state and mouse_state added (the RTC's start time,
 #   elapsed emulated cycles and register blocks; the mouse's scan state),
 #   each None when the machine has no RTC / no attached mouse. See
-#   openspec/changes/enforce-core-boundary.
+#   machine-state "Snapshot includes RTC state" and "Snapshot includes
+#   mouse state".
 # Version 17: RFC 8785 canonical JSON; blobs as plain base64 strings (no
 #   {"__b64__": ...} wrapper); floats, NaN/Infinity, duplicate keys and
-#   integers beyond +-(2**53 - 1) rejected. See
-#   openspec/changes/archive/2026-10-24-portable-snapshot-json.
+#   integers beyond +-(2**53 - 1) rejected. See machine-state "Snapshot
+#   bytes are RFC 8785 canonical JSON".
 # Version 18: machine_config_sha256 added -- the SHA-256 of the canonical
 #   MachineConfig document the machine was built from; a state loads only into
-#   a machine built from the same document. See
-#   openspec/changes/archive/2026-10-25-portable-machine-config.
+#   a machine built from the same document. See machine-state "A snapshot
+#   is bound to its machine configuration".
 # Version 19: ppi added -- the PPI's Port C latch, last mode-set control word
-#   and port-0xAB bus latch. See openspec/changes/snapshot-ppi-state.
+#   and port-0xAB bus latch. See machine-state "The PPI state is saved".
 # Version 20: no layout change; the format-19 layout with cpu.registers.WZ,
 #   cpu.q and cpu.q_next, which add-z80-memptr added in v2.8.2 without a
-#   version bump. See openspec/changes/archive/2026-10-28-snapshot-format-20.
+#   version bump.
 # Version 21: fdc.drives[].disk_path removed -- a mounted disk is identified
-#   by its size and SHA1 only; the host keeps the disk's file. See
-#   openspec/changes/archive/2026-10-29-flatten-core-api-types.
+#   by its size and SHA1 only; the host keeps the disk's file.
 #   cpu.ei_pending (the one-instruction delay after EI) was added later
-#   without a version bump. See
-#   openspec/changes/archive/2026-10-31-fix-review-bugs.
+#   without a version bump. See machine-state "The CPU interrupt state is
+#   saved".
 # Version 22: printer added -- the printer port's data latch and STROBE, None
 #   when the machine has no port.
 # Version 23: tape added -- the mounted tape's identity, the position and the
-#   motor, None when the machine has no cassette port
-#   (openspec/changes/add-cassette-playback).
-CURRENT_FORMAT_VERSION: int = 23
+#   motor, None when the machine has no cassette port (io-cassette "The
+#   tape state is saved").
+# Version 24: mapper_latch added -- the S1985 latch of the mapper ports
+#   0xFC-0xFF, None when the machine has no latch (memory-ram-mapper "S1985
+#   mapper port latch").
+#   These fields were added later without a version bump: the RTC counter
+#   layout (fraction ... leap_year, tick_remainder and uncounted_cycles,
+#   which replace the version 16 start and elapsed_cycles), the WD2793
+#   immediate_irq, type1_phase, type1_cycles_left, hld and hld_idle_cycles,
+#   and the TC8566AF pcn.
+# Version 25: rtc.reset removed -- the RESET register is write-only and acts
+#   at once, so it holds no state. rtc.uncounted_cycles is bounded to 2^48.
+CURRENT_FORMAT_VERSION: int = 25
 
 _SHA256_HEX_LEN = 64
 _SHA1_HEX_LEN = 40
@@ -230,7 +238,7 @@ class MappedSlot:
     """A mapper's persisted identity and state. `kind` is the closed
     MapperKind enum (msx/mapper.py), not the mapper's Python class name, so
     a class rename does not change save-state compatibility (see
-    openspec/changes/mapper-state-tagged-union)."""
+    machine-state "Closed mapper-kind discriminant for save-state")."""
 
     kind: MapperKind
     state: dict[str, object]
@@ -243,8 +251,9 @@ class SlotSnapshot:
     is expanded (an extension such as HBI-J1 or FM-PAC placed in an expanded
     slot), `secondary_slot_register` is its own secondary slot register and
     `subslots` holds one entry per sub-slot (None for an unassigned one);
-    otherwise both are None. See openspec/changes/
-    slot1-slot2-symmetrization and generalize-slot2-mapper-state."""
+    otherwise both are None. See memory-slot-bus "State save/load includes
+    slot1_sub_slot_reg" and machine-state "Slot 2 mapper state save and
+    restore"."""
 
     mapper: MappedSlot
     secondary_slot_register: int | None
@@ -337,6 +346,8 @@ class MachineSnapshot:
     mouse: dict[str, object] | None
     # None when the machine has no printer port.
     printer: PrinterSnapshot | None
+    # The four S1985 mapper port latches; None when the machine has no latch.
+    mapper_latch: list[int] | None
     # None when the machine has no cassette port.
     tape: TapeSnapshot | None
 
@@ -465,6 +476,7 @@ def _check_optional_wiring(
 def _fdc_to_dict(machine: "Machine") -> dict[str, object] | None:
     if machine.fdc is None:
         return None
+    machine.fdc.catch_up()  # the due events belong in the capture
     return machine.fdc.snapshot()
 
 
@@ -498,9 +510,10 @@ def _check_expanded_subslots(
     saved: list[MappedSlot | None] | None,
 ) -> None:
     """Check an expanded primary slot's expansion wiring, then every assigned
-    sub-slot's mapper kind -- shared by slot 1 and slot 2 (see openspec/changes/
-    slot1-slot2-symmetrization and, for slot 2 specifically, the earlier
-    openspec/changes/generalize-slot2-mapper-state). Run by _validate_snapshot,
+    sub-slot's mapper kind -- shared by slot 1 and slot 2 (see memory-slot-bus
+    "State save/load includes slot1_sub_slot_reg" and, for slot 2
+    specifically, machine-state "Slot 2 mapper state mismatch is
+    rejected"). Run by _validate_snapshot,
     before anything is restored."""
     saved_enabled = saved is not None
     if running_enabled != saved_enabled:
@@ -621,6 +634,9 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
         rtc=_rtc_to_dict(machine),
         mouse=_mouse_to_dict(machine),
         printer=_printer_snapshot(machine),
+        mapper_latch=(
+            machine.mapper_latch.snapshot() if machine.mapper_latch is not None else None
+        ),
         tape=_tape_snapshot(machine),
     )
 
@@ -831,6 +847,12 @@ def _parse_printer(value: object) -> PrinterSnapshot | None:
     )
 
 
+def _parse_mapper_latch(value: object) -> list[int] | None:
+    if value is None:
+        return None
+    return check_int_list(value, "mapper_latch", 4, 0, 0xFF)
+
+
 def _parse_tape(value: object) -> TapeSnapshot | None:
     if value is None:
         return None
@@ -922,6 +944,8 @@ def parse_snapshot(decoded: object) -> MachineSnapshot:
         mouse = check_optional_object(data["mouse"], "mouse")
         field_name = "printer"
         printer = _parse_printer(data["printer"])
+        field_name = "mapper_latch"
+        mapper_latch = _parse_mapper_latch(data["mapper_latch"])
         field_name = "tape"
         tape = _parse_tape(data["tape"])
     except SchemaError as exc:
@@ -941,6 +965,7 @@ def parse_snapshot(decoded: object) -> MachineSnapshot:
         rtc=rtc,
         mouse=mouse,
         printer=printer,
+        mapper_latch=mapper_latch,
         tape=tape,
     )
 
@@ -999,6 +1024,9 @@ def _validate_snapshot(machine: "Machine", snap: MachineSnapshot) -> _ParsedProd
     _check_optional_wiring("mouse", machine.psg.mouse is not None, snap.mouse)
     _check_optional_wiring("PPI", machine.ppi is not None, snap.ppi)
     _check_optional_wiring("printer port", machine.printer is not None, snap.printer)
+    _check_optional_wiring(
+        "mapper port latch", machine.mapper_latch is not None, snap.mapper_latch
+    )
     _check_tape(machine, snap.tape)
     parsed = _parse_producer_objects(machine, snap)
     # Last of the identity checks: the specific ones above and in the
@@ -1165,6 +1193,7 @@ def _apply_sound_and_io(
     machine.psg.latch = snap.psg.latch
     machine.psg.apply_synth_state(parsed.psg_synth)
     machine.psg.discard_frame_events()
+    machine.psg.sync_mouse_pins()
     ppi = snap.ppi
     if machine.ppi is not None and ppi is not None:
         machine.ppi.apply_state(
@@ -1181,6 +1210,8 @@ def _apply_sound_and_io(
         mouse.apply_state(parsed.mouse, machine.cycle_count)
     if machine.printer is not None and snap.printer is not None:
         machine.printer.apply_state({"data": snap.printer.data, "strobe": snap.printer.strobe})
+    if machine.mapper_latch is not None and snap.mapper_latch is not None:
+        machine.mapper_latch.apply_state(snap.mapper_latch)
     if machine.cassette is not None and snap.tape is not None:
         # After the clock: the position counts from the restored cycle.
         machine.cassette.apply_state(snap.tape.position, snap.tape.motor)

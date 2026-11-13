@@ -51,6 +51,32 @@ def test_side_select(tmp_path: Path) -> None:
     assert iface.drives[0].side == 1
 
 
+def test_drive_register_keeps_bits_7_and_1_0(tmp_path: Path) -> None:
+    iface = _iface(tmp_path)
+    iface.read_mem(0x7FFD)  # consume the power-on change
+    reads = []
+    for value in (0x00, 0x03, 0x83):
+        iface.write_mem(0x7FFD, value)
+        reads.append(iface.read_mem(0x7FFD))
+    assert reads == [0x3C, 0x3F, 0xBF]  # real HB-F1XD (FDCLATCH)
+
+
+def test_side_register_keeps_bit_0_only(tmp_path: Path) -> None:
+    iface = _iface(tmp_path)
+    iface.read_mem(0x7FFD)  # consume the power-on change
+    iface.write_mem(0x7FFD, 0x80)
+    iface.write_mem(0x7FFC, 0xFF)
+    assert iface.read_mem(0x7FFC) == 0xFD  # real HB-F1XD, no disk (FDCLATCH)
+
+
+def test_side_register_shows_the_drive_register_bit_1(tmp_path: Path) -> None:
+    iface = _iface(tmp_path)
+    iface.read_mem(0x7FFD)  # consume the power-on change
+    iface.write_mem(0x7FFD, 0x02)
+    iface.write_mem(0x7FFC, 0x00)
+    assert iface.read_mem(0x7FFC) == 0xFE
+
+
 def test_irq_status_byte_active_low(tmp_path: Path) -> None:
     iface = _iface(tmp_path)
     iface.write_mem(0x7FF8, 0x00)  # RESTORE -> raises INTRQ
@@ -60,6 +86,7 @@ def test_irq_status_byte_active_low(tmp_path: Path) -> None:
 
 def test_disk_change_bit_reports_not_changed(tmp_path: Path) -> None:
     iface = _iface(tmp_path)
+    iface.read_mem(0x7FFD)  # consume the power-on change
     assert iface.read_mem(0x7FFD) & 0x04  # bit 2 = 1 (disk not changed)
 
 
@@ -89,4 +116,34 @@ def test_disk_change_reported_then_consumed(tmp_path: Path) -> None:
 
 def test_disk_change_not_set_reports_not_changed(tmp_path: Path) -> None:
     iface = _iface(tmp_path)
-    assert iface.read_mem(0x7FFD) & 0x04  # no swap -> not changed
+    iface.read_mem(0x7FFD)  # consume the power-on change
+    assert iface.read_mem(0x7FFD) & 0x04  # no swap since -> not changed
+
+
+def test_disk_change_is_reported_after_power_on(tmp_path: Path) -> None:
+    assert _iface(tmp_path).read_mem(0x7FFD) & 0x04 == 0
+    assert _iface(with_disk=False).read_mem(0x7FFD) & 0x04 == 0
+
+
+def test_page_2_register_read_reaches_the_controller(tmp_path: Path) -> None:
+    iface = _iface(tmp_path)
+    iface.write_mem(0xBFFB, 0x5A)  # DATA register through the page-2 mirror
+    assert iface.read_mem(0xBFFB) == 0x5A
+    assert iface.read_mem(0x7FFB) == 0x5A
+
+
+def test_page_2_outside_the_registers_reads_0xff(tmp_path: Path) -> None:
+    iface = _iface(tmp_path)
+    assert iface.read_mem(0x8000) == 0xFF  # not DISK ROM byte 0 (0xC3)
+    assert iface.read_mem(0xBFF7) == 0xFF
+
+
+def test_side_register_read_shows_the_disk_change_without_clearing_it(
+    tmp_path: Path,
+) -> None:
+    iface = _iface(tmp_path)
+    iface.read_mem(0x7FFD)  # consume the power-on change
+    iface.swap(0, None)
+    assert iface.read_mem(0x7FFC) & 0x04 == 0  # changed, not consumed
+    assert iface.read_mem(0x7FFD) & 0x04 == 0  # still reported here
+    assert iface.read_mem(0x7FFD) & 0x04       # consumed by the 0x7FFD read

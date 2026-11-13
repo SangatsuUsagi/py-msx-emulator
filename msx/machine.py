@@ -54,6 +54,7 @@ from msx.input import InputFrame, InputLines
 from msx.io import IOBus
 from msx.kanji import KanjiRom
 from msx.mapper import MajutsushiMapper
+from msx.mapper_io import S1985MapperLatch
 from msx.memory import Memory
 from msx.mouse import TRIGGER_A_BIT, TRIGGER_B_BIT, MouseDevice
 from msx.ppi import PPI
@@ -103,6 +104,9 @@ class Machine:
     kanji: KanjiRom | None = field(default=None, repr=False)
     ppi: PPI | None = field(default=None, repr=False)
     printer: PrinterPort | None = field(default=None, repr=False)
+    # The S1985 latch of the mapper ports 0xFC-0xFF, or None when the
+    # machine reads the RAM mapper's own registers there.
+    mapper_latch: S1985MapperLatch | None = field(default=None, repr=False)
     # The cassette port's tape deck, or None when the machine has no port.
     cassette: CassettePort | None = field(default=None, repr=False)
     rtc: "RTC | None" = field(default=None, repr=False)
@@ -220,18 +224,19 @@ class Machine:
     def reset(self) -> int:
         """Full power-on reset: CPU, PSG, SCC (if present), FM-PAC (if
         present), VDP, FDC (if present), Kanji ROM (if present), PPI (if
-        present), the printer port (if present), the primary/secondary slot
-        registers, the RAM mapper (if present, in either its slot-3 or its
-        expanded-slot-2-sub-slot placement), and every `Mapper` --
-        `memory.mapper1`, `memory.mapper2`, and every non-`None` entry of an
-        expanded slot's per-sub-slot array
-        (this also covers a present Halnote cartridge, which only ever lives
-        in one of those sub-slot entries). Memory/VRAM contents are retained.
+        present), the RTC's MODE/TEST/RESET and latch (if present), the printer
+        port (if present), the S1985 mapper port latch (if present), the
+        primary/secondary slot
+        registers, the slot-3 RAM mapper (if present), and every `Mapper` --
+        `memory.mapper1`, `memory.mapper2`, and every non-`None` sub-slot
+        entry of either expanded cartridge slot (1 or 2), which covers a
+        sub-slot RamMapper or a Halnote cartridge. Memory/VRAM contents are
+        retained.
 
         Every `Mapper` is reset unconditionally regardless of whether a given
         real cartridge's bank-select hardware is actually wired to the slot
-        reset signal -- rationale in openspec/changes/
-        wire-cartridge-mapper-and-ppi-reset. Always STATUS_OK."""
+        reset signal (machine-core "Machine reset restores power-on state").
+        Always STATUS_OK."""
         self.cpu.reset()
         self.psg.reset()
         self.audio.reset()
@@ -246,8 +251,12 @@ class Machine:
             self.kanji.reset()
         if self.ppi is not None:
             self.ppi.reset()
+        if self.rtc is not None:
+            self.rtc.reset()
         if self.printer is not None:
             self.printer.reset()
+        if self.mapper_latch is not None:
+            self.mapper_latch.reset()
         # Power-on slot state: all pages select slot 0 (matches construction).
         self.memory.set_slot_register(0x00)
         self.memory.set_sub_slot_reg(0x00)
@@ -258,11 +267,11 @@ class Machine:
         self.memory.mapper1.reset()
         self.memory.mapper2.reset()
         # A HalnoteMapper (when present) is always one of these sub-slot
-        # entries -- _wire_expanded_overlay is the only place that ever
-        # constructs one (EXTENSION_DEVICES, the flat overlay's device
+        # entries -- _build_expanded_subslot_device is the only place that
+        # ever constructs one (EXTENSION_DEVICES, the flat overlay's device
         # allow-list in msx/machine_config.py, lacks "halnote") -- so this
-        # loop resets it exactly once. Slot 1's own sub-slots (openspec/changes/
-        # slot1-slot2-symmetrization) get the identical treatment.
+        # loop resets it exactly once. Slot 1's own sub-slots get the
+        # identical treatment.
         for sub_mapper in (*self.memory.mapper1_subslots, *self.memory.mapper2_subslots):
             if sub_mapper is not None:
                 sub_mapper.reset()
@@ -277,9 +286,9 @@ class Machine:
         self._stop_pending = False
 
     def sram_media(self) -> Mapping[MediaId, SramImage]:
-        """Every SRAM medium by id: `slot1.sram`/`slot2.sram` (cartridge
-        mapper), `slot<n>.<sub>.sram` (expanded-slot device), `fmpac.sram`,
-        `rtc.cmos`. Fixed when build_machine finished wiring (no device is
+        """Every SRAM medium by id: SLOT1_SRAM/SLOT2_SRAM (cartridge
+        mapper), SLOT<n>_SUB<m>_SRAM (expanded-slot device), FMPAC_SRAM,
+        RTC_CMOS. Fixed when build_machine finished wiring (no device is
         replaced afterwards), so this is a read-only view of that table."""
         return self._sram_table
 
@@ -1064,9 +1073,11 @@ class Machine:
         `render_video`), its pre-filter audio and the frame number.
         `render_video` never changes emulated state.
 
-        A call that stops at a break returns its stop reason, no video, no
-        audio and `frame_complete` 0; the next call continues the frame,
-        applies its input lines and buttons and feeds no mouse motion.
+        A call that stops at a break inside the frame returns its stop
+        reason, no video, no audio and `frame_complete` 0; the next call
+        continues the frame, applies its input lines and buttons and feeds no
+        mouse motion. A frame breakpoint stops after the frame completes, so
+        that call also returns the frame's video and audio.
         """
         self._stop = StopInfo()
         new_frame = not self._frame_active
@@ -1120,8 +1131,7 @@ class Machine:
         True when the frame stops there.
 
         Checked at segment boundaries, not in the scanline loops: Ctrl-C needs
-        no finer stop (openspec/changes/archive/2026-10-29-add-core-debug-control
-        design Decision 3)."""
+        no finer stop."""
         if not self._break_request:
             return False
         self._break_request = False

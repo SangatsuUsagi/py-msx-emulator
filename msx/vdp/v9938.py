@@ -216,16 +216,42 @@ _ARG_MXD = 0x20  # destination in expansion RAM
 
 # TR re-assert delay after each HMMC/LMMC byte (calibrated from an openMSX log).
 _TR_REASSERT_CYCLES: int = 8
-# CE duration per unit (T-states per byte for HMMV/HMMM/YMMM, per dot for
-# LMMV/LMMM), measured on a real SONY HB-F1XD (extras/HB-F1XD/CMDTIME.BAS,
-# 2026-10-07: 20 full-page commands in SCREEN 5 with display and sprites on,
-# BASIC overhead taken out). That is the slowest case; the real chip is faster
-# with less display/sprite VRAM traffic, which is not modelled.
-_HMMV_CYCLES_PER_BYTE: int = 10
-_HMMM_CYCLES_PER_BYTE: int = 21
-_YMMM_CYCLES_PER_BYTE: int = 18
-_LMMV_CYCLES_PER_DOT: int = 21
-_LMMM_CYCLES_PER_DOT: int = 30
+# Line kinds for the CE duration, set at each line start (begin_scanline).
+_COST_BLANK = 0          # border, vertical blanking, or the display off (R#1 BL = 0)
+_COST_SPRITES_OFF = 1    # active line, R#8 SPD = 1
+_COST_SPRITES_ON = 2     # active line, sprites enabled
+# CE duration per unit (per byte for HMMV/HMMM/YMMM, per dot for LMMV/LMMM),
+# in 1/16 T-state, for each line kind (blank, sprites off, sprites on).
+# Fitted to a real SONY HB-F1XD (CMDTIME2 2026-11-11, CMDTIME3 2026-11-12:
+# 20 full-page SCREEN 5 commands with the display on or off, 192 or 212
+# lines, sprites on or off; every row within 2 jiffies). The sprite count
+# does not change the time, only SPD.
+_HMMV_COST16: tuple[int, int, int] = (130, 170, 177)
+_HMMM_COST16: tuple[int, int, int] = (246, 263, 366)
+_YMMM_COST16: tuple[int, int, int] = (175, 186, 334)
+_LMMV_COST16: tuple[int, int, int] = (261, 331, 368)
+_LMMM_COST16: tuple[int, int, int] = (347, 356, 525)
+_NO_COST16: tuple[int, int, int] = (1, 1, 1)  # untimed commands: a rescale is a no-op
+
+
+def _cost16_of(cmd: int) -> tuple[int, int, int]:
+    """The cost table of a timed block command (HMMV also outside GRAPHIC 4-7)."""
+    if cmd == _CMD_HMMV:
+        return _HMMV_COST16
+    if cmd == _CMD_HMMM:
+        return _HMMM_COST16
+    if cmd == _CMD_YMMM:
+        return _YMMM_COST16
+    if cmd == _CMD_LMMV:
+        return _LMMV_COST16
+    if cmd == _CMD_LMMM:
+        return _LMMM_COST16
+    return _NO_COST16
+
+# HMMV outside GRAPHIC 4-7 writes one byte per line, at (Y * 128) | 0xFF
+# (real SONY HB-F1XD, 2026-11-12: Y 0-1023, DX and NX have no effect).
+_NON_BITMAP_LINE_BYTES: int = 128
+_NON_BITMAP_LINE_OFFSET: int = 0xFF
 
 # Display-relevant registers tracked in _reg_write_log for banded rendering.
 # Command-engine registers (R#32-R#46) and SAT registers are excluded. R#18 is
@@ -494,6 +520,7 @@ class V9938:
     collision_y: int = field(default=0, init=False, repr=False)
     display_line: int = field(default=0, init=False, repr=False)
     _line_cycle: int = field(default=0, init=False, repr=False)  # T-states into current scanline
+    _line_kind: int = field(default=_COST_BLANK, init=False, repr=False)  # _COST_* of this line
     # Precomputed interrupt-request line state. A plain attribute (not a
     # @property) so the per-instruction `cpu.int_pending = vdp.irq` read in the
     # machine loop is a slot load, not a descriptor call. Updated only in
@@ -557,9 +584,9 @@ class V9938:
 
         On the wrap, M4/M5 modes carry into R#14 (R#14 itself increments) and
         A16-A14; the MSX1-compatible modes stay in the current 16 KB bank.
-        Confirmed on a real SONY HB-F1XD (extras/HB-F1XD/VRAMWRAP.BAS,
-        2026-10-07): SCREEN 1 wraps 0x3FFF -> 0x0000, SCREEN 5 carries to
-        0x4000 and a later address setup without R#14 lands at 0x4010.
+        Confirmed on a real SONY HB-F1XD (2026-10-07): SCREEN 1 wraps
+        0x3FFF -> 0x0000, SCREEN 5 carries to 0x4000 and a later address
+        setup without R#14 lands at 0x4010.
         openMSX executeCpuVramAccess agrees; the M4/M5 test for the modes
         not run on the hardware (GRAPHIC 3, TEXT 2, GRAPHIC 5-7) follows it.
         """
@@ -643,15 +670,15 @@ class V9938:
     def _apply_r0_write(self, new_r0: int) -> None:
         """Handle side effects of writing R#0 before the new value is stored.
 
-        IE1 falling edge clears FH (openMSX VDP.cc:1182): a split program that
+        IE1 falling edge clears FH (openMSX VDP::changeRegister): a split program that
         re-enables IE1 in the vblank ISR must not see a stale FH latched while
         IE1 was off.
 
         R#0 also selects the screen mode. Leaving the bitmap modes does NOT
         abort a command in progress: confirmed on a real SONY HB-F1XD
-        (extras/HB-F1XD/CMDABRT.BAS, 2026-10-07: CE still 1 right after R#0
-        selects GRAPHIC 1 during an HMMV, and the page is filled after the
-        return to SCREEN 5). openMSX aborts it (updateDisplayMode) instead.
+        (2026-10-07: CE still 1 right after R#0 selects GRAPHIC 1 during an
+        HMMV, and the page is filled after the return to SCREEN 5). openMSX
+        aborts it (updateDisplayMode) instead.
         Whether the real command pauses outside the bitmap modes is not
         known; here it keeps running on its dispatch-time geometry.
         """
@@ -726,6 +753,7 @@ class V9938:
         self._cmd_ppb = engine["ppb"]
         self._cmd_bpp = engine["bpp"]
         self._tr_delay = engine["tr_delay"]
+        self._line_kind = self._kind_of_line(self.display_line)
 
     @property
     def framebuffer_format(self) -> FramebufferFormat:
@@ -816,6 +844,16 @@ class V9938:
         self.irq = False
         self.display_line = 0
         self._line_cycle = 0
+        self._line_kind = self._kind_of_line(0)
+
+    def _kind_of_line(self, line: int) -> int:
+        """The _COST_* kind of a line, from BL (R#1 bit 6), the display
+        height and SPD (R#8 bit 1)."""
+        if not (self.regs[1] & 0x40) or line >= display_height_of(self.regs):
+            return _COST_BLANK
+        if self.regs[8] & 0x02:
+            return _COST_SPRITES_OFF
+        return _COST_SPRITES_ON
 
     def begin_scanline(self, line: int) -> None:
         if line == 0:
@@ -824,6 +862,13 @@ class V9938:
             self._reg_write_log.clear()
         self.display_line = line
         self._line_cycle = 0  # new scanline: restart the horizontal-retrace timer
+        kind = self._kind_of_line(line)
+        if kind != self._line_kind:
+            if self._cmd_remaining > 0:
+                # Rescale the remaining T-states to the new line kind's cost.
+                cost16 = _cost16_of(self._cmd_code)
+                self._cmd_remaining = self._cmd_remaining * cost16[kind] // cost16[self._line_kind]
+            self._line_kind = kind
         dh = self.vblank_start_line
         if line == dh:
             self.status |= 0x80  # VBlank F
@@ -834,9 +879,9 @@ class V9938:
         # Subtracting R#23 (vertical scroll) is intentional and matches openMSX
         # (VDP.cc scheduleHScan): the split line is compared as (R#19 - R#23) & 0xFF.
         # FH (S#1 bit0) is gated by IE1: openMSX only raises irqHorizontal when
-        # IE1 is set (VDP.cc:412). A split program that parks the compare in the
-        # bottom border with IE1 cleared must NOT latch FH, or re-enabling IE1 in
-        # the vblank ISR fires a spurious interrupt (see extras notes).
+        # IE1 is set (VDP::execHScan). A split program that parks the compare in
+        # the bottom border with IE1 cleared must NOT latch FH, or re-enabling
+        # IE1 in the vblank ISR fires a spurious interrupt.
         # regs are u8 (0-255); the & 0xFF gives the 8-bit wrapping difference
         # (regs[19] - regs[23] may go negative — a port uses u8 wrapping_sub).
         effective = (self.regs[19] - self.regs[23]) & 0xFF
@@ -901,8 +946,8 @@ class V9938:
         if port == 0:
             self.vram[self._addr] = value
             # A data-port write also refills the read-ahead buffer: confirmed
-            # on a real SONY HB-F1XD (extras/HB-10/RDBUF.BAS, 2026-10-07: IN
-            # after OUT returns the written byte); openMSX agrees.
+            # on a real SONY HB-F1XD (2026-10-07: IN after OUT returns the
+            # written byte); openMSX agrees.
             self._read_buf = value
             addr = self._addr + 1
             if addr & 0x3FFF:  # no A13-A0 wrap: the common case, kept inline
@@ -1084,7 +1129,7 @@ class V9938:
         if sel == 6:
             # S#6 = 1 1 1 1 1 1 EO Y8: bit 1 is the display field, the same EO
             # as S#2 bit 1. A real HB-F1XD reports it with R#8 LP clear
-            # (extras/HB-F1XD/S6EO.BAS), as the data book's status-register
+            # (2026-10-05), as the data book's status-register
             # summary shows; its sprite-collision section, the Handbook and
             # openMSX give collision Y bit 9 there, which would always be 0.
             return ((self.collision_y >> 8) & 0x01) | (self._status2 & _S2_EO) | 0xFC
@@ -1169,13 +1214,15 @@ class V9938:
         result = _apply_log(src, dst, log & 0x7, mask) & mask
         self.vram[addr] = (existing & ~(mask << shift) & 0xFF) | (result << shift)
 
-    def _cmd_cycles(self, units: int, ny: int, per_unit: int) -> int:
-        """CE duration of a block command: units × ny elements at per_unit T-states each.
+    def _cmd_cycles(self, units: int, ny: int, cost16: tuple[int, int, int]) -> int:
+        """CE duration of a block command, in T-states: units × ny elements at
+        the current line kind's cost (cost16 is in 1/16 T-state).
 
         units is bytes per line for HMMV/HMMM/YMMM and dots per line for
-        LMMV/LMMM. Clamped to a 4 T-state minimum.
+        LMMV/LMMM. begin_scanline rescales the result when the line kind
+        changes.
         """
-        return max(4, units * ny * per_unit)
+        return units * ny * cost16[self._line_kind] // 16
 
     def _dispatch_command(self) -> None:
         """Execute or start the command written to R46 (cmd_regs[14]).
@@ -1221,14 +1268,23 @@ class V9938:
 
         self._cmd_active = False
         # A delay left by an overridden HMMC/LMMC must not re-assert TR in the
-        # middle of this command (tick() only runs while a command is active).
+        # middle of this command (tick() re-asserts TR only while a command is
+        # active).
         self._tr_delay = 0
         self._status2 &= ~_S2_CE  # completion leaves TR alone (openMSX commandDone)
 
         # Commands are only defined in the bitmap modes; anywhere else the
-        # dispatch finishes immediately without touching VRAM. Codes 1-3 are
-        # reserved and behave as STOP, as does STOP itself.
-        if cmd == _CMD_ABRT or cmd < _CMD_POINT or not _is_command_mode(self.regs[0]):
+        # dispatch finishes immediately without touching VRAM, except HMMV
+        # (a real HB-F1XD writes one byte per line). Codes 1-3 are reserved
+        # and behave as STOP, as does STOP itself.
+        if cmd == _CMD_ABRT or cmd < _CMD_POINT:
+            self._cmd_code = _CMD_ABRT
+            self._cmd_remaining = 0
+            return
+        if not _is_command_mode(self.regs[0]):
+            if cmd == _CMD_HMMV:
+                self._cmd_hmmv_non_bitmap(ops)
+                return
             self._cmd_code = _CMD_ABRT
             self._cmd_remaining = 0
             return
@@ -1265,8 +1321,8 @@ class V9938:
         # The sampled dot lands in the colour register, where S#7 reads it.
         # An MXS source (absent expansion RAM) reads as the all-ones dot value:
         # on a real SONY HB-F1XD the value is masked to the dot width but its
-        # low bits are not stable (VDPCMD.BAS / VDPCMD2.BAS, SCREEN 5: 0x00,
-        # 0x0F, 0x0D), so this fixed value matches the POINT result seen there.
+        # low bits are not stable (SCREEN 5, 2026-10-07: 0x00, 0x0F, 0x0D),
+        # so this fixed value matches one of the POINT results.
         # openMSX gives an unmasked 0xFF.
         self.cmd_regs[12] = (0xFF if src_ext else self._vram_pixel_read(sx, sy)) & px_mask
 
@@ -1363,7 +1419,7 @@ class V9938:
                     self._vram_pixel_write(dx + col * xs, yy, clr_px, log)
         self._cmd_active = True
         self._status2 |= _S2_CE
-        self._cmd_remaining = self._cmd_cycles(actual_nx, actual_ny, _LMMV_CYCLES_PER_DOT)
+        self._cmd_remaining = self._cmd_cycles(actual_nx, actual_ny, _LMMV_COST16)
 
     def _cmd_lmmm(self, ops: _CmdOperands) -> None:
         sx = ops.sx
@@ -1393,7 +1449,7 @@ class V9938:
                     self._vram_pixel_write(dx + col * xs, dyy, src_pix, log)
         self._cmd_active = True
         self._status2 |= _S2_CE
-        self._cmd_remaining = self._cmd_cycles(actual_nx, actual_ny, _LMMM_CYCLES_PER_DOT)
+        self._cmd_remaining = self._cmd_cycles(actual_nx, actual_ny, _LMMM_COST16)
 
     def _cmd_hmmv(self, ops: _CmdOperands) -> None:
         dx = ops.dx
@@ -1419,7 +1475,23 @@ class V9938:
                     self.vram[self._vram_byte_addr_col(start_col + c * xs, yy)] = clr
         self._cmd_active = True
         self._status2 |= _S2_CE
-        self._cmd_remaining = self._cmd_cycles(byte_cols, actual_ny, _HMMV_CYCLES_PER_BYTE)
+        self._cmd_remaining = self._cmd_cycles(byte_cols, actual_ny, _HMMV_COST16)
+
+    def _cmd_hmmv_non_bitmap(self, ops: _CmdOperands) -> None:
+        # Outside GRAPHIC 4-7: one CLR byte per line at (Y * 128) | 0xFF, so a
+        # pair of lines shares a byte. DX and NX are ignored.
+        dy = ops.dy
+        ys = ops.ys
+        clr = ops.clr
+        lines = _clip_ny(dy, ops.ny, ops.diy)
+        if not ops.dst_ext:
+            for row in range(lines):
+                y = dy + row * ys
+                addr = ((y * _NON_BITMAP_LINE_BYTES) | _NON_BITMAP_LINE_OFFSET) & 0x1FFFF
+                self.vram[addr] = clr
+        self._cmd_active = True
+        self._status2 |= _S2_CE
+        self._cmd_remaining = self._cmd_cycles(1, lines, _HMMV_COST16)
 
     def _cmd_hmmm(self, ops: _CmdOperands) -> None:
         sx = ops.sx
@@ -1448,7 +1520,7 @@ class V9938:
                     self.vram[dst] = 0xFF if src_ext else self.vram[src]
         self._cmd_active = True
         self._status2 |= _S2_CE
-        self._cmd_remaining = self._cmd_cycles(byte_cols, actual_ny, _HMMM_CYCLES_PER_BYTE)
+        self._cmd_remaining = self._cmd_cycles(byte_cols, actual_ny, _HMMM_COST16)
 
     def _cmd_ymmm(self, ops: _CmdOperands) -> None:
         sy = ops.sy
@@ -1476,7 +1548,7 @@ class V9938:
                         self.vram[self._vram_byte_addr_col(col, syy)]
         self._cmd_active = True
         self._status2 |= _S2_CE
-        self._cmd_remaining = self._cmd_cycles(byte_cols, actual_ny, _YMMM_CYCLES_PER_BYTE)
+        self._cmd_remaining = self._cmd_cycles(byte_cols, actual_ny, _YMMM_COST16)
 
     def _cmd_cpu_feed(self, cmd: int, ops: _CmdOperands) -> None:
         dx = ops.dx
@@ -1606,9 +1678,8 @@ class V9938:
                 self._tr_delay = 0
                 self._complete_command()
                 # The completing byte leaves TR set: confirmed on a real SONY
-                # HB-F1XD (extras/HB-F1XD/VDPCMD2.BAS line 4, 2026-10-07: a
-                # 2-byte HMMC reads TR/CE 80 after its last byte, 00 after an
-                # idle R#44 write); openMSX agrees.
+                # HB-F1XD (2026-10-07: a 2-byte HMMC reads TR/CE 80 after its
+                # last byte, 00 after an idle R#44 write); openMSX agrees.
                 self._status2 |= _S2_TR
 
     def _advance_lmcm(self) -> None:
@@ -1632,7 +1703,7 @@ class V9938:
             # LMCM completes once its last dot is staged; TR stays 1, and the
             # S#7 read that then takes the dot runs with no command active, so
             # it clears TR. Confirmed on a real SONY HB-F1XD
-            # (extras/HB-F1XD/VDPCMD2.BAS, 2026-10-07: TR/CE 81 after the
+            # (2026-10-07: TR/CE 81 after the
             # start, then 81 81 80 00 over the four reads of a four-dot LMCM);
             # openMSX executeLmcm agrees.
             self._complete_command()

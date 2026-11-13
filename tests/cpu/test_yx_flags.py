@@ -1,6 +1,7 @@
 """Undocumented F bits 5 (Y) and 3 (X): the per-family source value.
 
-Real-hardware basis: extras/HB-10/YXFLAG.BAS on a SONY HB-F1XD (2026-10-07).
+Real-hardware basis: a SONY HB-F1XD (2026-10-07) and a SONY HB-10 (2026-10-08)
+both read F = 28 BB 3C 6D 7D 6C after ADD, CP, AND, SCF, BIT, RLCA.
 """
 import pytest
 
@@ -27,7 +28,8 @@ def _run(cpu: Z80, steps: int) -> None:
 
 
 def test_yxflag_bas_sequence() -> None:
-    # The YXFLAG.BAS routine without its PUSH AF/POP BC/LD (nn),A bookkeeping.
+    # The real-hardware test routine (see the module docstring) without its
+    # PUSH AF/POP BC/LD (nn),A bookkeeping.
     steps = [
         ([0xAF, 0xC6, 0x28], 2, 0x28),        # XOR A; ADD A,0x28
         ([0xAF, 0xFE, 0x28], 2, 0xBB),        # XOR A; CP 0x28
@@ -200,8 +202,7 @@ def test_a_dd_prefix_before_ccf_clears_q() -> None:
 
 
 def test_pop_af_does_not_latch_q() -> None:
-    # Design D2: POP AF loads F without the ALU (real-hardware check pending,
-    # extras/HB-10/MEMPTR.BAS).
+    # Design D2: POP AF loads F without the ALU (real-hardware check pending).
     cpu = make_cpu([0xF1, 0x37])  # POP AF; SCF
     cpu.registers.SP = 0xF000
     cpu.write_byte(0xF000, 0x28)  # F

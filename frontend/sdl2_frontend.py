@@ -85,7 +85,7 @@ class _InitSdlApi(Protocol):
     audio-device creation and the cascading-failure teardown. Narrower than
     the full SDL2 API -- declares only what these two functions call.
     Part of the staged SDL2 FFI Protocol typing
-    (openspec/changes/archive/2026-08-15-sdl2-ffi-protocol-typing); composed
+    (app-sdl2-video "SDL2 FFI boundary is statically typed"); composed
     into `SDL2Api`.
     """
     SDL_INIT_VIDEO: int
@@ -337,7 +337,7 @@ class _EventApi(Protocol):
     """The `sdl2.*` surface event polling and dispatch use: `_handle_events`,
     `_handle_hotkey_keydown`, `_handle_ctrl_combo_keydown`,
     `_handle_ctrl_combo_keyup`. Part of the staged SDL2 FFI Protocol typing
-    (openspec/changes/archive/2026-08-15-sdl2-ffi-protocol-typing)."""
+    (app-sdl2-video "SDL2 FFI boundary is statically typed")."""
     SDL_QUIT: int
     SDL_KEYDOWN: int
     SDL_KEYUP: int
@@ -773,7 +773,7 @@ class _UploadTextureApi(Protocol):
     (a `CArgObject`) has no clean public type name to declare here -- `object`
     is honest about that rather than asserting a precision this file's own
     call site doesn't rely on. Part of the staged SDL2 FFI Protocol typing
-    (openspec/changes/archive/2026-08-15-sdl2-ffi-protocol-typing)."""
+    (app-sdl2-video "SDL2 FFI boundary is statically typed")."""
     def SDL_GetError(self) -> bytes: ...
     def SDL_LockTexture(
         self, texture: object, rect: object, pixels: object, pitch: object
@@ -823,7 +823,7 @@ def _upload_to_texture(
 class _ResizeTextureApi(Protocol):
     """The `sdl2.*` surface `_resize_texture_if_needed` uses: texture
     recreation and window resize. Part of the staged SDL2 FFI Protocol
-    typing (openspec/changes/archive/2026-08-15-sdl2-ffi-protocol-typing)."""
+    typing (app-sdl2-video "SDL2 FFI boundary is statically typed")."""
     SDL_PIXELFORMAT_RGB24: int
     SDL_TEXTUREACCESS_STREAMING: int
 
@@ -899,7 +899,7 @@ class _EventLike(Protocol):
     Structure and `tests/test_sdl2_frontend_hotkeys.py`'s hand-rolled fake
     (a `ctypes.Structure` subclass with fewer fields, satisfying this
     narrower shape). Part of the staged SDL2 FFI Protocol typing
-    (openspec/changes/archive/2026-08-15-sdl2-ffi-protocol-typing)."""
+    (app-sdl2-video "SDL2 FFI boundary is statically typed")."""
     type: int
     key: _KeyEventLike
     motion: _MotionEventLike
@@ -912,7 +912,7 @@ class SDL2Api(_InitSdlApi, _ResizeTextureApi, _UploadTextureApi, _EventApi, Prot
     members only `run()`/`_run_frame` call directly. Used where a function
     calls into more than one of those groups; each leaf function keeps its
     own narrower Protocol. Part of the staged SDL2 FFI Protocol typing
-    (openspec/changes/archive/2026-08-15-sdl2-ffi-protocol-typing)."""
+    (app-sdl2-video "SDL2 FFI boundary is statically typed")."""
     SDL_TRUE: int
     SDL_FALSE: int
 
@@ -1086,10 +1086,12 @@ def _run_frame(ctx: _RunContext, state: _LoopState) -> None:
     if hotkeys.debugger is not None:
         hotkeys.debugger.drain_trace()
         hotkeys.debugger.drain_printer()
-    if out.stop_reason != STOP_NONE:
-        # A break: the frame continues on the next step_frame, after the REPL
-        # returns or the RPC client resumes. Keep the last picture on screen.
-        # A stopped call returns no audio, so there is nothing to queue.
+    stopped = out.stop_reason != STOP_NONE
+    if stopped and not out.frame_complete:
+        # A break inside the frame: the frame continues on the next
+        # step_frame, after the REPL returns or the RPC client resumes. Keep
+        # the last picture on screen. The call returns no audio, so there is
+        # nothing to queue.
         handle_stop(machine, out.stop_reason, hotkeys.debugger, rpc_server)
         return
     if out.video_width > 0:  # 0: no video this frame (not rendered)
@@ -1124,6 +1126,13 @@ def _run_frame(ctx: _RunContext, state: _LoopState) -> None:
     if not (fast_forward and skip_this_frame):
         _present(sdl2, renderer, state.texture)
         state.last_present = time.perf_counter()
+
+    if stopped:
+        # A frame breakpoint: only a stop with the frame complete gets here
+        # (a mid-frame stop returned above); it is now shown and queued like
+        # any other frame.
+        handle_stop(machine, out.stop_reason, hotkeys.debugger, rpc_server)
+        return
 
     # Frame pacing + skip counter update
     if fast_forward:

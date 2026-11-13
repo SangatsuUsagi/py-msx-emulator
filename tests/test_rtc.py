@@ -1,4 +1,5 @@
 """Tests for the RP-5C01 RTC (register banks + CMOS RAM + running clock)."""
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -7,13 +8,25 @@ from host.machine_config import LoadedMachineConfig, load_machine_config, sram_p
 from host.media import persist_dirty_media
 from msx.boundary import RTC_CMOS_SIZE, MediaId, RtcTime
 from msx.clock import CoreClock
+from msx.machine import Machine
 from msx.machine_loader import build_machine
-from msx.machine_spec import MachineSpec, RomEntry
-from msx.rtc import HOUR_MODE_REG, MODE_REG, RESET_REG, RTC, TEST_REG
+from msx.machine_spec import MachineSpec, RomEntry, RtcReadBack
+from msx.rtc import (
+    HOUR_MODE_REG,
+    MODE_REG,
+    RESET_ALARM,
+    RESET_FRACTION,
+    RESET_REG,
+    RTC,
+    S1985_READ_VALUES,
+    TEST_REG,
+    TEST_SECONDS,
+)
 from tests.factories import make_loaded_config_msx2, make_machine_msx2
 
 _ROM = b"\x00" * 0x8000
 _EXTROM = b"\x00" * 0x4000
+_SECOND = 3_579_545
 
 
 def _select(rtc: RTC, reg: int) -> None:
@@ -63,6 +76,70 @@ def test_register_select_only_low_nibble_decoded() -> None:
     rtc.write_port(0xB5, 0x0B)
     _select(rtc, MODE_REG)
     assert rtc.read_port(0xB5) & 0x0F == 0x0B
+
+
+def test_register_select_port_reads_0x8b_with_the_s1985_form() -> None:
+    # io-rtc "register-select port reads 0x8B with the s1985 form": a real
+    # HB-F1XD reads 8B whatever the latch and MODE hold (RTCRAW.BAS).
+    rtc = RTC(read_values=S1985_READ_VALUES)
+    rtc.write_port(0xB4, 0x05)
+    first = rtc.read_port(0xB4)
+    _select(rtc, MODE_REG)
+    rtc.write_port(0xB5, 0x0)
+    assert (first, rtc.read_port(0xB4)) == (0x8B, 0x8B)
+
+
+def test_data_read_has_the_high_nibble_0_with_the_s1985_form() -> None:
+    # io-rtc "data read has the high nibble 0 with the s1985 form".
+    rtc = RTC(read_values=S1985_READ_VALUES)
+    _set_block(rtc, 2)
+    _select(rtc, 0)
+    rtc.write_port(0xB5, 0xA)
+    data = rtc.read_port(0xB5)
+    _select(rtc, MODE_REG)
+    assert (data, rtc.read_port(0xB5)) == (0x0A, 0x0A)  # MODE: Timer-EN, block 2
+
+
+@pytest.mark.parametrize("reg, value", [(TEST_REG, 0x5), (RESET_REG, 0x3)])
+def test_test_and_reset_registers_read_0_with_the_s1985_form(reg: int, value: int) -> None:
+    # io-rtc "TEST and RESET registers read 0 with the s1985 form" (a real
+    # HB-F1XD, RTCSIDE.BAS).
+    rtc = RTC(read_values=S1985_READ_VALUES)
+    _select(rtc, reg)
+    rtc.write_port(0xB5, value)
+    assert rtc.read_port(0xB5) == 0x00
+
+
+def _form_machine(form: RtcReadBack) -> Machine:
+    spec = replace(_rtc_spec("rtc_form"), rtc_read_back=form)
+    return build_machine(
+        load_machine_config(spec, bios_override=_ROM, extrom_override=_EXTROM).config
+    )
+
+
+def test_ports_0xb6_and_0xb7_read_0x8b_with_the_s1985_form() -> None:
+    # io-rtc "ports 0xB6 and 0xB7 read 0x8B with the s1985 form".
+    machine = _form_machine(RtcReadBack.S1985)
+    machine.io.write_port(0xB4, MODE_REG)
+    assert (machine.io.read_port(0xB6), machine.io.read_port(0xB7)) == (0x8B, 0x8B)
+    assert machine.io.read_port(0xB5) == 0x08  # MODE, high nibble 0
+
+
+def test_ports_0xb6_and_0xb7_are_not_connected_with_the_plain_form() -> None:
+    # io-rtc "ports 0xB6 and 0xB7 are not connected with the plain form".
+    machine = _form_machine(RtcReadBack.PLAIN)
+    assert (machine.io.read_port(0xB6), machine.io.read_port(0xB7)) == (0xFF, 0xFF)
+    assert machine.io.read_port(0xB5) & 0xF0 == 0xF0
+
+
+def test_a_write_to_0xb6_or_0xb7_does_not_reach_the_rtc() -> None:
+    # io-rtc "a write to 0xB6 or 0xB7 does not reach the RTC".
+    machine = _form_machine(RtcReadBack.S1985)
+    machine.io.write_port(0xB4, 0)
+    before = machine.io.read_port(0xB5)
+    machine.io.write_port(0xB6, 0x0D)
+    machine.io.write_port(0xB7, 0x05)
+    assert machine.io.read_port(0xB5) == before
 
 
 def test_cmos_ram_persists_written_values() -> None:
@@ -150,29 +227,29 @@ def test_time_block_returns_valid_bcd() -> None:
     assert 0 <= tens <= 5
 
 
-def test_block0_write_never_survives_read() -> None:
-    """A write to a block-0 register is stored (subject to its mask), but
-    ReadDataPort unconditionally overwrites block 0 with the current time on
-    every read of block 0 or block 1 -- so the write is never observable.
-    io-rtc "a block 0 write does not survive the next read"."""
-    rtc = RTC(start=RtcTime(2026, 1, 1, 13, 30, 45))
+def test_a_block0_write_sets_the_clock() -> None:
+    """io-rtc "a block 0 write sets the clock": the written minute tens digit
+    is kept, and the clock counts on from the written time."""
+    rtc, clock = _clocked(RtcTime(2000, 1, 1, 0, 0, 0))
     _set_block(rtc, 0)
-    _select(rtc, 0)  # seconds units
-    baseline = rtc.read_port(0xB5) & 0x0F
-    rtc.write_port(0xB5, (baseline + 1) % 10)
-    assert rtc.read_port(0xB5) & 0x0F == baseline
+    _select(rtc, 3)  # minute tens
+    rtc.write_port(0xB5, 4)
+    clock.cycle = 60 * _SECOND
+    d = _read_block0(rtc)
+    assert (d[2], d[3]) == (1, 4)  # 00:41
 
 
-def test_leap_counter_write_never_survives_read() -> None:
-    """Block 1 register 11 (leap-year counter) gets the same
-    always-overwritten-on-read treatment as block 0: it always reads back
-    epoch_leap, regardless of what was last written."""
-    rtc = RTC(start=RtcTime(2026, 1, 1, 0, 0, 0))  # (2026 - 1980) % 4 == 2
+def test_a_leap_counter_write_gives_february_29_days() -> None:
+    """Block 1 register 11 is the leap-year counter: written 0, February of
+    the current year has 29 days."""
+    rtc, clock = _clocked(RtcTime(2026, 2, 28, 23, 59, 59))  # 2026 % 4 == 2
     _set_block(rtc, 1)
     _select(rtc, 11)
     assert rtc.read_port(0xB5) & 0x0F == 2
     rtc.write_port(0xB5, 0x0)
-    assert rtc.read_port(0xB5) & 0x0F == 2
+    clock.cycle = _SECOND
+    d = _read_block0(rtc)
+    assert (d[7], d[8], d[9], d[10]) == (9, 2, 2, 0)  # 02-29
 
 
 def test_cmos_ram_save_and_load_round_trip(tmp_path: Path) -> None:
@@ -210,10 +287,21 @@ def test_sram_wrong_size_starts_fresh() -> None:
     assert rtc.read_port(0xB5) & 0x0F == 0x0
 
 
-def test_hour_encoding_24h_is_default() -> None:
-    """Register 10 defaults to 24-hour when never written."""
-    rtc = RTC(start=RtcTime(2026, 1, 1, 13, 0, 0))
+def _settings_image(hour_mode_24h: bool) -> bytearray:
+    """A saved register file whose block 1 register 10 holds the mode."""
+    image = bytearray(RTC_CMOS_SIZE)
+    image[13 + HOUR_MODE_REG] = 1 if hour_mode_24h else 0
+    return image
+
+
+def test_hour_encoding_24h() -> None:
+    rtc = RTC(sram=_settings_image(True), start=RtcTime(2026, 1, 1, 13, 0, 0))
     assert _read_hour(rtc) == (3, 1)  # 13 -> units 3, tens 1
+
+
+def test_a_blank_register_file_starts_in_12_hour_mode() -> None:
+    rtc = RTC(start=RtcTime(2026, 1, 1, 13, 0, 0))
+    assert _read_hour(rtc) == (1, 2)  # 1 PM -> "21"
 
 
 def test_hour_encoding_12h_am() -> None:
@@ -223,24 +311,36 @@ def test_hour_encoding_12h_am() -> None:
 
 
 def test_hour_encoding_12h_pm() -> None:
-    """PM hours offset the tens digit by 2 (RP/RF5C01A datasheet)."""
+    """A PM hour reads the hour minus 12, plus 20."""
     rtc = RTC(start=RtcTime(2026, 1, 1, 13, 0, 0))
     _set_hour_mode(rtc, is_24h=False)
     assert _read_hour(rtc) == (1, 2)  # 1 PM -> "21"
 
 
 def test_hour_encoding_12h_midnight() -> None:
-    """Midnight (hour 0) is hour-of-12 12, AM (no +2 offset)."""
+    """Midnight (hour 0) reads 00."""
     rtc = RTC(start=RtcTime(2026, 1, 1, 0, 0, 0))
     _set_hour_mode(rtc, is_24h=False)
-    assert _read_hour(rtc) == (2, 1)  # "12"
+    assert _read_hour(rtc) == (0, 0)
 
 
 def test_hour_encoding_12h_noon() -> None:
-    """Noon (hour 12) is hour-of-12 12, PM (+2 offset)."""
+    """Noon (hour 12) reads 20: the hour minus 12, plus 20."""
     rtc = RTC(start=RtcTime(2026, 1, 1, 12, 0, 0))
     _set_hour_mode(rtc, is_24h=False)
-    assert _read_hour(rtc) == (2, 3)  # "32"
+    assert _read_hour(rtc) == (0, 2)
+
+
+def test_a_12h_pm_write_sets_a_pm_hour() -> None:
+    rtc, clock = _clocked(RtcTime(2026, 1, 1, 0, 0, 0))
+    _set_hour_mode(rtc, is_24h=False)
+    _set_block(rtc, 0)
+    _select(rtc, 5)
+    rtc.write_port(0xB5, 2)
+    _select(rtc, 4)
+    rtc.write_port(0xB5, 3)  # "23": 3 PM
+    clock.cycle = 3600 * _SECOND
+    assert _read_hour(rtc) == (4, 2)  # 4 PM
 
 
 def test_machine_loads_previously_saved_rtc_sram(
@@ -334,6 +434,17 @@ def _read_block0(rtc: RTC) -> list[int]:
     return digits
 
 
+def _read_digits(rtc: RTC, mode: int) -> list[int]:
+    """Block 0's 13 digits, read with register 13 set to `mode`."""
+    _select(rtc, MODE_REG)
+    rtc.write_port(0xB5, mode)
+    digits = []
+    for reg in range(13):
+        _select(rtc, reg)
+        digits.append(rtc.read_port(0xB5) & 0x0F)
+    return digits
+
+
 def _clocked(start: RtcTime) -> tuple[RTC, CoreClock]:
     clock = CoreClock()
     rtc = RTC(start=start, _clock=clock)
@@ -385,36 +496,29 @@ def test_build_machine_wires_the_rtc_to_the_machine_clock() -> None:
     assert _read_block0(machine.rtc)[0:2] == [3, 0]
 
 
-# RTC.snapshot() captured before the CMOS RAM moved from _regs[26:52] to
-# RTC.cmos (openspec/changes/sram-image-composition): the 52-entry `regs`
-# list must stay byte-for-byte the same. The initial image deliberately
-# holds values above 0x0F, which are stored as given and masked on read.
-_CAPTURED_REGS = [
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 0,
-    0, 3, 6, 9, 12, 15, 2, 5, 8, 11, 14, 1, 4,
-    13, 14, 15, 16, 17, 10, 19, 20, 21, 22, 23, 24, 25,
-]
+def test_snapshot_regs_are_the_register_file() -> None:
+    rtc = RTC(sram=bytearray(range(RTC_CMOS_SIZE)))
+    regs = rtc.snapshot()["regs"]
+    assert len(regs) == RTC_CMOS_SIZE
+    assert regs == list(rtc.cmos.data())
+    # Block 2/3 bytes are stored as given (values above 0x0F included).
+    assert regs[26:] == list(range(26, 52))
 
 
-def test_snapshot_regs_layout_is_unchanged() -> None:
-    rtc = RTC(sram=bytearray(range(26)))
-    rtc.write_port(0xB4, 13)
-    rtc.write_port(0xB5, 0x02)  # block 2
-    for reg in range(13):
-        rtc.write_port(0xB4, reg)
-        rtc.write_port(0xB5, (reg * 3) & 0x0F)
-    rtc.write_port(0xB4, 13)
-    rtc.write_port(0xB5, 0x03)  # block 3
-    rtc.write_port(0xB4, 5)
-    rtc.write_port(0xB5, 0x0A)
-    rtc.write_port(0xB4, 13)
-    rtc.write_port(0xB5, 0x01)  # block 1
-    rtc.write_port(0xB4, 11)
-    rtc.write_port(0xB5, 0x02)
-    assert rtc.snapshot()["regs"] == _CAPTURED_REGS
-    assert list(rtc.cmos.data()) == _CAPTURED_REGS[26:]
-    assert rtc.cmos.dirty is True
+def test_uncounted_cycles_above_the_bound_are_rejected() -> None:
+    # The bound keeps uncounted_cycles * TICK_HZ within 64 bits.
+    rtc = RTC()
+    state = dict(rtc.snapshot())
+    state["uncounted_cycles"] = (1 << 48) + 1
+    with pytest.raises(ValueError, match="rtc.uncounted_cycles"):
+        rtc.parse_state(state, "rtc")
+
+
+def test_a_snapshot_saves_at_most_the_uncounted_cycle_bound() -> None:
+    clock = CoreClock()
+    rtc = RTC(_clock=clock)
+    clock.cycle = (1 << 48) + 12345
+    assert rtc.snapshot()["uncounted_cycles"] == 1 << 48
 
 
 def test_restoring_regs_with_different_cmos_marks_it_dirty() -> None:
@@ -424,3 +528,109 @@ def test_restoring_regs_with_different_cmos_marks_it_dirty() -> None:
     rtc.apply_state(state)
     assert rtc.cmos.dirty is True
     assert rtc.snapshot()["regs"][26:] == [0x5] * 26
+
+
+def test_a_stored_byte_above_0x0f_reads_through_the_mask() -> None:
+    # io-rtc "a stored byte above 0x0F reads through the mask".
+    image = bytearray(RTC_CMOS_SIZE)
+    image[26] = 0xF7  # block 2, register 0
+    rtc = RTC(sram=image)
+    _set_block(rtc, 2)
+    _select(rtc, 0)
+    assert rtc.read_port(0xB5) == 0xF7
+    loaded = RTC()
+    loaded.apply_state(loaded.parse_state(rtc.snapshot(), "rtc"))
+    assert list(loaded.cmos.data()) == list(rtc.cmos.data())
+
+
+def test_block1_settings_survive_a_save_reload_cycle() -> None:
+    rtc = RTC()
+    _set_hour_mode(rtc, is_24h=True)
+    reloaded = RTC(sram=rtc.cmos.data())
+    _set_block(reloaded, 1)
+    _select(reloaded, HOUR_MODE_REG)
+    assert reloaded.read_port(0xB5) & 0x0F == 1
+
+
+def test_the_start_time_replaces_the_saved_time_digits() -> None:
+    saved = RTC(start=RtcTime(2010, 5, 6, 7, 8, 9))
+    rtc = RTC(sram=saved.cmos.data(), start=RtcTime(2026, 10, 23, 12, 34, 56))
+    assert _read_block0(rtc) == _read_block0(RTC(start=RtcTime(2026, 10, 23, 12, 34, 56)))
+
+
+def test_creating_an_rtc_alone_leaves_nothing_to_save() -> None:
+    assert RTC(start=RtcTime(2026, 10, 23, 12, 34, 56)).cmos.dirty is False
+
+
+# --- io-rtc: MODE/TEST/RESET and the machine reset ---------------------------
+
+def _write(rtc: RTC, reg: int, value: int) -> None:
+    _select(rtc, reg)
+    rtc.write_port(0xB5, value)
+
+
+def test_timer_enable_clear_stops_the_clock() -> None:
+    rtc, clock = _clocked(RtcTime(2026, 1, 1, 12, 0, 0))
+    _write(rtc, MODE_REG, 0x00)  # Timer-EN clear, block 0
+    clock.cycle = _SECOND
+    assert _read_digits(rtc, 0x00)[0:2] == [0, 0]
+
+
+def test_test_bit0_advances_the_seconds_once_per_tick() -> None:
+    rtc, clock = _clocked(RtcTime(2026, 1, 1, 12, 0, 0))
+    _write(rtc, TEST_REG, TEST_SECONDS)
+    clock.cycle = 219  # one 16384 Hz tick
+    assert _read_digits(rtc, 0x08)[0:2] == [1, 0]
+
+
+def test_reset_bit1_clears_the_fraction() -> None:
+    rtc, clock = _clocked(RtcTime(2026, 1, 1, 12, 0, 0))
+    clock.cycle = 1_789_773
+    _write(rtc, RESET_REG, RESET_FRACTION)
+    clock.cycle = 2 * 1_789_773
+    assert _read_digits(rtc, 0x08)[0:2] == [0, 0]
+    clock.cycle = 1_789_773 + _SECOND
+    assert _read_digits(rtc, 0x08)[0:2] == [1, 0]
+
+
+def test_reset_bit0_clears_the_alarm_registers() -> None:
+    rtc = RTC()
+    _set_hour_mode(rtc, is_24h=True)
+    for reg in range(2, 9):
+        _write(rtc, reg, 1)
+    _write(rtc, RESET_REG, RESET_ALARM)
+    _set_block(rtc, 1)
+    for reg in range(2, 9):
+        _select(rtc, reg)
+        assert rtc.read_port(0xB5) & 0x0F == 0
+    _select(rtc, HOUR_MODE_REG)
+    assert rtc.read_port(0xB5) & 0x0F == 1
+    _select(rtc, 11)
+    assert rtc.read_port(0xB5) & 0x0F == 2000 % 4
+
+
+def test_a_machine_reset_restores_mode_and_the_latch() -> None:
+    # io-rtc "a machine reset restores MODE and the latch".
+    machine = make_machine_msx2(bytes(0x8000), bytes(0x4000))
+    rtc = machine.rtc
+    assert rtc is not None
+    _write(rtc, MODE_REG, 0x2)
+    _write(rtc, TEST_REG, 0x1)
+    _select(rtc, 5)
+    machine.reset()
+    assert rtc.read_port(0xB5) & 0x0F == 0  # register 0 of block 0
+    _select(rtc, MODE_REG)
+    assert rtc.read_port(0xB5) & 0x0F == 0x8
+    machine.clock.cycle += _SECOND
+    assert _read_digits(rtc, 0x08)[0:2] == [1, 0]
+
+
+def test_a_date_set_by_software_is_kept_until_the_day_advances() -> None:
+    rtc, clock = _clocked(RtcTime(2026, 7, 31, 12, 0, 0))
+    _set_block(rtc, 0)
+    _write(rtc, 9, 2)   # month units: 07 -> 02, 02-31
+    d = _read_block0(rtc)
+    assert (d[7], d[8], d[9], d[10]) == (1, 3, 2, 0)
+    clock.cycle = _SECOND
+    d = _read_block0(rtc)
+    assert (d[7], d[8], d[9], d[10]) == (1, 3, 2, 0)

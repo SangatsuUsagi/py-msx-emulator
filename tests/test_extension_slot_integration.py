@@ -1,7 +1,6 @@
-"""openspec/changes/slot1-slot2-symmetrization Phase 6: broader integration
-coverage for two independent --extensionN overlays active at once (D5's
-"extension x2" claim: this needs no separate mechanism beyond the
-per-slot-parameterized overlay wiring D1/D3 already build). The
+"""Broader integration coverage for two independent --extensionN overlays
+active at once: this needs no separate mechanism beyond the
+per-slot-parameterized overlay wiring. The
 flat+expanded combination (fmpac + hbi_j1) already has CLI-level coverage
 in tests/test_cli_hbi_j1.py; this file covers the combinations that don't
 naturally belong to any single extension's own test file: two *expanded*

@@ -110,6 +110,7 @@ def _row(
     hit = _plot_mode2_row(
         sprite_buf, touched, drawn, pixels, x_pos, scale, 0, screen_scale,
         collides=collides, or_mode=or_mode, color=color,
+        claim_chain=bytearray(width), chain=0,
     )
     return hit, sprite_buf, touched, drawn
 

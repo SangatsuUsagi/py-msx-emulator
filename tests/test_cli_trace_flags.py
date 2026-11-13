@@ -193,3 +193,45 @@ class TestMapperTraceOutputCLI:
         assert code == 0
         assert "MAP_BANK win=1" in log.read_text(encoding="utf-8")
         assert "MAP_BANK" not in out
+
+
+def _main_module():  # type: ignore[no-untyped-def]
+    spec = importlib.util.spec_from_file_location("_emulator_main", _MAIN_PATH)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    return mod
+
+
+class TestTraceOutFileWithoutTheTraceFlag:
+    """The -out file is the target of the debugger's `te`/`ce` too, so it is
+    opened when the trace flag itself is absent."""
+
+    def test_te_writes_to_the_vdp_trace_out_file(self, tmp_path: Path) -> None:
+        # diag-vdp-tracer "te writes to the --vdp-trace-out file".
+        import argparse
+
+        log = tmp_path / "trace.log"
+        args = argparse.Namespace(
+            vdp_trace=False, vdp_trace_out=str(log), debug=False, log=None)
+        trace_output, trace_file, _log_file = _main_module()._open_trace_outputs(args)
+        assert trace_file is not None
+        assert trace_output.vdp_out is trace_file
+        assert trace_output.vdp_name == str(log)
+        trace_file.close()
+
+    def test_ce_writes_to_the_mapper_trace_out_file(self, tmp_path: Path) -> None:
+        # diag-mapper-tracer "ce writes to the --mapper-trace-out file".
+        import argparse
+
+        from host.trace import TraceOutput
+
+        log = tmp_path / "trace.log"
+        args = argparse.Namespace(
+            debug=False, vdp_trace=False, mapper_trace=False, mapper_trace_out=str(log))
+        trace_output = TraceOutput()
+        mapper_file = _main_module()._start_traces(None, args, trace_output)
+        assert mapper_file is not None
+        assert trace_output.map_out is mapper_file
+        assert trace_output.map_name == str(log)
+        mapper_file.close()

@@ -129,7 +129,7 @@ class MediaId(enum.IntEnum):
 # mapper's: the host creates a save file of this size before the core
 # exists, and the device blanks an image of any other size.
 FMPAC_SRAM_SIZE = 8192      # MediaId.FMPAC_SRAM
-RTC_CMOS_SIZE = 26          # MediaId.RTC_CMOS: 26 nibbles, one per byte
+RTC_CMOS_SIZE = 52          # MediaId.RTC_CMOS: the 4 register blocks, one nibble per byte
 HALNOTE_SRAM_SIZE = 16384   # an HBI-J1 MSX-JE sub-slot's SRAM
 
 # The SRAM size of each cartridge mapper with battery-backed SRAM: the host
@@ -327,7 +327,7 @@ class FrameOutput:
     video_height: int    # OUTPUT_HEIGHT (212); 0 when the frame was not rendered
     video_pixels: bytes  # packed RGB24, width * height * 3; b"" when not rendered
     audio: bytes         # signed 16-bit LE mono PCM, before any output filter;
-                         # b"" for a call that stopped at a break
+                         # b"" for a call that stopped inside the frame
     frame_number: int
     stop_reason: int = STOP_NONE  # nonzero when the call stopped at a break
     frame_complete: int = 1       # 0 when the frame continues on the next call

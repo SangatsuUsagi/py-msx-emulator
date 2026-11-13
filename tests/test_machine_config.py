@@ -102,9 +102,9 @@ def test_machine_properties_are_integers() -> None:
 # The canonical documents' SHA-256, recorded at format version 2. The video
 # standard and the keyboard layout stay text in the document.
 _DOCUMENT_SHA256 = {
-    "cbios_msx1_eu": "9da04593fb165388ba8ae444cd00997f2b4189b87dcba3cabd0d9215f16f9796",
-    "cbios_msx1_jp": "c545fb791d172f0190f700a96324b5c3e5b671b1d52593fba5e30cb54a9d4be0",
-    "hb_f1xd": "00e34c2153d5b4e5f803e12b763d16ce33d03d3684bbbaa046745ec6618b8d25",
+    "cbios_msx1_eu": "a599559d7ab11bd0d2da0a16896f151ceffdabf2fd20d2cf89bee549811ef24c",
+    "cbios_msx1_jp": "ac71696b425bc0b22209283ebbd16d0dde02f27371abc58666eeaaa79dbb3cac",
+    "hb_f1xd": "f14b9a7d9a74241afd71b81511acf00c6b1c96db63e054c3ee159714eefd51d6",
 }
 
 
@@ -193,7 +193,7 @@ def test_the_same_inputs_give_the_same_document_bytes(
     first = _document(cartridge1=_CART, mapper1="ASCII8")
     second = _document(cartridge1=_CART, mapper1="ASCII8")
     assert first == second
-    assert json.loads(first)["format_version"] == 3
+    assert json.loads(first)["format_version"] == 8
 
 
 def test_run_inputs_do_not_change_the_document(
@@ -294,7 +294,12 @@ def format_1_config(machine_id: str = "hb_10", keep_printer_port: bool = False):
     config = load_machine_config(spec, **_overrides(spec)).config
     document = json.loads(config.document)
     document["format_version"] = 1
+    del document["machine"]["mapper_io"]
+    del document["machine"]["psg_read_back"]
+    del document["machine"]["rtc_read_back"]
+    del document["machine"]["psg_pin67_read"]
     del document["machine"]["cassette_port"]
+    del document["machine"]["ram_mapper_subslot"]
     if not keep_printer_port:
         del document["machine"]["printer_port"]
     config.document = json.dumps(document).encode("utf-8")
@@ -307,10 +312,199 @@ def format_2_config(machine_id: str = "hb_10", keep_cassette_port: bool = False)
     config = load_machine_config(spec, **_overrides(spec)).config
     document = json.loads(config.document)
     document["format_version"] = 2
+    del document["machine"]["mapper_io"]
+    del document["machine"]["psg_read_back"]
+    del document["machine"]["rtc_read_back"]
+    del document["machine"]["psg_pin67_read"]
+    del document["machine"]["ram_mapper_subslot"]
     if not keep_cassette_port:
         del document["machine"]["cassette_port"]
     config.document = json.dumps(document).encode("utf-8")
     return config
+
+
+def format_3_config(machine_id: str = "cbios_msx2", keep_subslot: bool = False):
+    """A machine's config with its document written as format version 3."""
+    spec = _spec(machine_id)
+    config = load_machine_config(spec, **_overrides(spec)).config
+    document = json.loads(config.document)
+    document["format_version"] = 3
+    del document["machine"]["mapper_io"]
+    del document["machine"]["psg_read_back"]
+    del document["machine"]["rtc_read_back"]
+    del document["machine"]["psg_pin67_read"]
+    if not keep_subslot:
+        del document["machine"]["ram_mapper_subslot"]
+    config.document = json.dumps(document).encode("utf-8")
+    return config
+
+
+def test_a_format_3_documents_mapper_has_no_subslot() -> None:
+    # machine-loader "A format 3 document's mapper has no sub-slot".
+    machine = build_machine(format_3_config())
+    assert machine.memory.ram_mapper is not None
+    assert machine.memory.ram_mapper_subslot is None
+
+
+def test_a_format_3_document_with_ram_mapper_subslot_is_rejected() -> None:
+    # machine-loader "A format 3 document with ram_mapper_subslot is rejected".
+    with pytest.raises(MachineLoadError, match="ram_mapper_subslot"):
+        build_machine(format_3_config(keep_subslot=True))
+
+
+def format_4_config(machine_id: str = "hb_f1xd", keep_mapper_io: bool = False):
+    """A machine's config with its document written as format version 4."""
+    spec = _spec(machine_id)
+    config = load_machine_config(spec, **_overrides(spec)).config
+    document = json.loads(config.document)
+    document["format_version"] = 4
+    del document["machine"]["psg_read_back"]
+    del document["machine"]["rtc_read_back"]
+    del document["machine"]["psg_pin67_read"]
+    if not keep_mapper_io:
+        del document["machine"]["mapper_io"]
+    config.document = json.dumps(document).encode("utf-8")
+    return config
+
+
+def test_a_format_4_document_has_the_plain_mapper_port_form() -> None:
+    # machine-loader "A format 4 document has the plain mapper port form".
+    machine = build_machine(format_4_config())
+    assert machine.mapper_latch is None
+    assert machine.io.read_port(0xFC) == 0xFF
+
+
+def test_a_format_4_document_with_mapper_io_is_rejected() -> None:
+    # machine-loader "A format 4 document with mapper_io is rejected".
+    with pytest.raises(MachineLoadError, match="mapper_io"):
+        build_machine(format_4_config(keep_mapper_io=True))
+
+
+def test_the_mapper_port_form_round_trips_through_the_document() -> None:
+    # machine-loader "The mapper port form round-trips through the document".
+    from msx.machine_config import parse_machine_config
+    from msx.machine_spec import MapperPortForm
+
+    parsed = parse_machine_config(_document("hb_f1xd"))
+    assert parsed.spec.mapper_io is MapperPortForm.S1985
+
+
+def format_5_config(machine_id: str = "hb_f1xd", keep_psg_read_back: bool = False):
+    """A machine's config with its document written as format version 5."""
+    spec = _spec(machine_id)
+    config = load_machine_config(spec, **_overrides(spec)).config
+    document = json.loads(config.document)
+    document["format_version"] = 5
+    del document["machine"]["rtc_read_back"]
+    del document["machine"]["psg_pin67_read"]
+    if not keep_psg_read_back:
+        del document["machine"]["psg_read_back"]
+    config.document = json.dumps(document).encode("utf-8")
+    return config
+
+
+def test_a_format_5_document_has_the_ym2149_read_back_form() -> None:
+    # machine-loader "A format 5 document has the YM2149 read-back form".
+    from msx.machine_spec import PsgReadBack
+
+    assert parse_machine_config(format_5_config().document).spec.psg_read_back is (
+        PsgReadBack.YM2149
+    )
+
+
+def test_a_format_5_document_with_psg_read_back_is_rejected() -> None:
+    # machine-loader "A format 5 document with psg_read_back is rejected".
+    with pytest.raises(MachineLoadError, match="psg_read_back"):
+        build_machine(format_5_config(keep_psg_read_back=True))
+
+
+def test_the_psg_read_back_form_round_trips_through_the_document() -> None:
+    # machine-loader "The PSG read-back form round-trips through the document".
+    from msx.machine_spec import PsgReadBack
+
+    parsed = parse_machine_config(_document("hb_f1xd"))
+    assert parsed.spec.psg_read_back is PsgReadBack.AY8910
+
+
+def format_6_config(machine_id: str = "hb_f1xd", keep_rtc_read_back: bool = False):
+    """A machine's config with its document written as format version 6."""
+    spec = _spec(machine_id)
+    config = load_machine_config(spec, **_overrides(spec)).config
+    document = json.loads(config.document)
+    document["format_version"] = 6
+    if not keep_rtc_read_back:
+        del document["machine"]["rtc_read_back"]
+    del document["machine"]["psg_pin67_read"]
+    config.document = json.dumps(document).encode("utf-8")
+    return config
+
+
+def test_a_format_6_document_has_the_plain_rtc_read_back_form() -> None:
+    # machine-loader "A format 6 document has the plain RTC read-back form".
+    from msx.machine_spec import RtcReadBack
+
+    assert parse_machine_config(format_6_config().document).spec.rtc_read_back is (
+        RtcReadBack.PLAIN
+    )
+
+
+def test_a_format_6_document_with_rtc_read_back_is_rejected() -> None:
+    # machine-loader "A format 6 document with rtc_read_back is rejected".
+    with pytest.raises(MachineLoadError, match="rtc_read_back"):
+        build_machine(format_6_config(keep_rtc_read_back=True))
+
+
+def test_the_rtc_read_back_form_round_trips_through_the_document() -> None:
+    # machine-loader "The RTC read-back form round-trips through the document".
+    from msx.machine_spec import RtcReadBack
+
+    parsed = parse_machine_config(_document("hb_f1xd"))
+    assert parsed.spec.rtc_read_back is RtcReadBack.S1985
+
+
+def format_7_config(machine_id: str = "hb_f1xd", keep_psg_pin67_read: bool = False):
+    """A machine's config with its document written as format version 7."""
+    spec = _spec(machine_id)
+    config = load_machine_config(spec, **_overrides(spec)).config
+    document = json.loads(config.document)
+    document["format_version"] = 7
+    if not keep_psg_pin67_read:
+        del document["machine"]["psg_pin67_read"]
+    config.document = json.dumps(document).encode("utf-8")
+    return config
+
+
+def test_a_format_7_document_has_the_plain_psg_pin67_read_form() -> None:
+    # machine-loader "A format 7 document has the plain PSG pin 6/7 read form".
+    from msx.machine_spec import PsgPin67Read
+
+    assert parse_machine_config(format_7_config().document).spec.psg_pin67_read is (
+        PsgPin67Read.PLAIN
+    )
+
+
+def test_a_format_7_document_with_psg_pin67_read_is_rejected() -> None:
+    # machine-loader "A format 7 document with psg_pin67_read is rejected".
+    with pytest.raises(MachineLoadError, match="psg_pin67_read"):
+        build_machine(format_7_config(keep_psg_pin67_read=True))
+
+
+def test_the_pin67_read_form_round_trips_through_the_document() -> None:
+    # machine-loader "The pin 6/7 read form round-trips through the document".
+    from msx.machine_spec import PsgPin67Read
+
+    parsed = parse_machine_config(_document("hb_f1xd"))
+    assert parsed.spec.psg_pin67_read is PsgPin67Read.GATED
+
+
+def test_a_ram_mapper_subslot_without_a_mapper_is_rejected() -> None:
+    config = format_3_config("hb_f1xd", keep_subslot=True)
+    document = json.loads(config.document)
+    document["format_version"] = 4
+    document["machine"]["ram_mapper_subslot"] = 3
+    config.document = json.dumps(document).encode("utf-8")
+    with pytest.raises(MachineLoadError, match="ram_mapper_subslot: set without has_ram_mapper"):
+        build_machine(config)
 
 
 def test_a_format_2_document_has_no_cassette_port() -> None:
@@ -340,7 +534,7 @@ def test_a_format_1_document_with_printer_port_is_rejected() -> None:
         build_machine(format_1_config(keep_printer_port=True))
 
 
-@pytest.mark.parametrize("version", [0, 4])
+@pytest.mark.parametrize("version", [0, 9])
 def test_an_unsupported_format_version_is_rejected(version: int) -> None:
     # machine-loader "An unsupported format version is rejected".
     config = format_1_config()
@@ -351,7 +545,7 @@ def test_an_unsupported_format_version_is_rejected(version: int) -> None:
         build_machine(config)
 
 
-@pytest.mark.parametrize(("version", "message"), [(4, "version 4, expected 1 to 3"),
+@pytest.mark.parametrize(("version", "message"), [(9, "version 9, expected 1 to 8"),
                                                   (1, "not valid JSON")])
 def test_a_document_that_is_not_strict_json_names_an_unsupported_version(
     version: int, message: str
@@ -651,6 +845,75 @@ def test_a_device_without_a_rom_file_to_read_is_a_load_error(
         load_machine_config(spec, **_overrides(spec)).config
 
 
+def test_a_machine_without_a_rom_base_dir_cannot_read_its_rom_files(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # machine-config-loader RejectRomLoadWithoutRomBaseDir, machine level.
+    monkeypatch.chdir(tmp_path)
+    spec = dataclasses.replace(_spec("hb_f1xd"), rom_base_dir=None)
+    with pytest.raises(MachineLoadError, match="has no rom_base_dir to read"):
+        load_machine_config(spec)
+
+
+def test_a_missing_optional_logo_rom_is_skipped_with_a_warning(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # machine-config-loader SkipMissingOptionalRom.
+    monkeypatch.chdir(tmp_path)
+    spec = dataclasses.replace(
+        _spec("hb_f1xd"), rom_base_dir=tmp_path,
+        logo_rom_entry=RomEntry(file="logo.rom", size_kb=16, pages=[]),
+    )
+    overrides = _overrides(spec)
+    del overrides["logo_override"]
+    config = load_machine_config(spec, **overrides).config
+    assert json.loads(config.document)["machine"]["logo_rom"] is None
+    assert "optional ROM file not found, skipping" in capsys.readouterr().err
+
+
+def test_a_saved_sram_of_the_wrong_size_is_discarded(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # machine-config-loader DiscardMismatchedSram, host side.
+    monkeypatch.chdir(tmp_path)
+    save = tmp_path / "fmpac.sram"
+    save.write_bytes(bytes(100))
+    overlay = dataclasses.replace(_overlay("fmpac"), sram_save_path=save)
+    spec = _spec("hb_f1xd")
+    config = load_machine_config(spec, **_overrides(spec), extension_overlay2=overlay).config
+    assert all(image.media_id != MediaId.FMPAC_SRAM for image in config.media)
+    assert "has wrong size (100 != 8192), starting fresh" in capsys.readouterr().err
+
+
+def test_an_fmpac_rom_of_the_wrong_size_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "fmpac.rom").write_bytes(bytes(16 * 1024))
+    overlay = dataclasses.replace(
+        _overlay("fmpac"), rom_base_dir=tmp_path,
+        rom_entry=RomEntry(file="fmpac.rom", size_kb=16, pages=[]),
+    )
+    spec = _spec("hb_f1xd")
+    config = load_machine_config(spec, **_overrides(spec), extension_overlay2=overlay).config
+    with pytest.raises(MachineLoadError, match="the FM-PAC ROM is 16384 bytes, not 65536"):
+        build_machine(config)
+
+
+def test_a_rom_image_of_the_wrong_size_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # The SHA1 matches; only the size the reference records differs.
+    monkeypatch.chdir(tmp_path)
+    config = _hb_f1xd_config(tmp_path)
+
+    def edit(decoded: dict) -> None:
+        decoded["machine"]["main_rom"]["size"] += 1
+
+    with pytest.raises(MachineLoadError, match="expected 32769 bytes"):
+        build_machine(_edited(config, edit))
+
+
 def test_a_ram_mapper_size_the_mapper_does_not_accept_is_rejected() -> None:
     # machine-core "A RAM mapper size the mapper does not accept is rejected".
     from msx.boundary import STATUS_BAD_CONFIG
@@ -709,10 +972,9 @@ def test_a_configuration_without_a_start_time_starts_at_2000() -> None:
     assert RTC_DEFAULT_START == RtcTime(2000, 1, 1, 0, 0, 0)
     machine = create_machine(make_config_msx2(_ROM, bytes(16 * 1024))).machine
     assert machine is not None
-    machine.rtc._refresh_time_regs()
     # Block 0 BCD digits: seconds, minutes, hours (0-5), day (7, 8),
     # month (9, 10), years since 1980 (11, 12).
-    regs = machine.rtc._regs
+    regs = list(machine.rtc.cmos.data())
     assert regs[0:6] == [0, 0, 0, 0, 0, 0]
     assert (regs[7], regs[8], regs[9], regs[10]) == (1, 0, 1, 0)
     assert (regs[11], regs[12]) == (0, 2)

@@ -30,7 +30,8 @@ def test_new_drive_has_no_disk() -> None:
     drive = DiskDrive()
     assert drive.has_disk is False
     assert drive.write_protected is False
-    assert drive.disk_changed is False
+    # Power-on: openMSX's DiskChanger starts with an eject, which flags it.
+    assert drive.disk_changed is True
 
 
 def test_mount_sets_has_disk_and_write_protected(tmp_path: Path) -> None:
@@ -67,19 +68,20 @@ def test_restore_with_missing_key_does_not_partially_mutate(tmp_path: Path) -> N
     assert drive.disk_changed is True
 
 
-def test_mount_does_not_flush_outgoing_image_or_flag_disk_changed(tmp_path: Path) -> None:
-    # DiskMounted/mount() has no side effect beyond the field write itself --
-    # no flush of the previous image, no disk_changed -- unlike a connection
-    # style's own SwapDisk, which adds that behaviour one layer up.
+def test_mount_flags_disk_changed_but_does_not_flush_outgoing_image(tmp_path: Path) -> None:
+    # DiskMounted/mount() sets disk_changed (openMSX DiskChanger::changeDisk)
+    # but does not flush the previous image -- a connection style's own
+    # SwapDisk hands the dirty outgoing image to the host one layer up.
     p_a = tmp_path / "a.dsk"
     img_a = dsk_image(_make_dsk(p_a))
     img_a.write_sector(0, b"\xAB" * SECTOR_SIZE)  # dirty, never flushed
 
     drive = DiskDrive(img_a)
+    drive.disk_changed = False
     drive.mount(dsk_image(_make_dsk(tmp_path / "b.dsk")))
 
     assert dsk_image(p_a).read_sector(0) != b"\xAB" * SECTOR_SIZE  # not flushed
-    assert drive.disk_changed is False
+    assert drive.disk_changed is True
 
 
 # --- write_sector out-of-range ---------------------------------------------

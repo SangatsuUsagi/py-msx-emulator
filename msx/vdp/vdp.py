@@ -405,7 +405,7 @@ class VDP:
         if port == 0x98:
             self.vram[self.addr] = value
             # The write also refills the read-ahead buffer: verified on a real
-            # SONY HB-10 (extras/HB-10/RDBUF.BAS, 2026-10-08), as on the V9938
+            # SONY HB-10 (2026-10-08), as on the V9938
             # and in openMSX.
             self.read_buf = value
             self.addr = (self.addr + 1) & 0x3FFF
@@ -463,7 +463,6 @@ class VDP:
             # feeds S#0 bits 4:0 into a loop counter, and 0 there stalls
             # it). This is a documented SIMPLIFICATION, not the real
             # openMSX/hardware value: openMSX's SpriteChecker::checkSprites1
-            # (references/openMSX/src/video/SpriteChecker.cc:168-171)
             # rewrites bits 4:0 to min(sprite, 31) on every sprite-attribute
             # scan whenever 5S is clear, where `sprite` is the SAT index the
             # scan actually stopped at -- typically well under 31 for most

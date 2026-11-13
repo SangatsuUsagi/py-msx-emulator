@@ -37,7 +37,15 @@ python . path/to/game.rom --machine cbios_msx2_jp --rpc
 python . path/to/game.rom --machine cbios_msx2_jp --rpc --rpc-socket /tmp/alt.sock
 ```
 
-`--rpc` applies only to the interactive SDL run mode, not to `--count-frame` or `--benchmark`. At startup, the emulator prints the bound path:
+`--rpc` applies only to the interactive SDL run mode, not to `--count-frame` or `--benchmark`. You can also enable RPC in `py_emulator.yaml`. `--rpc-socket` overrides `rpc.socket`:
+
+```yaml
+rpc:
+  enabled: true
+  socket: /tmp/py_msx_emu.sock # optional
+```
+
+At startup, the emulator prints the bound path:
 
 ```
 rpc     : /tmp/py_msx_emu.sock
@@ -105,11 +113,11 @@ A client that does not need push updates can ignore frames with a `notification`
 
 ## Method reference
 
-These `reason` values occur in all methods: `"user_request"`, `"breakpoint"`, `"watchpoint"`, `"step_complete"`.
+`debugger.status`, `debugger.pause`, `cpu.continue_sync` and the `paused` notification give a `reason`. It is one of `"user_request"`, `"breakpoint"`, `"watchpoint"` and `"step_complete"`. `cpu.continue_sync` also gives `"timeout"` when nothing pauses the emulator in time.
 
 ### Debugger control
 
-- **`debugger.status`** → `{ paused, pc, reason }`. Reports the state and does not change it.
+- **`debugger.status`** → `{ paused, pc, reason }`. Reports the state and does not change it. While the emulator runs, `reason` is the reason of the last pause (`"user_request"` before the first pause).
 - **`debugger.pause`** → `{ paused: true, pc, reason: "user_request" }`. Ctrl+C in the terminal does not do this: it opens the debugger REPL, and the server serves no request until the REPL resumes.
 
 ### CPU / execution
@@ -162,7 +170,7 @@ All input methods work in the paused state and in the running state. The effect 
 
 ### State save / load
 
-- **`state.save`**: params `{ path? }` → `{ path }`. Saves a snapshot of the whole machine. It always writes a new timestamped file in `saves/states/`. An optional `path` gives only its filename stem, as the snapshot title. The method does not use it as the output location.
+- **`state.save`**: params `{ path? }` → `{ path }`. Saves a snapshot of the whole machine to `saves/states/<title>_YYYYMMDD_HHMMSS.state`, with a matching `.png` screenshot, and updates `saves/states/latest.state`. This is the same format and location as the debugger's `sv` command. An optional `path` gives only its filename stem, as the title. The method does not use it as the output location. With no `path`, the title is `rpc_checkpoint`.
 - **`state.load`**: params `{ path }` (required) → `{ path, loaded: true }`.
 
 ### Floppy disk
@@ -242,7 +250,7 @@ claude mcp add --transport stdio --scope project msx-emulator \
     -- python tools/mcp_server.py
 ```
 
-This command writes an entry to `.mcp.json`. Claude Code starts `tools/mcp_server.py` automatically at the start of each session that uses it. You do not need to keep a process running manually. To verify the registration, run:
+Use a `python` that has the `mcp` package. If you installed it in a virtual environment, give the full path of that environment's interpreter in place of `python`. This command writes an entry to `.mcp.json`. Claude Code starts `tools/mcp_server.py` automatically at the start of each session that uses it. You do not need to keep a process running manually. To verify the registration, run:
 
 ```bash
 claude mcp list
@@ -285,9 +293,9 @@ A typical debugging session has these steps:
 
 ## Security notes
 
-- The socket is a Unix domain socket, so only local processes can reach it. It has no authentication of its own. The permissions of the socket file control access. On a shared host, restrict the file with `chmod 600`.
+- The socket is a Unix domain socket, so only local processes can reach it. It has no authentication of its own. The permissions of the socket file control access. The server creates the socket again at each start, so a `chmod` on the file does not last. On a shared host, use `--rpc-socket` to put the socket in a directory that only you can open.
 - `memory.write` and `cpu.step` change the state at an exact instruction boundary, so they work only while the emulator is paused.
-- RPC is strictly opt-in (`--rpc`). A normal run has no socket, no background thread, and no additional attack surface.
+- RPC is off unless you give `--rpc` or set `rpc.enabled` in `py_emulator.yaml`. A normal run opens no socket and starts no background thread.
 
 ---
 
@@ -296,4 +304,5 @@ A typical debugging session has these steps:
 - **Single active client.** The accept loop is single-threaded, so the server serves only one client at a time. If two MCP sessions (or an MCP session and `tools/rpc_client.py`) use the same socket at the same time, the second one blocks until the first one disconnects.
 - **No emulator autostart.** The MCP server does not start the emulator. Start the emulator separately with `--rpc` first. If you do not, the first tool call fails with the connection error that [Tool set](#tool-set) describes.
 - **`cpu.continue_sync` timeout is per-call.** If nothing pauses the emulator before `timeout_ms` elapses, the call returns `{ paused: false, reason: "timeout" }` and does not block indefinitely. The emulator continues to run.
+- **The MCP server waits at most 60 seconds for a response.** `tools/mcp_server.py` sets a 60-second timeout on its socket. A `cpu_continue_until_pause` call with `timeout_seconds` of 60 or more thus fails with a socket timeout before the emulator answers. Keep `timeout_seconds` below 60.
 - **Requests need a running host loop.** The server queues every method except `cpu.continue_sync` for `DebugServer.drain()`. The host calls this function once per frame, and continuously while paused. If the emulator is stuck and does not drain the queue within 30 seconds, the request fails with a `"dispatch timeout"` internal error (code `3`). The client thus does not hang.

@@ -1,7 +1,7 @@
 """Tests for the FDC's parse_state() / apply_state(): the whole fdc
 subtree (connection style, controller, every drive) is validated before
-anything is assigned (openspec/changes/producer-state-validation,
-openspec/changes/producer-state-single-parse)."""
+anything is assigned (machine-state "Producer parse_state validates before
+any producer is restored")."""
 from __future__ import annotations
 
 import copy

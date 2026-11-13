@@ -2,7 +2,7 @@
 (diag-vdp-tracer, diag-mapper-tracer).
 
 The core records raw events (msx/boundary.py TraceEvent); this module turns
-them into VDP Trace Log Format v1.2 lines (extras/vdp_trace_format.md) and
+them into VDP Trace Log Format v1.2 lines (openspec/specs/diag-vdp-tracer/spec.md) and
 MAP_BANK lines, and writes them to the run's trace streams.
 """
 from __future__ import annotations

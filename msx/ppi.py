@@ -49,7 +49,7 @@ class PPI:
     control_read: PpiControlRead = PpiControlRead.CONTROL
     # S3527 port 0xAB read value: a read of 0xA8-0xAA leaves the byte read, a
     # write to 0xA8-0xAB the inverse of the byte written (real HB-10,
-    # PORTRD2-4.BAS). Kept in every mode; the 0xA9 write and the power-on
+    # 2026-10-08). Kept in every mode; the 0xA9 write and the power-on
     # value were not measured.
     _bus_latch: int = field(default=0xFF, repr=False)
     # Key click (Port C bit 7) as a 1-bit DAC; the frontend mixes its output.

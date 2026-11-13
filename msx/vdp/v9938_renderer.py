@@ -39,6 +39,9 @@ _SPRITE_CLAIM = 0x10
 # y-coord 8").
 _COLLISION_X_OFFSET = 12
 _COLLISION_Y_OFFSET = 8
+# "No line yet" for the topmost overflow line and the first collision line
+# and x: above any line or x (at most 511), and fits a u16.
+_NO_LINE = 0xFFFF
 
 # Cache border-fill buffers per border pattern (see _border_pattern) so a band
 # prefill can slice-assign a memoryview instead of rebuilding the fill every
@@ -215,6 +218,9 @@ class _RenderStatus:
     collision_x: int
     collision_y: int
     status2: int
+    # Topmost line on which a sprite overflowed this frame, across all sprite
+    # passes: S#0 bits 4:0 take the overflowing sprite on that line.
+    overflow_line: int = _NO_LINE
 
 
 def render_frame(vdp: "V9938", skip_render: bool = False) -> bytearray:
@@ -599,11 +605,15 @@ def _render_run_sprites(
     # game (single SAT, whatever its vscroll splits) stays at one pass. R#5 is
     # only changed mid-active-display for this purpose, so keying on it does
     # not affect non-multiplexed games. The merge runs within one width run, so a
-    # pass never spans a width change.
+    # pass never spans a width change. The key also holds every register the
+    # pass reads once (mode, BL, SI/MAG, R#6, TP, LN), so a band that differs
+    # in one of them (e.g. BL cleared over a few lines) gets its own pass.
     sat_segments: list[_SatSegment] = []
     for band in run:
         bh = band.y1 - band.y0
-        if sat_segments and _sat_key(sat_segments[-1].regs) == _sat_key(band.regs):
+        if sat_segments and _sprite_pass_key(sat_segments[-1].regs) == _sprite_pass_key(
+            band.regs
+        ):
             seg = sat_segments[-1]
             seg.y1 = band.y1
             if bh > seg.height:
@@ -625,8 +635,20 @@ def _render_run_sprites(
             )
 
 
-def _sat_key(regs: list[int]) -> tuple[int, int]:
-    return (regs[5], regs[11] & 0x03)
+def _sprite_pass_key(regs: list[int]) -> int:
+    # SAT base (R#5, R#11 bits 1:0), then the registers a sprite pass reads
+    # once: R#0 M3-M5, R#1 BL/M1/M2/SI/MAG, R#6 pattern base, R#8 TP, R#9 LN.
+    # R#23 and SPD are per line (row_vscroll / row_spd), so they are not here.
+    # One byte lane per register, so the key fits a u64.
+    return (
+        regs[5]
+        | ((regs[11] & 0x03) << 8)
+        | ((regs[0] & 0x0E) << 16)
+        | ((regs[1] & 0x5B) << 24)
+        | ((regs[6] & 0x3F) << 32)
+        | ((regs[8] & 0x20) << 40)
+        | ((regs[9] & 0x80) << 48)
+    )
 
 
 def _render_pass(vdp: "V9938", st: _RenderStatus) -> bytearray:
@@ -754,13 +776,16 @@ def _plot_mode2_row(
     collides: bool,
     or_mode: bool,
     color: int,
+    claim_chain: bytearray,
+    chain: int,
 ) -> int:
     """Plot one sprite-mode-2 pattern row into the sprite plane.
 
     `x_pos` is the row's first dot in the 256-dot sprite plane, `scale` the
     MAG factor; dots off-screen are clipped (no wrap), and each dot covers
     `screen_scale` output pixels (2 in 512-wide modes). A CC (OR) sprite ORs
-    its colour into an already-claimed pixel; otherwise the first claim wins.
+    its colour into a pixel claimed in the line's current OR-merge `chain`
+    (claim_chain records each pixel's); otherwise the first claim wins.
     Returns the sprite-plane x of the first colliding dot, or -1 for none (an
     Option<u16> in a port).
     """
@@ -784,10 +809,11 @@ def _plot_mode2_row(
                         else:
                             touched[coord] = 1
                     if sprite_buf[coord]:
-                        if or_mode:
+                        if or_mode and claim_chain[coord] == chain:
                             sprite_buf[coord] |= color
                     else:
                         sprite_buf[coord] = claim
+                        claim_chain[coord] = chain
                         drawn.append(coord)
             sx += 1
     return hit_x
@@ -1004,8 +1030,8 @@ def _render_text(
     # TEXT1 uses the same full-width R#2/R#4 bases (see _render_g1), but at
     # LN=1 its 26.5 rows of 40 reach name index 1059: index bits 11:10 are
     # ANDed with R#2 bits 1:0, so with those clear index 1024 wraps to the
-    # table start (real HB-F1XD, extras/HB-F1XD/LN212.BAS; openMSX
-    # VDP::updateNameBase masks the text-mode index the same way).
+    # table start (real HB-F1XD, 2026-10-05; openMSX VDP::updateNameBase
+    # masks the text-mode index the same way).
     name_mask = ((regs[2] & 0x7F) << 10) | 0x3FF
     pat_base = (regs[4] & 0x3F) << 11
     # TEXT1: R#7 high nibble = text colour, low nibble = background. A text
@@ -1069,8 +1095,8 @@ def _render_text2(
     blink_fg = (regs[12] >> 4) & 0x0F
     # Deliberately unlike the plain text colour above: a blink text colour 0
     # shows the blink background, not the TP-dependent colour 0. Confirmed on
-    # a real SONY HB-F1XD (extras/HB-F1XD/T2BLINK.BAS, 2026-10-05: R#12=&H08
-    # makes the blink text invisible) and in openMSX; MAME draws colour 0.
+    # a real SONY HB-F1XD (2026-10-05: R#12=&H08 makes the blink text
+    # invisible) and in openMSX; MAME draws colour 0.
     if blink_fg == 0:
         blink_fg = blink_bg
     ye = y_end if y_end is not None else _TILE_H
@@ -1169,7 +1195,7 @@ def _render_sprites(
     row_vscroll: list[int] | None = None,
     row_spd: list[bool] | None = None,
 ) -> None:
-    """Sprite mode 1 for TEXT1/GRAPHIC1/GRAPHIC2/MULTICOLOR.
+    """Sprite mode 1 for GRAPHIC1/GRAPHIC2/MULTICOLOR (TEXT1 has no sprites).
 
     row_vscroll/row_spd carry the same per-scanline R#23/R#8-SPD schedule
     sprite mode 2 already honours (see _render_sprites_mode2 and
@@ -1227,7 +1253,6 @@ def _render_sprites(
     # wise for the common single-segment case, where scan_hi already equals h.
     scan_hi = min(y_end if y_end is not None else h, h)
     line_count = [0] * scan_hi
-    fifth_set = False  # mode 1: the 5th sprite on a line sets the 5S flag
     # Two separate claim arrays (see allium/tms9918a.allium's RenderFrame
     # for the base-class version of this split): sprite_painted tracks
     # z-order (only a pixel the VDP actually displays claims a pixel, so a
@@ -1239,8 +1264,8 @@ def _render_sprites(
     # Collision coordinates (S#3-S#6): the earliest colliding line, and the
     # leftmost collision on it (openMSX SpriteChecker takes minXCollision on
     # the first colliding line and stops there).
-    col_line = 999
-    col_x = 999
+    col_line = _NO_LINE
+    col_x = _NO_LINE
     had_collision = bool(st.status & 0x20)  # C set since last cleared by an S#0 read
     # Vertical scroll and SPD are both per scanline: split the range into runs
     # of constant vscroll AND constant sprite-enable, exactly as sprite mode 2
@@ -1270,9 +1295,9 @@ def _render_sprites(
         # scan when there is no per-line schedule.
         for line, sprite_row in _sprite_scanlines(sprite_runs, y_top, render_size):
             if line_count[line] >= 4:  # V9938 sprite mode 1: 4 sprites per line
-                if not fifth_set:
+                if line < st.overflow_line:  # mode 1: the 5th sprite sets 5S
                     st.status = (st.status & 0xA0) | 0x40 | (i & 0x1F)
-                    fifth_set = True
+                    st.overflow_line = line
                 continue
 
             line_count[line] += 1
@@ -1417,7 +1442,8 @@ def _render_sprites_mode2(
 ) -> None:
     """Sprite mode 2 for SCREEN 4–8.
 
-    R#5/R#11 → SAT base (512-byte aligned). Colour table at sat_base-0x200.
+    R#5/R#11 → SAT base (512-byte aligned). Colour table: the same base with
+    bits 9:0 cleared, offset ANDed with the R#5 bits 1:0 gate (see below).
     Per-line colour byte: EC(7) | CC(6, OR-combine) | IC(5, ignore collision) | colour(3:0).
     grb_mode=True (SCREEN 8): sprite palette colours are converted to GRB332 before writing.
     width: buffer line width; 512 for the wide modes (G5/G6), where the 256-dot
@@ -1480,7 +1506,6 @@ def _render_sprites_mode2(
     # single-segment case, where scan_hi already equals h.
     scan_hi = min(y_end if y_end is not None else h, h)
     line_count = [0] * scan_hi
-    ninth_set = False
     # 0 = unclaimed. A displayed pixel stores colour | _SPRITE_CLAIM, so an
     # opaque colour-0 pixel (TP=1) claims its pixel too; the claim bit is
     # masked off when compositing.
@@ -1490,15 +1515,20 @@ def _render_sprites_mode2(
     # z-order winner, which a CC/IC sprite claims like any other, while
     # sprite_touched records only pixels a collision-eligible sprite covered.
     sprite_touched = ZERO_BYTE * (scan_hi * width)
-    # Per line: set once a CC=0 sprite has appeared. A CC=1 sprite is only
-    # visible if a higher-priority CC=0 sprite precedes it on the same line
-    # (V9938 rule); leading CC=1 sprites are invisible.
-    cc0_seen = ZERO_BYTE * scan_hi
+    # Per line: the number of CC=0 sprites seen so far (at most 8). A CC=1
+    # sprite is only visible once a higher-priority CC=0 sprite precedes it on
+    # the same line (V9938 rule); leading CC=1 sprites are invisible. Each
+    # CC=0 sprite starts a new OR-merge chain, and claim_chain records the
+    # chain a pixel was claimed in: a CC=1 sprite ORs only into pixels of the
+    # line's current chain, i.e. the nearest CC=0 sprite above it and the CC=1
+    # sprites after that one (openMSX drawMode2; Technical Handbook).
+    cc0_chain = ZERO_BYTE * scan_hi
+    claim_chain = ZERO_BYTE * (scan_hi * width)
     drawn: list[int] = []  # coords touched, to composite only those (vs full scan)
     coincidence = False
     # Collision coordinates (S#3-S#6), as in _render_sprites above.
-    col_line = 999
-    col_x = 999
+    col_line = _NO_LINE
+    col_x = _NO_LINE
     had_collision = bool(st.status & 0x20)
     # Vertical scroll and SPD (sprite disable) are both per scanline: split the
     # range into runs of constant vscroll AND constant sprite-enable (one run for
@@ -1533,9 +1563,9 @@ def _render_sprites_mode2(
         # partition the scanlines, so this equals a full scan at one vscroll.
         for line, sprite_row in _sprite_scanlines(sprite_runs, y_top, render_size):
             if line_count[line] >= 8:
-                if not ninth_set:
+                if line < st.overflow_line:  # mode 2: the 9th sprite sets 9S
                     st.status = (st.status & 0xA0) | 0x40 | (i & 0x1F)
-                    ninth_set = True
+                    st.overflow_line = line
                 continue
 
             line_count[line] += 1
@@ -1560,10 +1590,10 @@ def _render_sprites_mode2(
             # has appeared on this line; a CC=0 sprite enables them (counted even
             # when its own colour is transparent).
             if or_mode:
-                if not cc0_seen[line]:
+                if not cc0_chain[line]:
                     continue
             else:
-                cc0_seen[line] = 1
+                cc0_chain[line] += 1
 
             if color == 0 and not can0collide:
                 continue  # transparent regardless of OR mode
@@ -1572,6 +1602,7 @@ def _render_sprites_mode2(
             hit_x = _plot_mode2_row(
                 sprite_buf, sprite_touched, drawn, pixels, x_pos, 2 if mag else 1,
                 line * width, screen_scale, collides=collides, or_mode=or_mode, color=color,
+                claim_chain=claim_chain, chain=cc0_chain[line],
             )
             if hit_x >= 0:
                 coincidence = True

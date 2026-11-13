@@ -467,6 +467,15 @@ def test_make_machine_mapper2_fixed_page_types_build_fixed_page_mapper(
     assert m.memory.mapper2.base == expected_base
 
 
+def test_make_machine_mapper2_normal_guesses_base_from_header() -> None:
+    from msx.mapper import FixedPageMapper
+    cart2 = bytearray(16384)
+    cart2[0:4] = b"AB\x10\x80"  # INIT 0x8010 points into page 2
+    m = make_machine(rom=_NOP_ROM, cartridge2=bytes(cart2), mapper2="Normal")
+    assert isinstance(m.memory.mapper2, FixedPageMapper)
+    assert m.memory.mapper2.base == 0x8000
+
+
 def test_make_machine_mapper2_rtype_builds_rtype_mapper() -> None:
     from msx.mapper import RTypeMapper
     cart2 = bytes(384 * 1024)  # dummy 384 KB R-Type-sized cartridge
@@ -514,8 +523,8 @@ def test_make_machine_mapper2_konamiscc_rejected_when_slot1_also_konamiscc(
 
 # ---------------------------------------------------------------------------
 # Either slot's KonamiSCC mapper vs. either slot's scc_plus extension --
-# the 4-way single-scc-field conflict (openspec/changes/
-# slot1-slot2-symmetrization, design.md Decision D1/D5)
+# the 4-way single-scc-field conflict (machine-loader "Either slot's
+# KonamiSCC mapper shares the machine's single SCC chip")
 # ---------------------------------------------------------------------------
 
 def test_make_machine_mapper1_konamiscc_rejected_when_extension2_is_scc_plus() -> None:

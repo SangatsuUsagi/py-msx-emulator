@@ -618,10 +618,14 @@ def _h_debugger_status(server: DebugServer, params: dict[str, Any]) -> dict[str,
 
 
 def _h_debugger_pause(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
-    server.pause_state.set_paused(PauseReason.USER_REQUEST)
+    pc = server.machine.cpu_registers().PC
+    if server.pause_state.paused:
+        server.pause_state.set_paused(PauseReason.USER_REQUEST)
+    else:
+        server.on_pause(PauseReason.USER_REQUEST, pc)  # pushes the `paused` notification
     return {
         "paused": True,
-        "pc": hex16(server.machine.cpu_registers().PC),
+        "pc": hex16(pc),
         "reason": PauseReason.USER_REQUEST,
     }
 
@@ -634,7 +638,7 @@ def _h_cpu_step(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
     pc_before = m.cpu_registers().PC
     mnemonic, _size = disassemble(byte_reader(m), pc_before)
     t_states = m.step()
-    server.pause_state.set_paused(PauseReason.STEP_COMPLETE)
+    server.on_pause(PauseReason.STEP_COMPLETE, m.cpu_registers().PC)
     return {
         "pc": hex16(m.cpu_registers().PC),
         "t_states": t_states,

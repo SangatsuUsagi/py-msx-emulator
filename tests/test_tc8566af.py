@@ -1,7 +1,6 @@
 """Tests for the TC8566AF controller (functional model).
 
-One test per Scenario in openspec/changes/archive/2026-08-21-add-tc8566af-fdc/specs/fdc-tc8566af/
-spec.md (written before msx/fdc/tc8566af.py exists -- TDD red phase).
+Tests for the Scenarios in openspec/specs/fdc-tc8566af/spec.md.
 """
 from __future__ import annotations
 
@@ -168,8 +167,8 @@ def test_format_blanks_track_then_write_read_round_trips(tmp_path: Path) -> None
     """CALL FORMAT's underlying protocol: 5 command params (HD_DS, N, SC, GPL,
     D) then SC*4 descriptor bytes (C,H,R,N per sector, discarded -- see
     _cmd_format's docstring), blanking every sector of the drive's current
-    (track, side) to the D fill byte. Regression for FS-A1F's CALL FORMAT
-    never completing (FORMAT, opcode 0x0D, was entirely unimplemented)."""
+    (track, side) to the D fill byte. Regression for FORMAT (opcode 0x0D)
+    once being unimplemented, so a DISK ROM's format never completed."""
     tc, drive = _ctrl(tmp_path)
     sectors_per_track = 9
 
@@ -245,11 +244,9 @@ def test_no_disk_reports_not_ready_on_sense_device_status(tmp_path: Path) -> Non
 def test_recalibrate_succeeds_with_no_disk_inserted() -> None:
     """RECALIBRATE/SEEK readiness depends only on the drive existing, not on
     disk presence -- the head/track-0 sensor is mechanical (openMSX's
-    TC8566AF::doSeek: Not Ready only for a non-existent drive). A real MSX2
-    DISK ROM issues RECALIBRATE during its init before it can know whether a
-    disk is present; reporting abnormal termination here hung FS-A1F's boot
-    (SENSE INTERRUPT STATUS retried forever waiting for a completion that
-    never came)."""
+    TC8566AF::doSeek: Not Ready only for a non-existent drive). A DISK ROM
+    issues RECALIBRATE during its init before it can know whether a disk is
+    present, and waits for Seek End."""
     drive = DiskDrive()                     # empty drive, no disk mounted
     tc = TC8566AF(drives=[drive])
     drive.track = 30
@@ -268,27 +265,18 @@ def test_recalibrate_succeeds_with_no_disk_inserted() -> None:
 def test_recalibrate_against_nonexistent_drive_still_reports_seek_end() -> None:
     """A RECALIBRATE targeting a drive index beyond the configured drive
     count (e.g. a DISK ROM probing for a second drive the machine doesn't
-    have) reports Seek End + Not Ready, not Abnormal Termination -- matching
-    openMSX's DummyDrive.isTrack00() always returning false
-    ("National_FS-5500F1 2nd drive detection depends on this"), which makes
-    TC8566AF::doSeek's RECALIBRATE step the full 255-pulse limit before
-    giving up (Seek End + Equipment Check, not Abnormal Termination) rather
-    than aborting immediately. Reporting Abnormal Termination here (as this
-    model used to) hung FS-A1F's boot: the DISK ROM's second-drive probe
-    polls SENSE INTERRUPT STATUS in a tight loop waiting specifically for
-    Seek End, which this model's own SENSE INTERRUPT STATUS retry-then-
-    invalid fix (see test_no_disk_reports_not_ready_on_sense_device_status's
-    neighbour) does not by itself provide -- Seek End never came, so it
-    never stopped."""
+    have) runs out of step pulses without seeing track 0, as openMSX's
+    dummy drive never reports it: Seek End and Equipment Check, plus bit 7
+    and Not Ready for the missing drive (openMSX TC8566AF::commandPhase1
+    and doSeek). A DISK ROM's second-drive probe waits for Seek End."""
     tc = TC8566AF(drives=[DiskDrive()])     # only drive 0 configured
 
     tc.write_data(CMD_RECALIBRATE)
     tc.write_data(0x01)                     # HD_DS -> drive 1 (nonexistent)
     tc.write_data(CMD_SENSE_INTERRUPT_STATUS)
     st0 = tc.read_data()
-    assert st0 & 0x20                       # SE (seek end) set
-    assert st0 & 0x08                       # NR (not ready) set
-    assert not (st0 & 0x40)                 # IC0 (abnormal termination) clear
+    assert st0 == 0xB9  # bit 7, SE, EC, NR, drive 1
+    assert tc.read_data() == 0              # PCN
 
 
 def test_write_protect_rejects_write_data(tmp_path: Path) -> None:
@@ -316,3 +304,173 @@ def test_restore_with_missing_key_does_not_partially_mutate(tmp_path: Path) -> N
         restore_state(tc, snap)
 
     assert dict(tc.snapshot()) == pre
+
+
+# -- openMSX command decode, PCN stepping and ST3 signals -----------------------
+
+def _sense_interrupt(tc: TC8566AF) -> tuple[int, int]:
+    tc.write_data(CMD_SENSE_INTERRUPT_STATUS)
+    return tc.read_data(), tc.read_data()
+
+
+def _sense_device(tc: TC8566AF, hd_ds: int = 0) -> int:
+    tc.write_data(CMD_SENSE_DEVICE_STATUS)
+    tc.write_data(hd_ds)
+    return tc.read_data()
+
+
+def _seek(tc: TC8566AF, ncn: int, hd_ds: int = 0) -> None:
+    tc.write_data(CMD_SEEK)
+    tc.write_data(hd_ds)
+    tc.write_data(ncn)
+
+
+@pytest.mark.parametrize(("command", "dio"), [(0xC5, 0), (0x26, MSR_DIO)])
+def test_flag_bits_are_decoded_per_command(
+    tmp_path: Path, command: int, dio: int
+) -> None:
+    # 0xC5 is WRITE DATA with MT|MFM, 0x26 is READ DATA with SK: both reach
+    # the Execution Phase, in the write and the read direction.
+    tc, _drive = _ctrl(tmp_path)
+    tc.write_data(command)
+    for b in _READ_WRITE_PARAMS:
+        tc.write_data(b)
+    msr = tc.read_main_status()
+    assert msr & MSR_CB
+    assert msr & MSR_DIO == dio
+    assert tc._phase.name == "EXECUTION"
+
+
+@pytest.mark.parametrize("command", [0x25, 0x8F])
+def test_flag_bits_outside_a_commands_mask_are_rejected(
+    tmp_path: Path, command: int
+) -> None:
+    tc, _drive = _ctrl(tmp_path)
+    tc.write_data(command)
+    assert tc.read_data() == 0x80           # Invalid Command, one result byte
+    assert tc.read_main_status() & MSR_DIO == 0
+
+
+def test_seek_moves_the_head_by_the_pcn_difference(tmp_path: Path) -> None:
+    tc, drive = _ctrl(tmp_path)
+    _seek(tc, 2)
+    _sense_interrupt(tc)
+    drive.track = 0                         # head and PCN now differ
+    _seek(tc, 5)
+    assert drive.track == 3
+    st0, pcn = _sense_interrupt(tc)
+    assert st0 == 0x20                      # Seek End, drive 0
+    assert pcn == 5
+
+
+def test_recalibrate_with_the_motor_on_homes_the_head(tmp_path: Path) -> None:
+    tc, drive = _ctrl(tmp_path)
+    tc.write_control_reg0(0x14)             # MEN0, -FRST high
+    drive.track = 5
+    tc.write_data(CMD_RECALIBRATE)
+    tc.write_data(0x00)
+    assert drive.track == 0
+    st0, pcn = _sense_interrupt(tc)
+    assert st0 == 0x20                      # Seek End, no Equipment Check
+    assert pcn == 0
+
+
+def test_recalibrate_with_the_motor_off_ends_with_equipment_check(
+    tmp_path: Path,
+) -> None:
+    tc, drive = _ctrl(tmp_path)
+    drive.track = 5
+    tc.write_data(CMD_RECALIBRATE)
+    tc.write_data(0x00)
+    assert drive.track == 0
+    st0, pcn = _sense_interrupt(tc)
+    assert st0 == 0x30                      # Seek End, Equipment Check
+    assert pcn == 0
+
+
+def test_sense_device_status_reports_ready_and_write_protected(
+    tmp_path: Path,
+) -> None:
+    tc, _drive = _ctrl(tmp_path, write_protected=True)
+    tc.write_control_reg0(0x14)
+    st3 = _sense_device(tc)
+    assert st3 & 0x20                       # Ready
+    assert st3 & 0x40                       # Write Protected
+
+
+def test_track0_follows_the_head_and_the_motor(tmp_path: Path) -> None:
+    tc, drive = _ctrl(tmp_path)
+    tc.write_control_reg0(0x14)
+    assert _sense_device(tc) & 0x10
+    drive.track = 3
+    assert not (_sense_device(tc) & 0x10)
+    drive.track = 0
+    tc.write_control_reg0(0x04)             # motor off
+    assert not (_sense_device(tc) & 0x10)
+
+
+def test_an_empty_drive_reports_two_side_and_write_protected() -> None:
+    tc = TC8566AF(drives=[DiskDrive()])
+    tc.write_control_reg0(0x14)
+    assert _sense_device(tc) == 0x58
+
+
+def test_a_nonexistent_drive_reports_write_protected_only() -> None:
+    tc = TC8566AF(drives=[DiskDrive()])
+    tc.write_control_reg0(0x34)             # motors 0 and 1 on
+    assert _sense_device(tc, 0x01) == 0x41
+
+
+def test_read_data_with_c_other_than_the_head_track_reports_no_data(
+    tmp_path: Path,
+) -> None:
+    tc, _drive = _ctrl(tmp_path)
+    tc.write_data(CMD_READ_DATA)
+    for b in (0, 1, 0, 1, 2, 1, 0x1B, 0xFF):  # C = 1, head at track 0
+        tc.write_data(b)
+    result = [tc.read_data() for _ in range(7)]
+    assert result[0] & 0x40                 # abnormal termination
+    assert result[1] & 0x04                 # No Data
+
+
+def test_read_data_with_h_other_than_hd_reports_no_data(tmp_path: Path) -> None:
+    tc, _drive = _ctrl(tmp_path)
+    tc.write_data(CMD_READ_DATA)
+    for b in (0, 0, 1, 1, 2, 1, 0x1B, 0xFF):  # HD = 0, H = 1
+        tc.write_data(b)
+    result = [tc.read_data() for _ in range(7)]
+    assert result[1] & 0x04                 # No Data
+
+
+def test_read_data_on_side_1_after_a_seek(tmp_path: Path) -> None:
+    tc, drive = _ctrl(tmp_path)
+    assert drive.image is not None
+    drive.image.write_sector(drive.lsn(2, 1, 3), b"\x5a" * SECTOR_SIZE)
+    _seek(tc, 2)
+    tc.write_data(CMD_READ_DATA)
+    for b in (0x04, 2, 1, 3, 2, 3, 0x1B, 0xFF):  # HD = 1
+        tc.write_data(b)
+    assert bytes(tc.read_data() for _ in range(SECTOR_SIZE)) == b"\x5a" * SECTOR_SIZE
+
+
+def test_seek_st0_does_not_echo_hd(tmp_path: Path) -> None:
+    # openMSX TC8566AF::commandPhase1 puts only DS1:DS0 into ST0.
+    tc, _drive = _ctrl(tmp_path)
+    _seek(tc, 1, hd_ds=0x04)
+    assert _sense_interrupt(tc) == (0x20, 1)
+
+
+def test_format_on_head_1_blanks_side_1_and_echoes_the_head(tmp_path: Path) -> None:
+    tc, drive = _ctrl(tmp_path)
+    assert drive.image is not None
+    _seek(tc, 2)
+    _sense_interrupt(tc)
+    tc.write_data(CMD_FORMAT)
+    for b in (0x04, 0x02, 9, 0x50, 0xF6):  # HD_DS (HD=1), N, SC, GPL, D
+        tc.write_data(b)
+    for sector in range(1, 10):
+        for b in (2, 1, sector, 2):
+            tc.write_data(b)
+    assert [tc.read_data() for _ in range(7)] == [0, 0, 0, 0, 1, 0, 0]
+    assert drive.image.read_sector(drive.lsn(2, 1, 1)) == b"\xf6" * SECTOR_SIZE
+    assert drive.image.read_sector(drive.lsn(2, 0, 1)) == bytes(SECTOR_SIZE)

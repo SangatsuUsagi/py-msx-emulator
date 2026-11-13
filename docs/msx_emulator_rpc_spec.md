@@ -1,20 +1,11 @@
 # py-msx-emulator: Socket RPC & MCP Server Specification
 
-> **This is the design record, not the current reference.** It was written
-> before the feature was built and carries full source listings that the real
-> code has since moved past. For how the socket RPC and MCP server behave
-> today — method reference, wire protocol, error codes, setup —
-> see [`docs/socket-rpc-mcp.md`](socket-rpc-mcp.md). Keep this file for the
-> reasoning behind a design decision.
+> **This is the design record, not the current reference.** It was written before the feature was built and carries full source listings that the real code has since moved past. For how the socket RPC and MCP server behave today — method reference, wire protocol, error codes, setup — see [`docs/socket-rpc-mcp.md`](socket-rpc-mcp.md). Keep this file for the reasoning behind a design decision.
 
-> **Purpose:** This document specifies two integration layers that together let Claude Code
-> control a running `py-msx-emulator` instance as a first-class MCP tool:
+> **Purpose:** This document specifies two integration layers that together let Claude Code control a running `py-msx-emulator` instance as a first-class MCP tool:
 >
-> - **Level 2 — Socket RPC:** A Unix-domain-socket JSON-RPC server embedded in the
->   emulator process. Any local client (shell script, Python, `socat`) can call it.
-> - **Level 3 — MCP Server:** A standalone `stdio`-transport MCP server
->   (`tools/mcp_server.py`) that wraps the Socket RPC. Claude Code registers it once
->   with `claude mcp add` and then calls emulator functions as native MCP tools.
+> - **Level 2 — Socket RPC:** A Unix-domain-socket JSON-RPC server embedded in the emulator process. Any local client (shell script, Python, `socat`) can call it.
+> - **Level 3 — MCP Server:** A standalone `stdio`-transport MCP server (`tools/mcp_server.py`) that wraps the Socket RPC. Claude Code registers it once with `claude mcp add` and then calls emulator functions as native MCP tools.
 
 ---
 
@@ -55,13 +46,13 @@
 
 ### Why two layers?
 
-| Concern | Socket RPC | MCP Server |
-|---|---|---|
-| Who uses it | Shell scripts, `socat`, test harness | Claude Code (MCP client) |
-| Protocol | Newline-delimited JSON over Unix socket | MCP (JSON-RPC 2.0 over stdio) |
-| Structured tool descriptions | No | Yes — Claude sees typed parameters and docstrings |
-| Screenshot as image content | Returns base64 string | Returns `ImageContent` block — Claude can *see* the frame |
-| Required for Claude Code integration | Needed by MCP server | Yes |
+| Concern                              | Socket RPC                              | MCP Server                                                |
+| ------------------------------------ | --------------------------------------- | --------------------------------------------------------- |
+| Who uses it                          | Shell scripts, `socat`, test harness    | Claude Code (MCP client)                                  |
+| Protocol                             | Newline-delimited JSON over Unix socket | MCP (JSON-RPC 2.0 over stdio)                             |
+| Structured tool descriptions         | No                                      | Yes — Claude sees typed parameters and docstrings         |
+| Screenshot as image content          | Returns base64 string                   | Returns `ImageContent` block — Claude can _see_ the frame |
+| Required for Claude Code integration | Needed by MCP server                    | Yes                                                       |
 
 The MCP server is a thin adapter; all real work happens in the Socket RPC layer.
 
@@ -69,11 +60,11 @@ The MCP server is a thin adapter; all real work happens in the Socket RPC layer.
 
 ## Feasibility Summary
 
-| Capability | Feasibility | Rationale |
-|---|---|---|
-| **Debugger control** | Green | `host/debugger/prompt.py` dispatches string commands through a central handler; the same function can be called from a socket thread without touching the REPL loop. |
-| **Game input injection** | Green | `host/input_state.py`'s `InputState` builds the input (an 11-row matrix plus joystick lines); the RPC server sets/clears bits there and hands the result to the machine with `Machine.apply_input`, which the PPI reads from its next access, paused or running. |
-| **Screenshot capture** | Green | `host/screenshot.py` already exports a function that returns a PNG byte stream (used by F10 and save-state); the RPC returns base64-encoded PNG; the MCP server returns it as `ImageContent` so Claude can visually inspect the frame. |
+| Capability               | Feasibility | Rationale                                                                                                                                                                                                                                                        |
+| ------------------------ | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Debugger control**     | Green       | `host/debugger/prompt.py` dispatches string commands through a central handler; the same function can be called from a socket thread without touching the REPL loop.                                                                                             |
+| **Game input injection** | Green       | `host/input_state.py`'s `InputState` builds the input (an 11-row matrix plus joystick lines); the RPC server sets/clears bits there and hands the result to the machine with `Machine.apply_input`, which the PPI reads from its next access, paused or running. |
+| **Screenshot capture**   | Green       | `host/screenshot.py` already exports a function that returns a PNG byte stream (used by F10 and save-state); the RPC returns base64-encoded PNG; the MCP server returns it as `ImageContent` so Claude can visually inspect the frame.                           |
 
 ---
 
@@ -81,13 +72,13 @@ The MCP server is a thin adapter; all real work happens in the Socket RPC layer.
 
 ## Transport
 
-| Property | Value |
-|---|---|
-| Socket type | Unix domain socket (`AF_UNIX`, `SOCK_STREAM`) |
-| Default path | `/tmp/py_msx_emu.sock` (configurable via `--rpc-socket PATH`) |
-| Framing | Newline-delimited JSON — one JSON object per line (`\n`) |
-| Encoding | UTF-8 |
-| Concurrency | Single active client at a time; server serialises all calls via a queue into the emulator thread |
+| Property     | Value                                                                                            |
+| ------------ | ------------------------------------------------------------------------------------------------ |
+| Socket type  | Unix domain socket (`AF_UNIX`, `SOCK_STREAM`)                                                    |
+| Default path | `/tmp/py_msx_emu.sock` (configurable via `--rpc-socket PATH`)                                    |
+| Framing      | Newline-delimited JSON — one JSON object per line (`\n`)                                         |
+| Encoding     | UTF-8                                                                                            |
+| Concurrency  | Single active client at a time; server serialises all calls via a queue into the emulator thread |
 
 ## Wire Format
 
@@ -115,33 +106,25 @@ The MCP server is a thin adapter; all real work happens in the Socket RPC layer.
 
 #### Error Codes
 
-| Code | Meaning |
-|---|---|
-| `-32700` | Parse error (malformed JSON) |
-| `-32601` | Method not found |
-| `-32602` | Invalid params |
-| `1` | Emulator not in debug (paused) state |
-| `3` | Internal emulator error |
+| Code     | Meaning                              |
+| -------- | ------------------------------------ |
+| `-32700` | Parse error (malformed JSON)         |
+| `-32601` | Method not found                     |
+| `-32602` | Invalid params                       |
+| `1`      | Emulator not in debug (paused) state |
+| `3`      | Internal emulator error              |
 
-Code `2` was sketched here for "requires running state" but no handler ever needed
-it, so it was never defined.
+Code `2` was sketched here for "requires running state" but no handler ever needed it, so it was never defined.
 
 ## Execution Model
 
-The emulator runs its main loop on the **main thread**. The RPC server runs on a
-**background thread**. All state-mutating calls are dispatched through a `queue.Queue`
-and processed by the main thread between frames (or during the debugger REPL pause).
+The emulator runs its main loop on the **main thread**. The RPC server runs on a **background thread**. All state-mutating calls are dispatched through a `queue.Queue` and processed by the main thread between frames (or during the debugger REPL pause).
 
 ---
 
 ## Socket RPC Method Reference
 
-These are the method shapes as designed. Most shipped unchanged, but a few
-differ — `state.save` treats `path` as a title stem and always writes its own
-timestamped file under `saves/states/`, and `screen.capture` returns the
-constant 212-line frame rather than 256×192. Check
-[`docs/socket-rpc-mcp.md`](socket-rpc-mcp.md) before writing a client against
-any of them.
+These are the method shapes as designed. Most shipped unchanged, but a few differ — `state.save` treats `path` as a title stem and always writes its own timestamped file under `saves/states/`, and `screen.capture` returns the constant 212-line frame rather than 256×192. Check [`docs/socket-rpc-mcp.md`](socket-rpc-mcp.md) before writing a client against any of them.
 
 ### `debugger.pause`
 
@@ -150,9 +133,11 @@ Pause emulation (equivalent to Ctrl+C).
 **Params:** none
 
 **Result:**
+
 ```json
 { "paused": true, "pc": "0x4012", "reason": "user_request" }
 ```
+
 `reason`: `"user_request"` | `"breakpoint"` | `"watchpoint"` | `"step_complete"`
 
 ---
@@ -164,6 +149,7 @@ Return current pause/run state without changing it.
 **Params:** none
 
 **Result:**
+
 ```json
 { "paused": true, "pc": "0xC000", "reason": "breakpoint" }
 ```
@@ -177,6 +163,7 @@ Execute exactly one Z80 instruction. **Requires paused state.**
 **Params:** none
 
 **Result:**
+
 ```json
 {
   "pc": "0x4015",
@@ -227,10 +214,7 @@ Read all CPU registers (works in any state).
 
 **Params:** `{ "address": "0xC000" }`  
 **Result:** `{ "id": 0, "address": "0xC000", "active": true }`  
-**Errors:** `-32602` for a fifth breakpoint. The core holds at most four, and
-the four set stay. The core's set is shared with the command line and the
-debugger REPL, and the limit counts all of them. A breakpoint at an address
-the core already holds adds no entry.
+**Errors:** `-32602` for a fifth breakpoint. The core holds at most four, and the four set stay. The core's set is shared with the command line and the debugger REPL, and the limit counts all of them. A breakpoint at an address the core already holds adds no entry.
 
 ---
 
@@ -238,8 +222,7 @@ the core already holds adds no entry.
 
 **Params:** `{ "id": 0 }`  
 **Result:** `{ "removed": true }`  
-The address leaves the core's set unless another id holds it. A debugger
-breakpoint at the same address goes too.
+The address leaves the core's set unless another id holds it. A debugger breakpoint at the same address goes too.
 
 ---
 
@@ -247,8 +230,7 @@ breakpoint at the same address goes too.
 
 **Params:** none  
 **Result:** `{ "breakpoints": [ { "id": 0, "address": "0xC000", "active": true } ] }`  
-`active` is `false` when the core no longer holds the address (for example,
-after `br` in the debugger REPL).
+`active` is `false` when the core no longer holds the address (for example, after `br` in the debugger REPL).
 
 ---
 
@@ -257,9 +239,7 @@ after `br` in the debugger REPL).
 **Params:** `{ "address": "0xE000", "mode": "rw" }`  
 `mode`: `"r"` | `"w"` | `"rw"` (default `"rw"`)  
 **Result:** `{ "id": 0, "address": "0xE000", "mode": "rw", "active": true }`  
-**Errors:** `-32602` for a fifth watchpoint. The core holds at most four, and
-the four set stay. The core keeps one mode per address, so a watchpoint at a
-watched address adds its mode to that address.
+**Errors:** `-32602` for a fifth watchpoint. The core holds at most four, and the four set stay. The core keeps one mode per address, so a watchpoint at a watched address adds its mode to that address.
 
 ---
 
@@ -267,8 +247,7 @@ watched address adds its mode to that address.
 
 **Params:** `{ "id": 0 }`  
 **Result:** `{ "removed": true }`  
-The address loses the mode bits that no other id at that address holds. An
-address with no mode left leaves the core's set.
+The address loses the mode bits that no other id at that address holds. An address with no mode left leaves the core's set.
 
 ---
 
@@ -277,8 +256,7 @@ address with no mode left leaves the core's set.
 **Params:** `{ "address": "0xC000", "length": 16 }`  
 **Result:** `{ "address": "0xC000", "data": "3E 01 32 00 C0 C9 ..." }`
 
-The length must be 0-0x10000. Any other length gives an invalid-params error
-(`-32602`).
+The length must be 0-0x10000. Any other length gives an invalid-params error (`-32602`).
 
 ---
 
@@ -296,10 +274,7 @@ The length must be 0-0x10000. Any other length gives an invalid-params error
 **Params:** `{ "address": "0x0000", "length": 32 }`  
 **Result:** `{ "address": "0x0000", "data": "..." }`
 
-The address wraps at the VRAM size (0x4000 or 0x20000). On an MSX2 machine an
-address above 0xFFFF reads the VRAM above 64 KB, and the result's `address`
-has five hex digits (`"0x1C000"`). The length must be 0 to the VRAM size. Any
-other length gives an invalid-params error (`-32602`).
+The address wraps at the VRAM size (0x4000 or 0x20000). On an MSX2 machine an address above 0xFFFF reads the VRAM above 64 KB, and the result's `address` has five hex digits (`"0x1C000"`). The length must be 0 to the VRAM size. Any other length gives an invalid-params error (`-32602`).
 
 ---
 
@@ -308,6 +283,7 @@ other length gives an invalid-params error (`-32602`).
 **Params:** `{ "address": "0xC000", "count": 10 }`
 
 **Result:**
+
 ```json
 {
   "instructions": [
@@ -335,8 +311,7 @@ other length gives an invalid-params error (`-32602`).
 
 ### `input.press_key`
 
-Assert a key by matrix row/bit. Takes effect on the next PPI read (next frame).
-Works in both paused and running state.
+Assert a key by matrix row/bit. Takes effect on the next PPI read (next frame). Works in both paused and running state.
 
 **Params:** `{ "row": 8, "bit": 0 }`  
 **Result:** `{ "row": 8, "bit": 0, "pressed": true }`
@@ -344,7 +319,7 @@ Works in both paused and running state.
 #### MSX Keyboard Matrix
 
 | Row | Bit 7 | Bit 6 | Bit 5 | Bit 4 | Bit 3 | Bit 2 | Bit 1 | Bit 0 |
-|-----|-------|-------|-------|-------|-------|-------|-------|-------|
+| --- | ----- | ----- | ----- | ----- | ----- | ----- | ----- | ----- |
 | 0   | 7     | 6     | 5     | 4     | 3     | 2     | 1     | 0     |
 | 1   | ;     | ]     | [     | \     | =     | -     | 9     | 8     |
 | 2   | B     | A     | \`    | /     | .     | ,     | '     | "     |
@@ -355,9 +330,7 @@ Works in both paused and running state.
 | 7   | RET   | SEL   | BS    | STOP  | TAB   | ESC   | F5    | F4    |
 | 8   | →     | ↓     | ↑     | ←     | DEL   | INS   | HOME  | SPACE |
 
-Rows 9 and 10 are the numeric keypad. The emulator allocates all 11 rows
-(`InputFrame.key_matrix`) but binds no host key to them, so `input.press_key` by raw
-row/bit is the only way to reach a keypad key.
+Rows 9 and 10 are the numeric keypad. The emulator allocates all 11 rows (`InputFrame.key_matrix`) but binds no host key to them, so `input.press_key` by raw row/bit is the only way to reach a keypad key.
 
 Common keys: SPACE(8,0) RETURN(7,7) ESC(7,2) UP(8,5) DOWN(8,6) LEFT(8,4) RIGHT(8,7) SHIFT(6,0) CTRL(6,1)
 
@@ -375,8 +348,7 @@ Common keys: SPACE(8,0) RETURN(7,7) ESC(7,2) UP(8,5) DOWN(8,6) LEFT(8,4) RIGHT(8
 Press a key by MSX name; auto-release after `duration_ms`.
 
 **Params:** `{ "key": "SPACE", "duration_ms": 100 }`  
-Valid keys: `SPACE` `RETURN` `ESC` `UP` `DOWN` `LEFT` `RIGHT` `SHIFT` `CTRL` `GRAPH`
-`CAPS` `CODE` `STOP` `HOME` `INS` `DEL` `BS` `TAB` `F1`–`F5` `A`–`Z` `0`–`9`  
+Valid keys: `SPACE` `RETURN` `ESC` `UP` `DOWN` `LEFT` `RIGHT` `SHIFT` `CTRL` `GRAPH` `CAPS` `CODE` `STOP` `HOME` `INS` `DEL` `BS` `TAB` `F1`–`F5` `A`–`Z` `0`–`9`  
 **Result:** `{ "key": "SPACE", "row": 8, "bit": 0, "duration_ms": 100 }`
 
 ---
@@ -384,10 +356,12 @@ Valid keys: `SPACE` `RETURN` `ESC` `UP` `DOWN` `LEFT` `RIGHT` `SHIFT` `CTRL` `GR
 ### `input.joystick`
 
 **Params:**
+
 ```json
 { "port": 1, "up": false, "down": false, "left": false, "right": false,
   "trigger_a": true, "trigger_b": false }
 ```
+
 **Result:** echo of port + state
 
 ---
@@ -403,6 +377,7 @@ Valid keys: `SPACE` `RETURN` `ESC` `UP` `DOWN` `LEFT` `RIGHT` `SHIFT` `CTRL` `GR
 
 **Params:** `{ "scale": 1 }`  
 **Result:**
+
 ```json
 { "width": 256, "height": 192, "format": "png", "encoding": "base64",
   "data": "<base64-encoded PNG>" }
@@ -436,10 +411,7 @@ The outgoing image is written back to its file first when it holds unsaved write
 
 **Params:** `{ "path": "tapes/game.cas" }`  
 **Result:** `{ "mounted": true, "blocks": 2 }`  
-Converts the CAS file and mounts it at position 0. Only CAS is supported. A WAV
-file, a missing file, a file with no block header and a machine with no
-cassette port return `-32602` and keep the mounted tape. No pause is needed for
-any `tape.*` method.
+Converts the CAS file and mounts it at position 0. Only CAS is supported. A WAV file, a missing file, a file with no block header and a machine with no cassette port return `-32602` and keep the mounted tape. No pause is needed for any `tape.*` method.
 
 ---
 
@@ -461,8 +433,7 @@ any `tape.*` method.
 
 **Params:** `{ "seconds": 8.5 }` or `{ "block": 1 }`, exactly one  
 **Result:** the `tape.status` result  
-A position outside the tape, a block that does not exist or both keys return
-`-32602` and keep the position.
+A position outside the tape, a block that does not exist or both keys return `-32602` and keep the position.
 
 ---
 
@@ -470,15 +441,15 @@ A position outside the tape, a block that does not exist or both keys return
 
 **Params:** none  
 **Result:**
+
 ```json
 { "mounted": true, "path": "tapes/game.cas", "motor": false,
   "position": 31547723, "length": 172343159,
   "position_seconds": 8.81333325883597, "length_seconds": 48.14666640592589,
   "block": 1 }
 ```
-`position` and `length` are T-states of the 3.579545 MHz clock. With no tape,
-`path` and `block` are `null` and the numbers are 0. Only the guest drives the
-motor.
+
+`position` and `length` are T-states of the 3.579545 MHz clock. With no tape, `path` and `block` are `null` and the numbers are 0. Only the guest drives the motor.
 
 ---
 
@@ -486,6 +457,7 @@ motor.
 
 **Params:** none  
 **Result:**
+
 ```json
 { "blocks": [
   { "number": 0, "type": "binary", "name": "GAME", "start": 0,
@@ -515,28 +487,23 @@ Clients that do not need push may ignore these frames.
 
 ## Socket RPC Implementation
 
-The frame loop and class skeleton below are design sketches, not extracts from
-the finished code. The shipped `DebugServer` diverges in at least two ways worth
-knowing: `cpu.continue_sync` is handled inline on the socket thread rather than
-queued (it has to block without stalling the emulator, and it answers from the
-pause record the emulator thread writes, with no core call), and the queue wait has a
-named `_DISPATCH_TIMEOUT_S` that answers with a `"dispatch timeout"` error.
+The frame loop and class skeleton below are design sketches, not extracts from the finished code. The shipped `DebugServer` diverges in at least two ways worth knowing: `cpu.continue_sync` is handled inline on the socket thread rather than queued (it has to block without stalling the emulator, and it answers from the pause record the emulator thread writes, with no core call), and the queue wait has a named `_DISPATCH_TIMEOUT_S` that answers with a `"dispatch timeout"` error.
 
 ### New files
 
-| File | Purpose |
-|---|---|
-| `host/rpc_server.py` | `DebugServer` class — socket listener + queue bridge |
-| `tools/rpc_client.py` | Thin CLI client for manual testing |
+| File                  | Purpose                                              |
+| --------------------- | ---------------------------------------------------- |
+| `host/rpc_server.py`  | `DebugServer` class — socket listener + queue bridge |
+| `tools/rpc_client.py` | Thin CLI client for manual testing                   |
 
 ### Changes to existing files
 
-| File | Change |
-|---|---|
-| `msx/machine.py` | Instantiate `DebugServer`; call `_drain_rpc_queue()` in frame loop |
-| `msx/input.py` | Add `set_key_state(row, bit, pressed)` public method |
-| `host/debugger/prompt.py` | Extract `handle_command(cmd: str) -> dict` from REPL loop |
-| `__main__.py` | Add `--rpc-socket PATH` / `--no-rpc` CLI flags. *Shipped as opt-in instead:* `--rpc` enables the server and `--rpc-socket PATH` sets the path; there is no `--no-rpc`, since a run without `--rpc` never opens a socket. |
+| File                      | Change                                                                                                                                                                                                                   |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `msx/machine.py`          | Instantiate `DebugServer`; call `_drain_rpc_queue()` in frame loop                                                                                                                                                       |
+| `msx/input.py`            | Add `set_key_state(row, bit, pressed)` public method                                                                                                                                                                     |
+| `host/debugger/prompt.py` | Extract `handle_command(cmd: str) -> dict` from REPL loop                                                                                                                                                                |
+| `__main__.py`             | Add `--rpc-socket PATH` / `--no-rpc` CLI flags. _Shipped as opt-in instead:_ `--rpc` enables the server and `--rpc-socket PATH` sets the path; there is no `--no-rpc`, since a run without `--rpc` never opens a socket. |
 
 ### Frame loop integration
 
@@ -637,10 +604,7 @@ class DebugServer:
 
 ## Overview
 
-`tools/mcp_server.py` is a **standalone process** that Claude Code launches as a child
-process via `stdio` transport. It translates MCP tool calls into Socket RPC calls and
-returns results — including screenshots as `ImageContent` blocks that Claude can visually
-inspect.
+`tools/mcp_server.py` is a **standalone process** that Claude Code launches as a child process via `stdio` transport. It translates MCP tool calls into Socket RPC calls and returns results — including screenshots as `ImageContent` blocks that Claude can visually inspect.
 
 ```
 Claude Code  ←──── stdio / MCP ────→  tools/mcp_server.py  ←── Unix socket ──→  emulator
@@ -662,8 +626,7 @@ claude mcp list
 # > msx-emulator  stdio  ● connected
 ```
 
-Inside a Claude Code session, run `/mcp` to confirm the server is connected and see all
-available tools.
+Inside a Claude Code session, run `/mcp` to confirm the server is connected and see all available tools.
 
 ## Dependencies
 
@@ -671,18 +634,13 @@ available tools.
 mcp[cli]>=1.0,<2.0     # pip install -e ".[mcp]"
 ```
 
-This is the one dependency the emulator itself does not need, so it ships as the
-optional `mcp` extra rather than in `requirements.txt`. The upper bound matters:
-mcp 2.0 renamed `FastMCP` to `mcp.server.mcpserver.MCPServer`, and
-`tools/mcp_server.py` is written against the 1.x API.
+This is the one dependency the emulator itself does not need, so it ships as the optional `mcp` extra rather than in `requirements.txt`. The upper bound matters: mcp 2.0 renamed `FastMCP` to `mcp.server.mcpserver.MCPServer`, and `tools/mcp_server.py` is written against the 1.x API.
 
 ---
 
 ## `tools/mcp_server.py` — Full Implementation
 
-This is the pre-implementation draft. The file that shipped has 24 tools; this
-listing and the summary table below have 23, missing `debug_remove_watchpoint`.
-Read `tools/mcp_server.py` itself for current behaviour.
+This is the pre-implementation draft. The file that shipped has 24 tools; this listing and the summary table below have 23, missing `debug_remove_watchpoint`. Read `tools/mcp_server.py` itself for current behaviour.
 
 ```python
 #!/usr/bin/env python3
@@ -1150,37 +1108,37 @@ if __name__ == "__main__":
 
 ## MCP Tool Summary
 
-| MCP Tool | Socket RPC method | Pause required |
-|---|---|---|
-| `emulator_status` | `debugger.status` | No |
-| `emulator_pause` | `debugger.pause` | No |
-| `cpu_get_registers` | `cpu.get_registers` | No |
-| `cpu_step` | `cpu.step` | **Yes** |
-| `cpu_continue` | `cpu.continue` | **Yes** |
-| `cpu_continue_until_pause` | `cpu.continue_sync` | **Yes** |
-| `debug_set_breakpoint` | `debug.set_breakpoint` | No |
-| `debug_remove_breakpoint` | `debug.remove_breakpoint` | No |
-| `debug_list_breakpoints` | `debug.list_breakpoints` | No |
-| `debug_set_watchpoint` | `debug.set_watchpoint` | No |
-| `memory_read` | `memory.read` | No |
-| `memory_write` | `memory.write` | **Yes** |
-| `memory_disassemble` | `memory.disassemble` | No |
-| `memory_read_vram` | `memory.read_vram` | No |
-| `vdp_get_registers` | `vdp.get_registers` | No |
-| `vdp_get_status` | `vdp.get_status` | No |
-| `input_press_key` | `input.press_key_named` | No |
-| `input_joystick` | `input.joystick` | No |
-| `input_joystick_release` | `input.joystick_release` | No |
-| `screen_capture` | `screen.capture` | No |
-| `state_save` | `state.save` | No |
-| `state_load` | `state.load` | No |
-| `fdd_swap` | `fdd.swap` | No |
-| `tape_insert` | `tape.insert` | No |
-| `tape_eject` | `tape.eject` | No |
-| `tape_rewind` | `tape.rewind` | No |
-| `tape_seek` | `tape.seek` | No |
-| `tape_status` | `tape.status` | No |
-| `tape_blocks` | `tape.blocks` | No |
+| MCP Tool                   | Socket RPC method         | Pause required |
+| -------------------------- | ------------------------- | -------------- |
+| `emulator_status`          | `debugger.status`         | No             |
+| `emulator_pause`           | `debugger.pause`          | No             |
+| `cpu_get_registers`        | `cpu.get_registers`       | No             |
+| `cpu_step`                 | `cpu.step`                | **Yes**        |
+| `cpu_continue`             | `cpu.continue`            | **Yes**        |
+| `cpu_continue_until_pause` | `cpu.continue_sync`       | **Yes**        |
+| `debug_set_breakpoint`     | `debug.set_breakpoint`    | No             |
+| `debug_remove_breakpoint`  | `debug.remove_breakpoint` | No             |
+| `debug_list_breakpoints`   | `debug.list_breakpoints`  | No             |
+| `debug_set_watchpoint`     | `debug.set_watchpoint`    | No             |
+| `memory_read`              | `memory.read`             | No             |
+| `memory_write`             | `memory.write`            | **Yes**        |
+| `memory_disassemble`       | `memory.disassemble`      | No             |
+| `memory_read_vram`         | `memory.read_vram`        | No             |
+| `vdp_get_registers`        | `vdp.get_registers`       | No             |
+| `vdp_get_status`           | `vdp.get_status`          | No             |
+| `input_press_key`          | `input.press_key_named`   | No             |
+| `input_joystick`           | `input.joystick`          | No             |
+| `input_joystick_release`   | `input.joystick_release`  | No             |
+| `screen_capture`           | `screen.capture`          | No             |
+| `state_save`               | `state.save`              | No             |
+| `state_load`               | `state.load`              | No             |
+| `fdd_swap`                 | `fdd.swap`                | No             |
+| `tape_insert`              | `tape.insert`             | No             |
+| `tape_eject`               | `tape.eject`              | No             |
+| `tape_rewind`              | `tape.rewind`             | No             |
+| `tape_seek`                | `tape.seek`               | No             |
+| `tape_status`              | `tape.status`             | No             |
+| `tape_blocks`              | `tape.blocks`             | No             |
 
 ---
 
@@ -1221,15 +1179,14 @@ Claude Code:
    → State saved to: saves/states/salamander_20260715_143200.state
 ```
 
-Claude can see the actual game screen via `screen_capture()`, making it much easier
-to correlate what the game is displaying with what the CPU is doing.
+Claude can see the actual game screen via `screen_capture()`, making it much easier to correlate what the game is displaying with what the CPU is doing.
 
 ---
 
 ## Environment Variable
 
-| Variable | Default | Description |
-|---|---|---|
+| Variable         | Default                | Description                                                     |
+| ---------------- | ---------------------- | --------------------------------------------------------------- |
 | `MSX_RPC_SOCKET` | `/tmp/py_msx_emu.sock` | Override the socket path if running multiple emulator instances |
 
 Set it in `.mcp.json` to point at a project-specific socket:
@@ -1254,5 +1211,4 @@ Set it in `.mcp.json` to point at a project-specific socket:
 
 - The Unix socket is accessible only to local processes running as the same user.
 - `memory_write` can modify arbitrary Z80 memory; it is intentionally paused-only.
-- The MCP server performs no authentication; if multiple users share the machine,
-  restrict the socket path permissions with `chmod 600`.
+- The MCP server performs no authentication; if multiple users share the machine, restrict the socket path permissions with `chmod 600`.

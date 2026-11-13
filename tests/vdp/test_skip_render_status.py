@@ -119,3 +119,63 @@ def test_v9938_skip_status_matches_full_render(
     render_frame_v9938(full)
     render_frame_v9938(skipped, skip_render=True)
     assert _v9938_status(skipped) == _v9938_status(full)
+
+
+def _sat2(r5: int) -> int:
+    return (r5 << 7) & ~0x1FF            # sprite mode 2 SAT: bits 8:0 cleared
+
+
+def _g4_sprite(vdp: V9938, sat: int, idx: int, y: int) -> None:
+    vdp.vram[sat + idx * 4] = y
+    vdp.vram[sat + idx * 4 + 1] = (idx % 9) * 16
+    vdp.vram[(sat & ~0x3FF) + idx * 16] = 0x0F
+
+
+def _g4_sprite_vdp() -> V9938:
+    vdp = V9938()
+    vdp.regs[0] = 0x06               # GRAPHIC4, sprite mode 2
+    vdp.regs[1] = 0x40               # BL=1
+    vdp.regs[5] = 0x77
+    vdp.vram[0] = 0xFF
+    return vdp
+
+
+def test_v9938_topmost_overflowing_line_gives_ninth_sprite_index() -> None:
+    # Sprites 0-8 on line 100, sprites 9-17 on line 10: S#0 bits 4:0 hold the
+    # 9th sprite on line 10 (17), not the first overflow in SAT order (8).
+    vdp = _g4_sprite_vdp()
+    sat = _sat2(0x77)
+    for i in range(9):
+        _g4_sprite(vdp, sat, i, 99)
+        _g4_sprite(vdp, sat, 9 + i, 9)
+    vdp.vram[sat + 18 * 4] = 216
+
+    render_frame_v9938(vdp)
+
+    assert vdp.status & 0x40
+    assert vdp.status & 0x1F == 17
+
+
+def test_v9938_overflow_index_takes_the_topmost_line_across_sat_segments() -> None:
+    # SAT A (lines 0-99) overflows on line 50 with sprite 8; SAT B (from line
+    # 100) overflows on line 150 with sprite 11. The topmost line wins: 8.
+    vdp = _g4_sprite_vdp()
+    vdp.regs[5] = 0x77
+    vdp.begin_scanline(0)
+    sat_a = _sat2(0x77)
+    sat_b = _sat2(0x6F)
+    for i in range(9):
+        _g4_sprite(vdp, sat_a, i, 49)
+    vdp.vram[sat_a + 9 * 4] = 216
+    for i in range(3):
+        _g4_sprite(vdp, sat_b, i, 200)   # off the active area
+    for i in range(3, 12):
+        _g4_sprite(vdp, sat_b, i, 149)
+    vdp.vram[sat_b + 12 * 4] = 216
+    vdp.regs[5] = 0x6F
+    vdp._reg_write_log.append(_RegChange(99, 5, 0x6F))
+
+    render_frame_v9938(vdp)
+
+    assert vdp.status & 0x40
+    assert vdp.status & 0x1F == 8

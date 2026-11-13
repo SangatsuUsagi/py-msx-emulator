@@ -274,7 +274,7 @@ def test_text1_renders_beyond_192_lines_at_ln1() -> None:
 
 def test_text1_name_index_wraps_at_1k_with_r2_low_bits_clear() -> None:
     """At LN=1 TEXT1 row 25 reaches name index 1024; with R#2 bits 1:0 clear
-    it wraps to the table start (real HB-F1XD, extras/HB-F1XD/LN212.BAS)."""
+    it wraps to the table start (real HB-F1XD, 2026-10-05)."""
     vdp = V9938()
     vdp.regs[0] = 0x00
     vdp.regs[1] = 0x50  # BL | M1 -> TEXT1
