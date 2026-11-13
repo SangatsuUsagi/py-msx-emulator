@@ -75,22 +75,38 @@ def cycle_lengths(samples: list[int], rate: int, polarity: int) -> list[float]:
 def _find_pilot(cycles: list[float], i: int, min_pilot: int) -> tuple[int, float]:
     """Find a run of at least min_pilot short cycles from cycle i. Return the
     index of the long cycle after the run (the start bit) and the average
-    short cycle, or 0.0 when no run is left."""
+    short cycle, or 0.0 when no run is left. A cycle more than 25% off the
+    average starts a new run, so silence and the noise at the start of a
+    tone do not stop the search."""
     run = 0
     total = 0.0
     while i < len(cycles):
         c = cycles[i]
-        if run and c > 1.5 * (total / run):  # a long cycle is the start bit
-            break
+        if run:
+            short = total / run
+            if run >= min_pilot and 1.5 * short < c < 3 * short:
+                return i, short  # the start bit
+            if c < 0.75 * short or c > 1.25 * short:
+                run = 0
+                total = 0.0
         run += 1
         total += c
         i += 1
-        if run > 1 and c > 3 * (total / run):  # reset at silence
-            run = 0
-            total = 0.0
-    if i >= len(cycles) or run < min_pilot:
-        return i, 0.0
-    return i, total / run
+    return i, 0.0
+
+
+def _next_cycle(cycles: list[float], i: int, short: float) -> tuple[float, int]:
+    """Return the cycle at i and the index of the next cycle. A cycle shorter
+    than 0.75 * short is a piece of a cycle that noise split: it is joined to
+    the next cycle."""
+    if i >= len(cycles):
+        return 0.0, i + 1
+    c = cycles[i]
+    i += 1
+    if c < 0.75 * short and i < len(cycles):
+        c += cycles[i]
+        i += 1
+    return c, i
 
 
 def _read_bit(cycles: list[float], i: int, short: float) -> tuple[int, int]:
@@ -98,13 +114,14 @@ def _read_bit(cycles: list[float], i: int, short: float) -> tuple[int, int]:
     of the cycles) and the index of the next cycle."""
     if i >= len(cycles):
         return -1, i
-    c = cycles[i]
+    c, after = _next_cycle(cycles, i, short)
     if c > 3 * short:  # silence ends the block
         return -1, i
     # The threshold is between short and the 0-bit cycle (about 2 * short).
     if c > 1.5 * short:
-        return 0, i + 1
-    return 1, i + 2  # two short cycles make one bit
+        return 0, after
+    _, after = _next_cycle(cycles, after, short)  # two short cycles make one bit
+    return 1, after
 
 
 def _read_byte(cycles: list[float], i: int, short: float) -> tuple[int, int]:
