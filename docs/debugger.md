@@ -2,7 +2,7 @@
 
 The emulator includes an interactive debug REPL that you can open at any point during a run. It gives Z80 and VDP inspection, breakpoints, watchpoints, step execution, and tracing.
 
-Commands with the **⚙V9938** mark need an MSX2 / V9938 machine. On MSX1 / TMS9918A, they print an error message and do not raise an exception.
+The **⚙V9938** mark shows a command or an output form that needs an MSX2 / V9938 machine. On MSX1 / TMS9918A, `rp` prints an error message and does not raise an exception, and `v` and `rv` show the TMS9918A form.
 
 Source: `host/debugger/prompt.py` (REPL), `msx/vdp/v9938.py` / `msx/vdp/v9938_renderer.py` (VDP), `host/trace.py` (VDP and mapper trace text).
 
@@ -50,7 +50,7 @@ At startup, the emulator writes the active breakpoints and watchpoints to stdout
 
 **`h`**, **`?`**: print the one-line command summary. The debugger also shows this summary automatically after an unrecognized command.
 
-> **Filenames with spaces:** the debugger splits command arguments on whitespace. Put double quotes around a path that contains a space, for example `fdd1 "MY DISK 1.dsk"` or `ld "saves/states/my checkpoint.state"`. This applies to every command that takes a filename (`fdd1`/`fdd2`, `ld`, `sv`, `dvf`). If a quote has no closing quote, the debugger reports `Parse error` and does not change the emulator state.
+The debugger splits command arguments on whitespace. Put double quotes around a path that contains a space, for example `fdd1 "MY DISK 1.dsk"` or `ld "saves/states/my checkpoint.state"`. This applies to every command that takes a filename (`fdd1`/`fdd2`, `ld`, `sv`, `dvf`). If a quote has no closing quote, the debugger reports `Parse error` and does not change the emulator state.
 
 ### Execution flow
 
@@ -71,7 +71,7 @@ Each step is one instruction of the stopped frame, so the prompt's `cyc` rises b
 
 **`g ADDR`**: resume emulation and run until PC reaches `ADDR` (hex). This is a one-shot temporary breakpoint. The debugger clears it after the hit. It does not use a `ba` slot and does not change the permanent breakpoints.
 
-**`gf N`**: resume emulation and run until the frame counter (the `frm=` value in the prompt) reaches the decimal frame number `N`. This is a one-shot check. The debugger checks it once per rendered frame, not per instruction. So it does not make execution slower, as an active `ba`/`g` breakpoint does. `N` must be greater than the current frame count. If it is not, `gf` prints an error and does not resume.
+**`gf N`**: resume emulation and run until the frame counter (the `frm=` value in the prompt) reaches the decimal frame number `N`. This is a one-shot check. The core checks it once at the end of each frame, also a frame that is not rendered, not per instruction. So it does not make execution slower, as an active `ba`/`g` breakpoint does. `N` must be greater than the current frame count. If it is not, `gf` prints an error and does not resume.
 
 **`so`**: step out. Resume until SP goes above its value at the time of the `so` command (i.e. the current routine returns). See _Known limitations_ for edge cases.
 
@@ -92,7 +92,7 @@ Each step is one instruction of the stopped frame, so the prompt's `cyc` rises b
 **`bs [LOW HIGH | off]`**: break when SP goes out of valid RAM.
 
 - `bs` (no arguments): enable, with a range that the debugger calculates from the RAM configuration of the machine. MSX1 flat RAM in slot 3 gives a top-of-memory window. RAM in slot 0 (as on the `hb_10`) gives the page that holds it. MSX2 mapper RAM gives the full address space.
-- `bs LOW HIGH`: enable, with an explicit inclusive hex range.
+- `bs LOW HIGH`: enable, with an explicit inclusive hex range. If LOW is above HIGH, the debugger swaps them.
 - `bs off`: disable.
 
 This finds stack corruption at the first instruction that moves SP out of the valid range. It fires on the rising edge only.
@@ -101,7 +101,7 @@ This finds stack corruption at the first instruction that moves SP out of the va
 
 ### Watchpoints
 
-**`wa ADDR[,r|w|rw]`**: add a watchpoint at `ADDR`. The modes are `r` (break on read), `w` (break on write), and `rw` (both, the default). The maximum is 4 watchpoints.
+**`wa ADDR[,r|w|rw]`**: add a watchpoint at `ADDR`. The modes are `r` (break on read), `w` (break on write), and `rw` (both, the default). The maximum is 4 watchpoints. You can also give the mode after a space (`wa CA4A w`). A `wa` at an address that already has a watchpoint changes its mode.
 
 At a hit, the debugger prints:
 
@@ -168,19 +168,19 @@ On V9938 (⚙V9938):
 
 ```
   Screen : SCREEN5 (GRAPHIC4)
-  VRAM   : Name=10000  Color=00000  Pat=00000  SprAttr=1FE00  SprPat=00000
-  Disp   : EN=1 SPR=1 H=192 NTSC IL=0 SZ=0 MAG=0 FG=0F BG=00 IE0=1 IE1=0
-  CMD    : ABRT LOG=IMP CE=0 TR=0  DX=0 DY=0 NX=0 NY=0
-  Status : S#0=00 S#2=0C
+  VRAM   : Name=00000  Color=02000  Pattern=00800  SprAttr=07600  SprPat=07800
+  Disp   : EN=ON   SPR=ON   192L  NTSC     Spr= 8x8 /mag=x1  FG=F BG=1  IE0
+  CMD    : LMMC  IMP/T  [IDLE]  SRC=(0,0)  DST=(208,97)  SIZE=(8,8)  CLR=00  DIR=→↓
+  Status : S#0=04 (  5S=0 C=0)  S#2=82 (TR   )
 ```
 
 On TMS9918A:
 
 ```
   Screen : SCREEN2 (GRAPHIC2)
-  VRAM   : Name=1800  Color=2000  Pat=0000  SprAttr=1B00  SprPat=3800
-  Disp   : EN=1 H=192 FG=0F BG=00 SZ=0 MAG=0
-  Status : S#0=00
+  VRAM   : Name=1800  Color=27C0  Pat=0000  SprAttr=1B00  SprPat=3800
+  Disp   : EN=1  h=192  FG=F  BG=5  size=8  mag=0
+  Status : S#0=04
 ```
 
 **`rv`**: VDP register dump.
@@ -197,7 +197,7 @@ On V9938 (⚙V9938): R#0-R#27 (display registers), then R#32-R#46 (command regis
 
 On TMS9918A: R#0-R#7 in a single row.
 
-**`rp`** ⚙V9938: palette dump. It shows all 16 entries as `#N=XXX(R,G,B)`. XXX is the 9-bit GRB333 raw value, and R/G/B are the 3-bit channel values:
+**`rp`** ⚙V9938: palette dump. It shows all 16 entries as `#N=XXX(R,G,B)`. XXX is the 9-bit value (R in bits 8-6, G in bits 5-3, B in bits 2-0), and R/G/B are the 3-bit channel values:
 
 ```
   #0=000(0,0,0)  #1=000(0,0,0)  #2=071(1,6,1)  #3=1FB(3,7,3)  ...
@@ -224,6 +224,14 @@ CY=0000012460 FR=000003 PC=C01C VDP_REG R#05=7Fh
 ```
 
 The core records the writes, and the debugger prints the lines at the end of each frame and after each `s` step. The lines of a frame therefore appear together, after the frame runs.
+
+A write to R#46, which starts a VDP command, gives a `VDP_CMD` line in place of a `VDP_REG` line. The line shows the command, the logical operation, the written value, and the values written to R#32-R#45 since the previous R#46 write (`--` for a register not written):
+
+```
+CY=0000013000 FR=000003 PC=C030 VDP_CMD HMMV/IMP  (C0h) R32-45=['--','--','--','--','00','00','00','00','00','01','D4','00','00','00']
+```
+
+A register write through port 0x9B (indirect register access) ends with `;port 9Bh`.
 
 **`td`**: disable VDP register tracing. If the trace is already off, `td` prints a message.
 
@@ -270,7 +278,7 @@ Values in the Bank column:
     3-0  ROM cbios_sub.rom  16KB
     3-1  empty
     3-2  RAM (mapper:standard)  128KB
-    3-3  RAM (mapper:standard)  128KB
+    3-3  empty
 ```
 
 On an MSX1 machine, which has no expanded slot, `st` shows slot 3 as a non-expanded primary slot.
@@ -385,7 +393,7 @@ python . path/to/game.rom --machine cbios_msx2_jp --vdp-trace
 python . path/to/game.rom --machine cbios_msx2_jp --vdp-trace --vdp-trace-out trace.log
 ```
 
-Output format: `CY=.. FR=.. PC=.. VDP_REG R#NN=XXh`
+Output format: `CY=.. FR=.. PC=.. VDP_REG R#NN=XXh`, and a `VDP_CMD` line for each R#46 write (see `te`)
 
 `--vdp-trace` traces both VDP types, the TMS9918A of an MSX1 machine too.
 
@@ -411,7 +419,7 @@ python . path/to/game.rom --machine cbios_msx2_jp --debug --log debug.log
 
 | Category | Line |
 | --- | --- |
-| `[IO]` | `IN` or `OUT` for each I/O port access, with the port, the value and the PC of the instruction |
+| `[IO]` | `IN` or `OUT` for each I/O port access, with the port, the value and the PC of the instruction. A cassette motor change, with the tape position |
 | `[BOOT]` | The VDP display turns on or off (R#1), or the screen mode changes (R#0, R#1) |
 | `[CPU]` | An undefined opcode, or one line of the instruction history before a hang |
 | `[HANG]` | The same PC runs 1000 times in a row, or a HALT with interrupts disabled at the end of a frame |
