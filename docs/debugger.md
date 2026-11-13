@@ -283,6 +283,15 @@ Values in the Bank column:
 
 On an MSX1 machine, which has no expanded slot, `st` shows slot 3 as a non-expanded primary slot.
 
+When one page of a non-expanded slot holds something other than the slot's own content, `st` adds a line for that page under the slot. On the `hb_10`, slot 0 holds the main ROM in pages 0-1 and 16 KB of RAM in page 3:
+
+```
+  Primary 0  ROM hb-10_basic-bios1.rom  32KB
+    P3  RAM  16KB
+```
+
+`sl` shows each page of slot 0 as what a read of it returns: `RAM` for that RAM page, and `empty` for a page past the end of the main ROM, which reads 0xFF.
+
 ---
 
 ### Floppy disk

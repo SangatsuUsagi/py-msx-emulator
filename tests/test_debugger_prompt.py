@@ -915,6 +915,50 @@ class TestPlainSlot3:
         assert "  Primary 3  empty" in capsys.readouterr().out.splitlines()
 
 
+def _make_slot0_ram_machine(slot0_ram: bytearray | None) -> MagicMock:
+    """A machine with a 32 KB main ROM in slot 0 pages 0-1 and, optionally,
+    flat RAM in slot 0 page 3 (as on an HB-10); every page selects slot 0."""
+    m = _make_machine()
+    m.memory = Memory(
+        rom=b"\x00" * 32768,
+        ram=bytearray(0),
+        mapper1=FlatMapper(None),
+        mapper2=FlatMapper(None),
+        slot_register=0x00,
+        slot0_ram=slot0_ram,
+        slot0_ram_page=3,
+    )
+    return m
+
+
+class TestSlot0Content:
+    """debug-monitor "sl / st — content of slot 0"."""
+
+    def test_slot0_ram_page_shows_as_ram(self, capsys):
+        m = _make_slot0_ram_machine(bytearray(0x4000))
+        Debugger(m)._cmd_slot_active()
+        rows = capsys.readouterr().out.splitlines()
+        content = {}
+        for line in rows[1:]:
+            fields = line.split()
+            content[fields[0]] = fields[4]
+        assert content == {"P0": "ROM", "P1": "ROM", "P2": "empty", "P3": "RAM"}
+
+    def test_st_lists_slot0_ram(self, capsys):
+        m = _make_slot0_ram_machine(bytearray(0x4000))
+        Debugger(m)._cmd_slot_tree()
+        rows = capsys.readouterr().out.splitlines()
+        i = rows.index("  Primary 0  ROM  32KB")
+        assert rows[i + 1] == "    P3  RAM  16KB"
+
+    def test_slot0_without_ram_shows_no_extra_line(self, capsys):
+        m = _make_slot0_ram_machine(None)
+        Debugger(m)._cmd_slot_tree()
+        rows = capsys.readouterr().out.splitlines()
+        i = rows.index("  Primary 0  ROM  32KB")
+        assert rows[i + 1].startswith("  Primary 1")
+
+
 class TestSlotRomMapperBank:
     @staticmethod
     def _rom16(pages: int):
