@@ -2,6 +2,12 @@
 
 [日本語版はこちら](CHANGELOG_ja.md)
 
+- **v2.11.1** (2026-11-13): The debugger `sl` and `st` commands show what slot 0 really holds, and `dm` names itself in its messages.
+  - `sl` shows each page of slot 0 as what a read of it returns. On the `hb_10`, the page 3 RAM shows `RAM`, and page 2, past the end of the main ROM, shows `empty`. Before, both showed the main ROM.
+  - `st` adds a `P<n>` line under a non-expanded slot for a page whose content differs from the slot's own, for example `P3  RAM  16KB` under slot 0 on the `hb_10`.
+  - `dm` prints `Usage: dm ADDR [SIZE]` and `dm: invalid address or size (hex expected)`.
+  - Docs: the debugger reference describes the v2.11.0 VDP command timing. A code comment gives the real reason idle batching stops during a VDP command. The allium specs record the HB-F1XD Z80, RTC 12-hour and printer port results.
+  - No change to the save-state format, the MachineConfig format or the C ABI.
 - **v2.11.0** (2026-11-13): S1985 read-back forms from a real HB-F1XD, WD2793 Type I timing, VDP command time per line kind, ABI version 1.7, and save-state format 25.
   - S1985 machines (`hb_f1xd`, `hb_f1xd_256k`, `fs_a1f`) read back as a real SONY HB-F1XD does. Each form is a new device option, and every other machine keeps the old values:
     - RTC (`rtc_rp5c01` `read_back: s1985`): a 0xB5 read has the high nibble 0, registers 14 and 15 read 0x00, and ports 0xB4, 0xB6 and 0xB7 read 0x8B.
@@ -10,7 +16,7 @@
     - Mapper ports (new `mapper_io` device, `s1985`): a 0xFC-0xFF read returns `(latch & 0x1F) | 0x80`, with or without a RAM mapper.
     - Sony FDC registers: a 0x7FFC/0x7FFD read keeps the written bits that the real machine keeps.
     - The `fs_a1f` values come from the same S1985 MSX-ENGINE and are not verified on a real FS-A1F.
-  - WD2793 Type I commands take time on the machine clock: 6/12/20/30 ms per step with BUSY set, a 30 ms verify settle, and SEEK ERROR 1 s after a verify mismatch. HLD is modelled and drops 3 s after the controller goes idle. FORCE INTERRUPT stops a running seek.
+  - WD2793 Type I commands take time on the machine clock: 6/12/20/30 ms per step with BUSY set, a 30 ms verify settle, and SEEK ERROR 1 s after a verify mismatch. HLD is modeled and drops 3 s after the controller goes idle. FORCE INTERRUPT stops a running seek.
   - VDP block commands (HMMV, HMMM, YMMM, LMMV, LMMM) cost a different time on a blank line, on an active line with sprites off and on an active line with sprites on. The costs are fitted to SCREEN 5 timings on a real HB-F1XD, and every measured case is within 2 jiffies. Outside GRAPHIC 4-7, HMMV writes one byte per line at `(Y * 128) | 0xFF`, as on the real machine.
   - Fixes that follow openMSX:
     - FDC: WD2793 head stepping, status, IRQ latch and reset; TC8566AF seek, ST3, command decode and the page-2 window; disk geometry, sector IDs and the power-on disk change.
@@ -51,7 +57,7 @@
   - The ROMs are not in the repository. A run whose ROM is absent, or has another SHA-256, is skipped. `tools/README_tools.md` gives the download source and the path of each ROM. Both homebrew titles are MIT-licensed.
   - No change to the emulation, the save-state format or the C ABI.
 - **v2.9.1** (2026-11-02): The MSX printer port, ABI version 1.1, and save-state format 22.
-  - The printer port is emulated on the HB-10 (ports 0x90-0x91) and on the S-1985 machines, HB-F1XD and FS-A1F (ports 0x90-0x97). The C-BIOS machines have no port. The status values and the mirrors come from the openMSX machine files and are not yet verified on real hardware. There is no printer emulation.
+  - The printer port is emulated on the HB-10 (ports 0x90-0x91) and on the S1985 machines, HB-F1XD and FS-A1F (ports 0x90-0x97). The C-BIOS machines have no port. The status values and the mirrors come from the openMSX machine files and are not yet verified on real hardware. There is no printer emulation.
   - `--printer-log FILE` attaches a printer and writes the bytes the guest prints to FILE, unchanged. A machine with no port, or a path that cannot be opened, stops with an error. It cannot be used with `--benchmark`.
   - Core API: `attach_printer()` and `drain_printer()` pass the printed bytes to the host through a 4096-byte buffer, with no callback.
   - The ABI version has a major and a minor part. An added function or constant raises the minor version, and a changed or removed declaration raises the major version. The header is 1.1: the printer port is the first minor increase. `tests/msx_core_abi_baseline.txt` records each declaration and macro value.
@@ -80,7 +86,7 @@
   - **Breaking:** the save-state format version is 20. The layout is the one v2.8.2 already writes (with MEMPTR and Q); v2.8.2 had kept version 19 for it. Save states from v2.8.2 and earlier cannot be loaded.
   - The README benchmark charts cover v0.1.0 through v2.8.3.
 - **v2.8.2** (2026-10-27): Z80 undocumented-flag and DAA fixes, and faster `JR $` idle loops.
-  - The Z80 core models the internal MEMPTR (WZ) register. The undocumented flags Y and X now follow the Zilog NMOS rules in three more cases: `BIT n,(HL)` takes them from MEMPTR, a repeating `LDIR`/`LDDR`/`CPIR`/`CPDR` takes them from its own address, and `SCF`/`CCF` depend on whether the previous instruction changed the flags. The core targets a Zilog-compatible Z80; the NEC and Sharp Z80-compatible CPUs in some MSX machines can differ, and that is not modelled.
+  - The Z80 core models the internal MEMPTR (WZ) register. The undocumented flags Y and X now follow the Zilog NMOS rules in three more cases: `BIT n,(HL)` takes them from MEMPTR, a repeating `LDIR`/`LDDR`/`CPIR`/`CPDR` takes them from its own address, and `SCF`/`CCF` depend on whether the previous instruction changed the flags. The core targets a Zilog-compatible Z80; the NEC and Sharp Z80-compatible CPUs in some MSX machines can differ, and that is not modeled.
   - Fix: `DAA` after a subtraction gave wrong results for invalid BCD values. The correction now depends on A, H and C only, as on a real Z80.
   - The core passes the zexdoc and zexall instruction exercisers in full. The new `scripts/run_z80_exercisers.py` runs them, and Patrik Rak's z80test, on the bare CPU core. The test programs are not included.
   - Faster: a `JR $` idle loop (a jump to itself, which many games use to wait for the VBlank interrupt) now advances to the end of the scanline in one step, as a HALT already did. The result, including interrupt timing, is the same as stepping each instruction. The MSX1 benchmark title runs about 23% faster on CPython (M5 Pro: 252.95 to 311.65 fps; Raspberry Pi 5: 65.07 to 81.03 fps).
@@ -100,7 +106,7 @@
   - The RTC starts at the host time when the machine is created and then follows emulated time, so a run with the same input is the same every time.
   - SRAM and disk images are written back only when they changed. Loading a save state does not swap disks: each drive must already hold the disk it held when the state was saved.
   - Save-state format 16: the RTC and the mouse are saved too. Older save states cannot be loaded.
-- **v2.7.8** (2026-10-17): Fix keyboard, V9938 and machine-loader behaviour that did not match the specs.
+- **v2.7.8** (2026-10-17): Fix keyboard, V9938 and machine-loader behavior that did not match the specs.
   - Keyboard: SHIFT+"0" reaches the "\_" cell on the Japanese (JIS) layout only. On the International layout it now types ")" as on real hardware.
   - V9938: a register or palette write that takes effect only after the last visible line no longer changes the frame being drawn. S#9 reads its unused bits 7-1 as 1, also before any SRCH command has run.
   - Machine loader: a slot-0 `ram` entry must declare one page (0-3) and 16 KB, and must not share page 2 with the logo ROM; other shapes stop loading with an error. MSX2 machines now wire a slot-0 RAM entry too (before, only MSX1 machines did).
@@ -116,13 +122,13 @@
 - **v2.7.6** (2026-10-17): Emulate the key click on PPI Port C bit 7.
   - New: each change of PPI Port C bit 7 (port 0xAA write or 0xAB bit set/reset) drives a 1-bit DAC, so the BIOS key click is audible and software that toggles the bit plays 1-bit PCM. The level relative to the PSG follows openMSX's machine configurations. The mix has no DC-blocking stage, so a bit held at 1 stays as a constant offset instead of decaying.
   - The key click and the Majutsushi cartridge DAC share one write-driven DAC channel. A DAC that is silent for a frame is not mixed, so an idle machine keeps the PSG-only audio path. The Majutsushi DAC level is now restored from a save state and saved even when the write is not yet rendered; the save-state format does not change.
-- **v2.7.5** (2026-10-08): Fix the MSX1 VDP and the PPI behaviour found by tests on the author's real Sony HB-10.
+- **v2.7.5** (2026-10-08): Fix the MSX1 VDP and the PPI behavior found by tests on the author's real Sony HB-10.
   - MSX1 VDP (TMS9918A): a port 0x98 write also refills the read-ahead buffer, so an IN right after an OUT returns the written byte, as on the V9938.
   - PPI: a port 0xAB read on the HB-10 (Yamaha S3527) returns a byte latched by the last PPI access: the byte a read of 0xA8-0xAA returned, or the inverse of the byte a write to 0xA8-0xAB carried. The `ppi8255` device setting `control_readback` (true/false) is replaced by `control_read`: `control` (the last mode word, the default), `open_bus` (0xFF, the S1985 machines) or `bus_latch` (`hb_10`, `hb_10_64k`). A machine file that still sets `control_readback` is rejected with a message naming `control_read`.
   - The HB-10 also confirmed the R register count, the undocumented Y/X flags, the absorbed DD prefix timing, the ED mirrors of NEG/RETN and the half-written control pair on the MSX1 VDP; no change was needed there.
-  - Documentation matches the current behaviour: R counting, the per-machine PPI 0xAB read, the loader's `ppi8255` keys, the full scope of the debugger `reset`, `te` on both VDP types and the trace output format. Benchmark table and history charts updated to v2.7.5.
-- **v2.7.4** (2026-10-07): Emulate the V9938 R#13 blink, and fix V9938, Z80 and PPI behaviour found by tests on the author's real Sony HB-F1XD.
-  - New: R#13 blink. In TEXT2 (SCREEN 0, WIDTH 80), characters marked in the blink table use the R#12 colours during the ON period. In GRAPHIC 4-7 the display alternates between the page R#2 selects and the even page. Every R#13 write restarts the timer; when one time nibble is 0, the state set by the write holds. A blink text colour 0 shows the blink background (as on the HB-F1XD; MAME draws colour 0). The timer is in the save state (format version still 15; re-save older version-15 files).
+  - Documentation matches the current behavior: R counting, the per-machine PPI 0xAB read, the loader's `ppi8255` keys, the full scope of the debugger `reset`, `te` on both VDP types and the trace output format. Benchmark table and history charts updated to v2.7.5.
+- **v2.7.4** (2026-10-07): Emulate the V9938 R#13 blink, and fix V9938, Z80 and PPI behavior found by tests on the author's real Sony HB-F1XD.
+  - New: R#13 blink. In TEXT2 (SCREEN 0, WIDTH 80), characters marked in the blink table use the R#12 colors during the ON period. In GRAPHIC 4-7 the display alternates between the page R#2 selects and the even page. Every R#13 write restarts the timer; when one time nibble is 0, the state set by the write holds. A blink text color 0 shows the blink background (as on the HB-F1XD; MAME draws color 0). The timer is in the save state (format version still 15; re-save older version-15 files).
   - V9938 status and addressing:
     - S#6 bit 1 is the display field (EO), as the status-register summary of the data book says, not collision Y bit 9.
     - The TEXT1 name-table index wraps at 1 KB (rows 25 and 26 with R#9 LN=1).
@@ -138,7 +144,7 @@
     - R counts M1 cycles only. Operand, address and displacement bytes no longer increment it.
     - The undocumented F bits 5 (Y) and 3 (X) now follow the documented per-instruction rules. BIT n,(HL) leaves them clear (MEMPTR is not emulated).
   - PPI: port 0xAB reads 0xFF on the S1985 machines (`hb_f1xd`, `hb_f1xd_256k`, `fs_a1f`), as on the HB-F1XD. A new `control_readback` setting of the `ppi8255` device selects this per machine. `fs_a1f` uses the same S1985 and is not verified on a real FS-A1F.
-  - Comments now cite a second source (data books, data sheets, MSX Wiki, real-hardware results) where the behaviour came only from openMSX. The documentation was rewritten in plainer technical English and matches the current behaviour.
+  - Comments now cite a second source (data books, data sheets, MSX Wiki, real-hardware results) where the behavior came only from openMSX. The documentation was rewritten in plainer technical English and matches the current behavior.
 - **v2.7.3** (2026-10-03): Fix the V9938 display page in GRAPHIC 6/7 (SCREEN 7/8).
   - In these modes, R#2 is `0 0 A16 1 1 1 1 1`, so the 64 KB page bit is bit 5. The renderer read bit 6 (the GRAPHIC 4/5 layout). `SET PAGE 1` (R#2 = 0x3F) thus still showed page 0. A SCREEN 7 disk title that draws its menu on page 1 stayed on its title screen. The page base is now `(R#2 & 0x20) << 11`.
   - Also fix the R#9 EO (even/odd page alternation) field mapping. The first field (S#2 EO = 0) now shows the even page, and the second field shows the page that R#2 selects. This matches the V9938 data book (Special Functions 2.2). Before this fix, the renderer XOR-toggled the page bit on odd frames. This inverted the mapping and made an even-page R#2 alternate upward to the next page.
@@ -220,7 +226,7 @@
   - Expanded extension overlays (`hbi_j1`, `memory_512k`, `msxdos2_512k*`) now reject an MSX1 base machine with `MachineLoadError`. Before, they silently built a machine that has no real-hardware counterpart.
   - Fix five JIS symbol keys (`=`, apostrophe, `^`/`~`, `:`/`*`, `_`) that an International/US host keyboard could not type under `keyboard_type: jp`.
   - Documentation: move the extension documentation out of `README.md` into `README_extension.md`/`_ja.md`, and move the version history into this file. Add a "Machine and extension YAML schema" chapter to `docs/technical-implementation.md`/`_ja.md`. Change every owned-software citation from Wikipedia/msx.org to [Generation MSX](https://generation-msx.nl/).
-- **v2.5.14** (2026-09-12): Replace `--fmpac`/`--scc-plus` with a unified `--extension {none,fmpac,scc_plus,hbi_j1}` flag (`extension` config key, with `config/extensions/<id>.yaml` overlay files). Each extension always occupies primary slot 2. **BREAKING**: SCC-I now occupies primary slot 2, not slot 1. `--mapper2` also gets `KonamiSCC` support, and shares the single SCC chip of the machine with slot 1.
+- **v2.5.14** (2026-09-12): Replace `--fmpac`/`--scc-plus` with a unified `--extension {none,fmpac,scc_plus,hbi_j1}` flag (`extension` config key, with `config/extensions/<id>.yaml` overlay files). Each extension always occupies primary slot 2. **Breaking:** SCC-I now occupies primary slot 2, not slot 1. `--mapper2` also gets `KonamiSCC` support, and shares the single SCC chip of the machine with slot 1.
 - **v2.5.13** (2026-09-12): Add Sony HBI-J1 support through `--extension hbi_j1`. The cartridge has a JIS Kanji font ROM I/O device, a Halnote-mapped MSX-JE word-processor ROM + 16 KB SRAM, and a flat Kanji driver + BASIC ROM. It expands slot 2 into two sub-slots. The author physically owns this cartridge and dumped its ROMs, and their SHA1 values match openMSX. Also add the V9938 interlace mode (R#9 IL/EO bits). EO drives the automatic even/odd page alternation of GRAPHIC4-7, as on a real V9938.
 - **v2.5.12** (2026-09-09): The size of `RamMapper` is now configurable in whole 16 KB banks. Before, it was fixed at 128 KB. The legacy (RAM-mapper) dispatch branch of slot 3 can now also hold an FDC next to the RAM mapper. Before, an FDC needed the data-driven flat-RAM layout.
   - Add `hb_f1xd_256`, a hypothetical 256 KB RAM-mapper variant of the Sony HB-F1XD. No real hardware matches this configuration. Its purpose is the extended BIOS mapper support routines of MSX-DOS2, which need a RAM mapper of at least 128 KB. The author confirmed that MSX-DOS2 boots on it.
@@ -231,7 +237,7 @@
   - The emulator now implements an undocumented Z80 DDCB/FDCB register-echo behavior.
   - Also add the full floppy disk state (WD2793/TC8566AF registers, drive position, mounted-disk identity) to save/load, with mismatch checks for the FDC kind and the disk identity.
 - **v2.5.9** (2026-08-25): Full OpenSpec/Allium inventory pass across every component. The pass verified each specification again against openMSX and the implementation. It also fixed several accuracy bugs (V9938 sprite rendering, ASCII8/ASCII16 mapper bank arithmetic, SCC-I mode sync, mouse protocol timing, and others).
-- **v2.5.8** (2026-08-22): Add the TC8566AF FDC controller and a Panasonic FS-A1F machine configuration (`--machine fs_a1f`). This is a second MSX2 with floppy disk support, in addition to the Sony HB-F1XD (WD2793). The FS-A1F now uses its real 4-sub-slot hardware layout, with RAM, SUB ROM, and the FDC each in its own sub-slot.
+- **v2.5.8** (2026-08-22): Add the TC8566AF FDC controller and a Panasonic FS-A1F machine configuration (`--machine fs_a1f`). This is a second MSX2 with floppy disk support, in addition to the Sony HB-F1XD (WD2793). The FS-A1F uses the 4-sub-slot layout from public documentation, with RAM, SUB ROM, and the FDC each in its own sub-slot. It is not verified on real hardware.
 - **v2.5.7** (2026-08-20): Large internal refactor in preparation for a future Rust/C++ port. Mapper save state now uses a tagged `MapperKind` enum instead of untyped dicts. The cache invalidation of `Memory` moved to explicit setter methods. Explicit interface methods replace the reflection-based mapper/slot introspection of the debugger. No observable behavior change (verified with a multi-angle code review and an Allium spec-alignment check).
 - **v2.5.6** (2026-08-19): Fix the JIS ¥ key, which never reached the MSX keyboard matrix on macOS. SDL2 reports this key with a consistent scancode but an inconsistent keysym. `key_down`/`key_up` thus now resolve it from the scancode alone.
 - **v2.5.5** (2026-08-19): Fix a write-side open-bus leak in `Ascii16Sram2Mapper`: writes at or above 0xC000 could corrupt SRAM while a window was SRAM-mapped. Give `RTypeMapper` a flat read mirror. It was the last mapper class that still resolved its window on every read.

@@ -22,6 +22,7 @@ from host.watch import watch_kind, watch_text
 from msx.boundary import (
     MAX_BREAKPOINTS,
     MAX_WATCHPOINTS,
+    SLOT_CONTENT_EMPTY,
     STATUS_OK,
     STOP_WATCHPOINT,
     TRACE_MAPPER,
@@ -324,13 +325,13 @@ class Debugger:
 
     def _cmd_dump(self, args: list[str]) -> None:
         if not args:
-            print("Usage: dump ADDR [SIZE]")
+            print("Usage: dm ADDR [SIZE]")
             return
         try:
             addr = int(args[0], 16) & 0xFFFF
             size = int(args[1], 16) if len(args) > 1 else 128
         except ValueError:
-            print("dump: invalid address or size (hex expected)")
+            print("dm: invalid address or size (hex expected)")
             return
 
         for row in range(0, size, 16):
@@ -701,6 +702,7 @@ class Debugger:
                 role_str = f"  [{role}]" if role else ""
                 info = self._machine.slot_info(prim, -1, -1)
                 print(f"  Primary {prim}{role_str}  {_slot_text(info, self._rom_names)}")
+                _print_page_contents(self._machine, prim, info.content, self._rom_names)
 
     def _cmd_fdd(self, args: list[str], drive_index: int) -> None:
         """`fddN [FILE|-]`: show, swap, or eject the disk in floppy drive N.
@@ -829,6 +831,19 @@ def _print_expanded_slot(
     for sec in range(4):
         info = machine.slot_info(prim, sec, -1)
         print(f"    {prim}-{sec}  {_slot_text(info, rom_names)}")
+
+
+def _print_page_contents(
+    machine: CoreApi, prim: int, slot_content: int, rom_names: tuple[str, str]
+) -> None:
+    """The `st` lines under a non-expanded slot for each page that holds
+    something other than the slot's own content (the slot 0 RAM of an
+    HB-10); an empty page has no line."""
+    for page in range(4):
+        info = machine.slot_info(prim, -1, page)
+        if info.content in (slot_content, SLOT_CONTENT_EMPTY):
+            continue
+        print(f"    P{page}  {_slot_text(info, rom_names)}")
 
 
 def _slot_text(info: SlotInfo, rom_names: tuple[str, str]) -> str:

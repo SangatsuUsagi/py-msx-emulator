@@ -598,6 +598,20 @@ class Memory:
             return SLOT_CONTENT_CARTRIDGE_EMPTY, -1
         return SLOT_CONTENT_CARTRIDGE, int(mapper_id(mapper.kind))
 
+    def _describe_slot0(self, page: int) -> int:
+        """Slot 0, as _read_slot0_ram/_read_rom resolve a read of `page`: the
+        slot0_ram page, the ext ROM's page 2 (shown as the main ROM), 0xFF
+        past the main ROM (page -1, the `st` view, is the main ROM)."""
+        if page == -1:
+            return SLOT_CONTENT_MAIN_ROM
+        if self.slot0_ram is not None and page == self.slot0_ram_page:
+            return SLOT_CONTENT_RAM
+        if page == 2 and self.extrom is not None:
+            return SLOT_CONTENT_MAIN_ROM
+        if (page << 14) >= self._rom_len:
+            return SLOT_CONTENT_EMPTY
+        return SLOT_CONTENT_MAIN_ROM
+
     def _describe_plain_slot3(self, page: int) -> int:
         """A non-expanded slot 3 (secondary -1), as a read of it resolves:
         the RAM mapper, else the flat RAM at the top of the address space
@@ -660,14 +674,14 @@ class Memory:
         sub-slot and no page, as in the core API."""
         mapper = -1
         if primary == 0:
-            content = SLOT_CONTENT_MAIN_ROM
+            content = self._describe_slot0(page)
         elif primary in (1, 2):
             content, mapper = self._describe_slot12(primary, secondary)
         else:
             content = self._describe_slot3(secondary, page)
         bank = self._slot_bank(primary, secondary, page)
         return SlotInfo(
-            content, mapper, self._slot_size_kb(primary, secondary), bank.bank,
+            content, mapper, self._slot_size_kb(primary, secondary, page), bank.bank,
             bank.window_kinds, bank.window_values, bank.sub_bank_count,
             bank.sub_banks, bank.sub_offsets,
         )
@@ -697,9 +711,15 @@ class Memory:
             return mapper.debug_bank(page)
         return NO_BANK
 
-    def _slot_size_kb(self, primary: int, secondary: int) -> int:
+    def _slot_size_kb(self, primary: int, secondary: int, page: int) -> int:
         """Size in KB (e.g. 32) for the `st` tree view, or 0 for none."""
         if primary == 0:
+            content = self._describe_slot0(page)
+            if content == SLOT_CONTENT_RAM:
+                assert self.slot0_ram is not None
+                return len(self.slot0_ram) // 1024
+            if content == SLOT_CONTENT_EMPTY:
+                return 0
             return len(self.rom) // 1024
         if primary == 3 and secondary == self.sub_rom_subslot:
             sub = self.sub0_rom

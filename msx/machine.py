@@ -1290,10 +1290,10 @@ class Machine:
                     # iff1/ei_pending/halted -- so none of them can flip
                     # partway through a batch. The remaining clause is "no
                     # VDP command is running": with a command active,
-                    # tick() can raise the command-engine interrupt at a
-                    # T-state offset this loop can't predict without calling
-                    # tick() anyway, so batching is skipped and the normal
-                    # per-instruction path (below) still ticks it. See
+                    # tick() must advance the command timer (CE and TR)
+                    # after each instruction, which a batch does not do, so
+                    # batching is skipped and the normal per-instruction
+                    # path (below) still ticks it. See
                     # openspec cpu-z80 "Batched HALT execution is externally
                     # transparent" for the full equivalence proof.
                     # cpu.idle_hint also covers a JR $ (18 FE) idle loop:

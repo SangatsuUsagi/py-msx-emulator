@@ -267,6 +267,8 @@ Values in the Bank column:
 - A window past the end of the ROM, which reads 0xFF: `open`.
 - Flat ROM, BIOS, plain RAM: `-`
 
+`sl` shows each page of slot 0 as what a read of it returns. On the `hb_10`, the RAM in page 3 shows `RAM`, and page 2, past the end of the main ROM, shows `empty` because it reads 0xFF.
+
 **`st`**: slot tree. It goes through primary slots 0-3 and shows the full sub-slot structure of expanded slots:
 
 ```
@@ -282,6 +284,13 @@ Values in the Bank column:
 ```
 
 On an MSX1 machine, which has no expanded slot, `st` shows slot 3 as a non-expanded primary slot.
+
+When one page of a non-expanded slot holds something other than the slot's own content, `st` adds a line for that page under the slot. On the `hb_10`, slot 0 holds the main ROM in pages 0-1 and 16 KB of RAM in page 3:
+
+```
+  Primary 0  ROM hb-10_basic-bios1.rom  32KB
+    P3  RAM  16KB
+```
 
 ---
 
@@ -478,6 +487,6 @@ AF=0100  BC=0010  DE=0000  HL=C100  IX=F380  IY=FC40  SP=F3E0  PC=C080
 
 **Deferred renderer.** The CPU runs a full frame, and VDP commands write into VRAM instantly. The renderer then runs once per frame, at the start of vertical blanking. On the V9938, it draws mid-frame register and palette changes in bands, at the line where each change took effect (the TMS9918A applies the last register values to the whole frame). VRAM writes have no such record. So the emulator does not faithfully reproduce VRAM updates that follow the raster within a frame (beam-raced blits, double-buffered title screens). This limit comes from the basic architecture, and a renderer fix cannot remove it.
 
-**Command timing.** An approximate cycle budget controls the completion of VDP commands (S#2 CE bit). There is no cycle-accurate model. Software that busy-waits on CE works, but the exact command durations differ from hardware.
+**Command timing.** The block commands HMMV, HMMM, YMMM, LMMV and LMMM keep the S#2 CE bit set for a time that depends on the kind of each raster line: a blank line, an active line with sprites off, or an active line with sprites on. The times are fitted to SCREEN 5 timings on a real SONY HB-F1XD, and every measured case is within 2 jiffies. LINE, SRCH, PSET and POINT end at once. There is no cycle-accurate model of the VDP's VRAM access slots, so other modes and other machines can differ from hardware.
 
 **`so` and `bs` are SP heuristics.** `so` breaks when SP first goes above its value at the time of the command. A routine that switches stacks, pops more than it pushed, or runs again before it returns can make `so` fire early or late. For a precise stop, use `g ADDR`. `bs` compares SP with a static address range. It does not take into account slot switching that correctly remaps a page to RAM.
