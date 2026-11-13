@@ -2,6 +2,30 @@
 
 [English version here](CHANGELOG.md)
 
+- **v2.11.0** (2026-11-13): S1985 の読み返しを実機の HB-F1XD に合わせ、WD2793 の Type I コマンドに時間をかけ、VDP のコマンド時間をラスタ行の種類で変えた。ABI バージョンを 1.7、セーブステートの形式を 25 にした。
+  - S1985 の機種（`hb_f1xd`、`hb_f1xd_256k`、`fs_a1f`）は、実機の SONY HB-F1XD と同じ値を読み返す。それぞれの形はデバイスの新しいオプションで宣言し、ほかの機種はこれまでの値のままにした。
+    - RTC（`rtc_rp5c01` の `read_back: s1985`）：0xB5 の読み出しは上位ニブルが 0、レジスタ 14 と 15 は 0x00、ポート 0xB4、0xB6、0xB7 は 0x8B を返す。
+    - PSG（`psg_ay8910` の `read_back: ay8910`）：ポート 0xA2 の読み出しで、レジスタを AY-3-8910 のラッチ幅でマスクする。
+    - PSG（`psg_ay8910` の `pin67_read: gated`）：レジスタ 14 の読み出しで、ビット 4 と 5 を、選んだポートのピン 6 とピン 7 の出力と AND する。
+    - マッパーのポート（新しい `mapper_io` デバイスの `s1985`）：0xFC-0xFF の読み出しは、RAM マッパーの有無によらず `(latch & 0x1F) | 0x80` を返す。
+    - Sony の FDC レジスタ：0x7FFC/0x7FFD の読み出しは、実機が残すビットだけ書き込んだ値を残す。
+    - `fs_a1f` の値は同じ S1985 MSX-ENGINE から決めたもので、実機の FS-A1F では確かめていない。
+  - WD2793 の Type I コマンドが、マシンのクロックで時間をかけるようになった。1 ステップは 6/12/20/30 ms で、その間 BUSY が立つ。ベリファイは 30 ms 待ってから行い、合わなければ 1 秒後に SEEK ERROR を立てる。HLD をモデル化し、コントローラが止まってから 3 秒で落とす。FORCE INTERRUPT で実行中のシークを止められる。
+  - VDP のブロックコマンド（HMMV、HMMM、YMMM、LMMV、LMMM）は、ブランクの行、スプライトなしの表示行、スプライトありの表示行で、かかる時間が違う。値は実機の HB-F1XD の SCREEN 5 の計測に合わせたもので、計測したどのケースも 2 jiffy 以内に収まる。GRAPHIC 4-7 以外の HMMV は、実機と同じく 1 行あたり 1 バイトを `(Y * 128) | 0xFF` に書く。
+  - openMSX に合わせた修正：
+    - FDC：WD2793 のヘッドのステップ、ステータス、IRQ のラッチ、リセット。TC8566AF のシーク、ST3、コマンドのデコード、ページ 2 のウィンドウ。ディスクのジオメトリ、セクタ ID、電源投入時のディスク交換。
+    - カートリッジのマッパー：Halnote、Page2、Normal、ASCII8-SRAM、R-Type。
+    - PSG：トーンとノイズの周期の書き込みがすぐに効く。SCC：周波数が 8 以下のチャンネルは進まず、チャンネルのミックスは openMSX と同じになった。
+    - VDP：S#0 のオーバーフローしたスプライトの番号、CC=1 のスプライトの OR の規則、1 つの SAT でブランクにした帯ではスプライトを描かないこと。
+    - CPU：DD/FD プレフィックスの連続は、長さによらず 1 ステップで実行する。これまでは 1000 個のプレフィックスで `RecursionError` になっていた。
+  - メモリ：拡張されたスロット 3 の RAM マッパーは自身のサブスロットだけで応答し、空きのサブスロットはオープンバスを読む。FS-A1F はスロット 3 のサブスロット 0 に 64 KB の RAM マッパーを持つので、`fs_a1f` では `memory_512k` と `msxdos2_512k` の拡張を受け付けない。この配置は openMSX に合わせたもので、実機では確かめていない。
+  - RTC：4 つのレジスタブロックをすべてバッテリーで保持し、時計をフィールドごとに数える。12 時間モード、Timer-EN、TEST、RESET が効くようになった。
+  - C-BIOS の SUB ROM は 16 KB。ローダは機種のドキュメントをコアのパーサで検査する。
+  - RPC とツール：`debugger.pause` と `cpu.step` が、一時停止の通知をプッシュする。MCP サーバと `rpc_client` はソケットを 1 行ずつ読む。デバッガの `te` と `ce` のコマンドは、`--vdp-trace-out` と `--mapper-trace-out` のファイルに書く。`--extension2` のヘルプに 7 つの拡張をすべて載せた。
+  - SCC のサンプル生成と DISK ROM の読み出しを速くした。
+  - コア API：MachineConfig のドキュメントは形式 8（`machine.ram_mapper_subslot`、`mapper_io`、`psg_read_back`、`rtc_read_back`、`psg_pin67_read`）。パーサは形式 1 から 7 も読む。ABI バージョンは 1.7 で、`MSX_RTC_CMOS_SIZE` は 52。
+  - **互換性のない変更：** セーブステートの形式のバージョンは 25。S1985 のマッパーポートのラッチと、RTC のカウンタ、WD2793、TC8566AF の新しいステートを加えた。v2.10.1 以前のセーブステートは読み込めない。
+  - ドキュメント：README、クイックスタート、拡張のガイド、RPC/MCP のガイド、ツールの README をコードと照らし合わせて見直した。Markdown のドキュメントを prettier で整形した。README のベンチマーク結果は v2.11.0 のもの。
 - **v2.10.1** (2026-11-08): デバッガのコマンド履歴のファイルを、CPython と PyPy で分けた。
   - CPython と PyPy は `~/.msx_dbg_history` を共有していたが、書式が違っていた。macOS の CPython の `readline`（libedit）は空白を `\040` として書き、PyPy の `readline` は各行をそのままの文字列として読む。そのため、CPython で使ったあとの PyPy では、`tape\040load` のような履歴が出ていた。履歴は、CPython では `~/.msx_dbg_history_cpython`、PyPy では `~/.msx_dbg_history_pypy` に残すようにした。
   - これまでの `~/.msx_dbg_history` はもう読まないので、消してよい。

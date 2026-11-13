@@ -2,6 +2,30 @@
 
 [日本語版はこちら](CHANGELOG_ja.md)
 
+- **v2.11.0** (2026-11-13): S1985 read-back forms from a real HB-F1XD, WD2793 Type I timing, VDP command time per line kind, ABI version 1.7, and save-state format 25.
+  - S1985 machines (`hb_f1xd`, `hb_f1xd_256k`, `fs_a1f`) read back as a real SONY HB-F1XD does. Each form is a new device option, and every other machine keeps the old values:
+    - RTC (`rtc_rp5c01` `read_back: s1985`): a 0xB5 read has the high nibble 0, registers 14 and 15 read 0x00, and ports 0xB4, 0xB6 and 0xB7 read 0x8B.
+    - PSG (`psg_ay8910` `read_back: ay8910`): a port 0xA2 read masks the register to the AY-3-8910 latch width.
+    - PSG (`psg_ay8910` `pin67_read: gated`): a register 14 read ANDs bits 4 and 5 with the pin 6 and pin 7 outputs of the selected port.
+    - Mapper ports (new `mapper_io` device, `s1985`): a 0xFC-0xFF read returns `(latch & 0x1F) | 0x80`, with or without a RAM mapper.
+    - Sony FDC registers: a 0x7FFC/0x7FFD read keeps the written bits that the real machine keeps.
+    - The `fs_a1f` values come from the same S1985 MSX-ENGINE and are not verified on a real FS-A1F.
+  - WD2793 Type I commands take time on the machine clock: 6/12/20/30 ms per step with BUSY set, a 30 ms verify settle, and SEEK ERROR 1 s after a verify mismatch. HLD is modelled and drops 3 s after the controller goes idle. FORCE INTERRUPT stops a running seek.
+  - VDP block commands (HMMV, HMMM, YMMM, LMMV, LMMM) cost a different time on a blank line, on an active line with sprites off and on an active line with sprites on. The costs are fitted to SCREEN 5 timings on a real HB-F1XD, and every measured case is within 2 jiffies. Outside GRAPHIC 4-7, HMMV writes one byte per line at `(Y * 128) | 0xFF`, as on the real machine.
+  - Fixes that follow openMSX:
+    - FDC: WD2793 head stepping, status, IRQ latch and reset; TC8566AF seek, ST3, command decode and the page-2 window; disk geometry, sector IDs and the power-on disk change.
+    - Cartridge mappers: Halnote, Page2, Normal, ASCII8-SRAM and R-Type.
+    - PSG: a tone or noise period write takes effect at once. SCC: a channel with a frequency of 8 or less does not step, and the channel mix matches openMSX.
+    - VDP: the S#0 overflow sprite number, the CC=1 sprite OR rule, and a blanked band under one SAT draws no sprites.
+    - CPU: a DD/FD prefix chain of any length runs as one step. Before, 1000 prefixes raised `RecursionError`.
+  - Memory: the RAM mapper of an expanded slot 3 answers only in its own sub-slot, and the empty sub-slots read open bus. The FS-A1F has a 64 KB RAM mapper in slot 3 sub-slot 0, so the `memory_512k` and `msxdos2_512k` extensions are rejected on `fs_a1f`. This layout follows openMSX and is not verified on real hardware.
+  - RTC: all four register blocks are battery-backed, the clock counts per field, and the 12-hour mode, Timer-EN, TEST and RESET take effect.
+  - The C-BIOS SUB ROM is 16 KB. The loader checks the machine document with the core parser.
+  - RPC and tools: `debugger.pause` and `cpu.step` push the paused notification. The MCP server and `rpc_client` read the socket line by line. The debugger `te` and `ce` commands write to the `--vdp-trace-out` and `--mapper-trace-out` files. The `--extension2` help lists all seven extensions.
+  - Faster SCC sample generation and DISK ROM reads.
+  - Core API: the MachineConfig document is format 8 (`machine.ram_mapper_subslot`, `mapper_io`, `psg_read_back`, `rtc_read_back` and `psg_pin67_read`). The parser also reads formats 1 to 7. The ABI version is 1.7, and `MSX_RTC_CMOS_SIZE` is 52.
+  - **Breaking:** the save-state format version is 25. It adds the S1985 mapper-port latch and the new RTC counter, WD2793 and TC8566AF state. Save states from v2.10.1 and earlier cannot be loaded.
+  - Docs: the README, the quick start, the extension guide, the RPC/MCP guide and the tools README are reviewed against the code. The Markdown docs are formatted with prettier. The README benchmark results are for v2.11.0.
 - **v2.10.1** (2026-11-08): The debugger keeps a separate command history file for CPython and for PyPy.
   - CPython and PyPy shared `~/.msx_dbg_history`, but they write it in different formats. On macOS, CPython's `readline` (libedit) writes a space as `\040`, and PyPy's `readline` reads each line as plain text. After a CPython session, PyPy showed history lines such as `tape\040load`. The history is now in `~/.msx_dbg_history_cpython` on CPython and in `~/.msx_dbg_history_pypy` on PyPy.
   - The old `~/.msx_dbg_history` is no longer read, and it can be deleted.
