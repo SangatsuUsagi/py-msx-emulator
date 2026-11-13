@@ -419,28 +419,28 @@ For each (runtime, game) pair, the author measured 10 runs of 10000 frames each.
 
 | Platform                   | Runtime                      | Game                                                                | Avg FPS (`--benchmark`) | vs. 60 fps target |
 | -------------------------- | ---------------------------- | ------------------------------------------------------------------- | ----------------------- | ----------------- |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13              | MSX1: Salamander (CPU+TMS9918+SCC)                                  | 307.66                  | ~5.1×             |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13              | MSX2: Dragon Slayer IV (CPU+V9938+PSG)                              | 582.56                  | ~9.7×             |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13              | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 102.50                  | ~1.7×             |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC)                                  | 985.60                  | ~16.4×            |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer IV (CPU+V9938+PSG)                              | 1366.11                 | ~22.8×            |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 718.51                  | ~12.0×            |
-| Raspberry Pi 5             | CPython 3.12.13              | MSX1: Salamander (CPU+TMS9918+SCC)                                  | 79.88                   | ~1.3×             |
-| Raspberry Pi 5             | CPython 3.12.13              | MSX2: Dragon Slayer IV (CPU+V9938+PSG)                              | 155.55                  | ~2.6×             |
-| Raspberry Pi 5             | CPython 3.12.13              | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 27.97                   | ~0.47×            |
-| Raspberry Pi 5             | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC)                                  | 222.86                  | ~3.7×             |
-| Raspberry Pi 5             | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer IV (CPU+V9938+PSG)                              | 285.31                  | ~4.8×             |
-| Raspberry Pi 5             | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 152.18                  | ~2.5×             |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13              | MSX1: Salamander (CPU+TMS9918+SCC)                                  | 312.06                  | ~5.2×             |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13              | MSX2: Dragon Slayer IV (CPU+V9938+PSG)                              | 571.21                  | ~9.5×             |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13              | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 103.70                  | ~1.7×             |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC)                                  | 1021.15                 | ~17.0×            |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer IV (CPU+V9938+PSG)                              | 1376.34                 | ~22.9×            |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 730.78                  | ~12.2×            |
+| Raspberry Pi 5             | CPython 3.12.13              | MSX1: Salamander (CPU+TMS9918+SCC)                                  | 80.41                   | ~1.3×             |
+| Raspberry Pi 5             | CPython 3.12.13              | MSX2: Dragon Slayer IV (CPU+V9938+PSG)                              | 150.97                  | ~2.5×             |
+| Raspberry Pi 5             | CPython 3.12.13              | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 27.89                   | ~0.46×            |
+| Raspberry Pi 5             | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC)                                  | 196.81                  | ~3.3×             |
+| Raspberry Pi 5             | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer IV (CPU+V9938+PSG)                              | 280.36                  | ~4.7×             |
+| Raspberry Pi 5             | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 153.04                  | ~2.6×             |
 
-Not every tested combination reaches the raw 60 fps target. The smallest margin is ~0.47×, below the target, on Raspberry Pi 5 with CPython and Dragon Slayer VI. The FM-PAC (YM2413) synthesis is the heaviest per-frame load of the target titles. PyPy increases the same case to ~2.5×. The other Raspberry Pi 5 and CPython combinations reach the target: Salamander at ~1.3× and Dragon Slayer IV at ~2.6×.
+Not every tested combination reaches the raw 60 fps target. The smallest margin is ~0.46×, below the target, on Raspberry Pi 5 with CPython and Dragon Slayer VI. The FM-PAC (YM2413) synthesis is the heaviest per-frame load of the target titles. PyPy increases the same case to ~2.6×. The other Raspberry Pi 5 and CPython combinations reach the target: Salamander at ~1.3× and Dragon Slayer IV at ~2.5×.
 
-A run goes below 60 fps in these cases: CPython on a Raspberry Pi 5 with an FM-PAC title, hardware slower than a Raspberry Pi 5, or a heavier title. The game then runs in slow motion, at a rate proportional to the achieved frame rate. Audio also degrades (clicks or silence). The cause is that the emulator generates samples per frame, but the audio device always consumes them at 44100 Hz. PyPy3 is a drop-in alternative. On the Raspberry Pi 5 it gives about 1.8 to 5.4 times the CPython throughput (see the table above). It is the recommended way to keep headroom on constrained hosts such as a Raspberry Pi.
+A run goes below 60 fps in these cases: CPython on a Raspberry Pi 5 with an FM-PAC title, hardware slower than a Raspberry Pi 5, or a heavier title. The game then runs in slow motion, at a rate proportional to the achieved frame rate. Audio also degrades (clicks or silence). The cause is that the emulator generates samples per frame, but the audio device always consumes them at 44100 Hz. PyPy3 is a drop-in alternative. On the Raspberry Pi 5 it gives about 1.9 to 5.5 times the CPython throughput (see the table above). It is the recommended way to keep headroom on constrained hosts such as a Raspberry Pi.
 
 The PyPy numbers vary more from run to run than the CPython numbers, probably because of OS scheduling and thermal throttling. Treat them as approximate.
 
 ### Benchmark history
 
-Avg FPS (`--benchmark`) from v0.1.0 through v2.10.0, one chart per platform. Solid lines are CPython and dashed lines are PyPy. Up to v2.7.5 the author measured with the same cold-boot method as above, but without sound synthesis (the method up to v2.7.8). From v2.8.1 the author measured with the method above. You cannot compare the numbers of the two methods, so the lines break where the method changes.
+Avg FPS (`--benchmark`) from v0.1.0 through v2.11.0, one chart per platform. Solid lines are CPython and dashed lines are PyPy. Up to v2.7.5 the author measured with the same cold-boot method as above, but without sound synthesis (the method up to v2.7.8). From v2.8.1 the author measured with the method above. You cannot compare the numbers of the two methods, so the lines break where the method changes.
 
 ![Benchmark history on Apple MacBook Pro (M5 Pro)](assets/bench-history-m5pro.png)
 
