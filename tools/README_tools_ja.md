@@ -2,19 +2,19 @@
 
 エミュレータと組み合わせて使うコマンドラインツール群です。ディスクイメージの管理、テープ用 WAV との相互変換、CPU 命令テストの実行に使うツールと、エージェント向けの RPC/MCP 層があります。どのツールもエミュレータのプロセス内では動かず、それぞれ `python tools/<script>.py` として個別に実行します。
 
-| スクリプト / セクション | 用途 |
-| --- | --- |
-| [`dskftp.py`](#dskftppy) | `.dsk` イメージ内のファイルを編集する、ftp 風の対話シェル |
-| [`dskblank.py`](#dskblankpy) | 未フォーマットの空の `.dsk` イメージを作成 |
-| [`dskdd.py`](#dskddpy) | `.dsk` イメージと物理 USB フロッピードライブの間で生セクタをコピー（Linux 専用） |
-| [`bas2wav.py`](#bas2wavpy) | ASCII 形式の BASIC プログラムを、実機の MSX が `LOAD"CAS:"` で読み込めるテープ用 WAV に変換 |
-| [`wav2cas.py`](#wav2caspy) | MSX のテープの WAV を、エミュレータの `--tape` で使う `.cas` ファイルに変換 |
-| [`run_z80_exercisers.py`](#run_z80_exerciserspy) | Z80 の命令テスト（zexdoc、zexall、z80test）を CPU コア単体で実行 |
-| [`run_singlestep_tests.py`](#run_singlestep_testspy) | SingleStepTests/z80 の 1 命令ごとのテストを CPU コア単体で実行 |
-| [`golden_state.py`](#golden_statepy) | コア全体の決まった実行（ゴールデンケース）を動かし、そのハッシュを記録または照合 |
-| [リモート制御（Socket RPC & MCP）](#リモート制御socket-rpc--mcp) | `rpc_client.py` と `mcp_server.py` が使う、ソケット RPC と MCP の制御層の概要 |
-| [`rpc_client.py`](#rpc_clientpy) | エミュレータのソケット RPC サーバに接続する、手動テスト用の薄い CLI クライアント |
-| [`mcp_server.py`](#mcp_serverpy) | ソケット RPC API をラップする MCP サーバ。Claude Code から起動中のエミュレータを操作できる |
+| スクリプト / セクション                                          | 用途                                                                                        |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| [`dskftp.py`](#dskftppy)                                         | `.dsk` イメージ内のファイルを編集する、ftp 風の対話シェル                                   |
+| [`dskblank.py`](#dskblankpy)                                     | 未フォーマットの空の `.dsk` イメージを作成                                                  |
+| [`dskdd.py`](#dskddpy)                                           | `.dsk` イメージと物理 USB フロッピードライブの間で生セクタをコピー（Linux 専用）            |
+| [`bas2wav.py`](#bas2wavpy)                                       | ASCII 形式の BASIC プログラムを、実機の MSX が `LOAD"CAS:"` で読み込めるテープ用 WAV に変換 |
+| [`wav2cas.py`](#wav2caspy)                                       | MSX のテープの WAV を、エミュレータの `--tape` で使う `.cas` ファイルに変換                 |
+| [`run_z80_exercisers.py`](#run_z80_exerciserspy)                 | Z80 の命令テスト（zexdoc、zexall、z80test）を CPU コア単体で実行                            |
+| [`run_singlestep_tests.py`](#run_singlestep_testspy)             | SingleStepTests/z80 の 1 命令ごとのテストを CPU コア単体で実行                              |
+| [`golden_state.py`](#golden_statepy)                             | コア全体の決まった実行（ゴールデンケース）を動かし、そのハッシュを記録または照合            |
+| [リモート制御（Socket RPC & MCP）](#リモート制御socket-rpc--mcp) | `rpc_client.py` と `mcp_server.py` が使う、ソケット RPC と MCP の制御層の概要               |
+| [`rpc_client.py`](#rpc_clientpy)                                 | エミュレータのソケット RPC サーバに接続する、手動テスト用の薄い CLI クライアント            |
+| [`mcp_server.py`](#mcp_serverpy)                                 | ソケット RPC API をラップする MCP サーバ。Claude Code から起動中のエミュレータを操作できる  |
 
 どのスクリプトも素の Python 3.10+ で動き、プロジェクト本体の依存（`requirements.txt` / `requirements-dev.txt`）以外は必要ありません。例外は `mcp_server.py` で、オプションの `mcp` 依存も必要です（[`mcp_server.py`](#mcp_serverpy) を参照）。実行にはプロジェクトの venv を使います（例：`venvs/py-msx-emulator/bin/python tools/dskftp.py`）。
 
@@ -33,20 +33,20 @@ python tools/dskftp.py                 # 後から `open` で接続
 
 シェル内のコマンドを次の表に示します（全コマンドと使い方は `help` で表示できます）。
 
-| コマンド | 動作 |
-| --- | --- |
-| `open <image.dsk>` | ディスクイメージに接続 |
-| `format <image.dsk> [720\|640\|360\|320]` | 空のイメージを作成（容量は KB、デフォルトは 720）して接続 |
-| `dir` / `ls [path]` | リモートディレクトリを一覧表示（path の末尾はワイルドカードにできる） |
-| `cd <dir>` | リモートディレクトリを変更 |
-| `lcd [dir]` | ローカルディレクトリを変更（引数なしなら表示） |
-| `pwd` / `lpwd` | リモート / ローカルの作業ディレクトリを表示 |
-| `get <remote> [local]` | ファイルをダウンロード |
-| `put <local> [remote]`（別名 `send`） | ファイルをアップロード |
-| `mget <pattern>` / `mput <pattern>` | glob パターンに一致する複数のファイルをダウンロード / アップロード |
-| `delete <file>` | リモートのファイルを削除 |
-| `mkdir <dir>` / `rmdir <dir>` | リモートディレクトリを作成 / 削除 |
-| `quit` / `bye`（または Ctrl-D） | シェルを終了 |
+| コマンド                                  | 動作                                                                  |
+| ----------------------------------------- | --------------------------------------------------------------------- |
+| `open <image.dsk>`                        | ディスクイメージに接続                                                |
+| `format <image.dsk> [720\|640\|360\|320]` | 空のイメージを作成（容量は KB、デフォルトは 720）して接続             |
+| `dir` / `ls [path]`                       | リモートディレクトリを一覧表示（path の末尾はワイルドカードにできる） |
+| `cd <dir>`                                | リモートディレクトリを変更                                            |
+| `lcd [dir]`                               | ローカルディレクトリを変更（引数なしなら表示）                        |
+| `pwd` / `lpwd`                            | リモート / ローカルの作業ディレクトリを表示                           |
+| `get <remote> [local]`                    | ファイルをダウンロード                                                |
+| `put <local> [remote]`（別名 `send`）     | ファイルをアップロード                                                |
+| `mget <pattern>` / `mput <pattern>`       | glob パターンに一致する複数のファイルをダウンロード / アップロード    |
+| `delete <file>`                           | リモートのファイルを削除                                              |
+| `mkdir <dir>` / `rmdir <dir>`             | リモートディレクトリを作成 / 削除                                     |
+| `quit` / `bye`（または Ctrl-D）           | シェルを終了                                                          |
 
 `format` が作るのはデータディスクです。標準的な MSX-DOS のブートセクタローダー（`CALL FORMAT` も書き込む "Boot error / Press any key for retry" のスタブ）は入りますが、`MSXDOS.SYS` は入りません。DOS は起動できず、ふつうの FAT12 ボリュームとして読み書きするだけです。
 
@@ -84,10 +84,10 @@ Linux では、USB FDD は `/dev/fd0` ではなく、ブロックデバイスの
 
 `write` は、さらにデバイスのパスを操作者にもう一度入力させます。誤ったデバイスに書き込むと、そのデバイスのデータがすべて失われるからです。`read` は、`--overwrite` を指定しない限り既存のイメージを上書きしません。
 
-| サブコマンド | オプション |
-| --- | --- |
-| `read <device> <image>` | `--sectors N`（デフォルト：デバイス全体）、`--retries N`（デフォルト：2）、`--overwrite`、`--force` |
-| `write <image> <device>` | `--yes`（確認を省く）、`--verify`（書き込み後に読み戻して比較）、`--force` |
+| サブコマンド             | オプション                                                                                          |
+| ------------------------ | --------------------------------------------------------------------------------------------------- |
+| `read <device> <image>`  | `--sectors N`（デフォルト：デバイス全体）、`--retries N`（デフォルト：2）、`--overwrite`、`--force` |
+| `write <image> <device>` | `--yes`（確認を省く）、`--verify`（書き込み後に読み戻して比較）、`--force`                          |
 
 終了コードは、成功なら `0`、エラーなら `1` です。イメージは作れたものの読み取れないセクタが残ったときは `2` です。そのセクタはイメージ内で 0 で埋め、標準出力に一覧を表示します。
 
@@ -108,12 +108,12 @@ python tools/bas2wav.py PROGRAM.BAS program.wav --invert   # 信号を反転
 
 ファイルが見つからないときやエラーになるときは、まず音量を上げ、次に `--invert` を試してください。
 
-| オプション | 意味 |
-| --- | --- |
-| `--name NAME` | テープ上のファイル名、6 文字まで（デフォルト：元のファイル名を大文字にしたもの） |
-| `--invert` | 信号を反転する |
-| `--volume V` | ピークの大きさ、0 より大きく 1 以下（デフォルト：0.8） |
-| `--gap S` | 256 バイトの各ブロックの前に入れる無音の秒数。BASIC がブロックを処理する時間になる（デフォルト：1.0） |
+| オプション    | 意味                                                                                                  |
+| ------------- | ----------------------------------------------------------------------------------------------------- |
+| `--name NAME` | テープ上のファイル名、6 文字まで（デフォルト：元のファイル名を大文字にしたもの）                      |
+| `--invert`    | 信号を反転する                                                                                        |
+| `--volume V`  | ピークの大きさ、0 より大きく 1 以下（デフォルト：0.8）                                                |
+| `--gap S`     | 256 バイトの各ブロックの前に入れる無音の秒数。BASIC がブロックを処理する時間になる（デフォルト：1.0） |
 
 改行は CRLF にそろえます。出力は 48 kHz、16 ビット、モノラルです。このスクリプトで作った WAV は、[`wav2cas.py`](#wav2caspy) で変換するとエミュレータで読み込めます。実機での読み込みはまだ試していません。
 
@@ -169,11 +169,11 @@ venvs/py-msx-emulator/bin/python tools/golden_state.py --write   # 記録
 
 ROM はこのリポジトリに含めていません。ROM がないケースや、SHA-256 が違うケースは、パスを示してスキップします。次のファイルを置いてください。
 
-| パス | 入手元 | SHA-256 |
-| --- | --- | --- |
-| `roms/cbios/` | [C-BIOS](https://cbios.sourceforge.net/)。C-BIOS の機種を使うときと同じ | （照合しない） |
-| `roms/homebrew/noborunoca.rom` | [NOBORUNOCA v1.0.2](https://github.com/h1romas4/noborunoca/releases/tag/v1.0.2) の `noborunoca.rom`（MIT） | `57a3be2fe5c3190daa3e69cf23cd262cdc8af98c60993ea941d43c815cbb25f6` |
-| `roms/homebrew/uno-msx2.rom` | [commodore-uno v1.0.5](https://github.com/jhonnaker1/commodore-uno/releases/tag/v1.0.5) の `uno-msx2.rom`（MIT）、または v1.0.5 をビルドしたもの（下記） | `74d74d8720e623a7b8aadce8e0b0c9094f8a2162339a8e7c677c7732f673ddb8` |
+| パス                           | 入手元                                                                                                                                                   | SHA-256                                                            |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `roms/cbios/`                  | [C-BIOS](https://cbios.sourceforge.net/)。C-BIOS の機種を使うときと同じ                                                                                  | （照合しない）                                                     |
+| `roms/homebrew/noborunoca.rom` | [NOBORUNOCA v1.0.2](https://github.com/h1romas4/noborunoca/releases/tag/v1.0.2) の `noborunoca.rom`（MIT）                                               | `57a3be2fe5c3190daa3e69cf23cd262cdc8af98c60993ea941d43c815cbb25f6` |
+| `roms/homebrew/uno-msx2.rom`   | [commodore-uno v1.0.5](https://github.com/jhonnaker1/commodore-uno/releases/tag/v1.0.5) の `uno-msx2.rom`（MIT）、または v1.0.5 をビルドしたもの（下記） | `74d74d8720e623a7b8aadce8e0b0c9094f8a2162339a8e7c677c7732f673ddb8` |
 
 表の SHA-256 は、commodore-uno v1.0.5 をビルドした ROM の値です。バージョンが違うと ROM が変わることがあるので、v1.0.5 を使ってください。v1.0.5 と v1.0.10 のリリースの `uno-msx2.rom` は、このビルドと同じ SHA-256 です。ROM をビルドするには、[SDCC](https://sdcc.sourceforge.net/) と GNU make を使います。
 

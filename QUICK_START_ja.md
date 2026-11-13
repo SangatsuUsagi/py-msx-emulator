@@ -11,11 +11,11 @@ py-msx-emulator の動作に必要なもの、インストールの手順、BIOS
 - **Python 3.10 以降**
 - **SDL2 のネイティブライブラリ**（pysdl2 とは別にインストールします）
 
-| パッケージ | 最低バージョン | 用途 |
-| --- | --- | --- |
-| Pillow | 12.0 | スクリーンショットとステートセーブの PNG 出力 |
-| pysdl2 | 0.9.16 | 表示とオーディオのフロントエンドで使う SDL2 バインディング |
-| PyYAML | 6.0 | `py_emulator.yaml` と機種の YAML ファイルの読み込み |
+| パッケージ | 最低バージョン | 用途                                                       |
+| ---------- | -------------- | ---------------------------------------------------------- |
+| Pillow     | 12.0           | スクリーンショットとステートセーブの PNG 出力              |
+| pysdl2     | 0.9.16         | 表示とオーディオのフロントエンドで使う SDL2 バインディング |
+| PyYAML     | 6.0            | `py_emulator.yaml` と機種の YAML ファイルの読み込み        |
 
 開発用の依存（pytest、ruff、mypy）は `requirements-dev.txt` にあります。`tools/mcp_server.py` を使う場合は、オプションの `mcp` extra も必要です（[tools/README_tools_ja.md](tools/README_tools_ja.md#mcp_serverpy) を参照）。このプロジェクトは PyPI では公開していません。
 

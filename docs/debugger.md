@@ -417,12 +417,12 @@ python . path/to/game.rom --machine cbios_msx2_jp --debug --log debug.log
 
 `--debug` writes a diagnostic log to stderr. With `--log FILE`, the emulator also appends the same lines to `FILE`. `--log` needs `--debug`: without `--debug`, the emulator ignores `--log` and writes no file. Each line starts with a category:
 
-| Category | Line |
-| --- | --- |
-| `[IO]` | `IN` or `OUT` for each I/O port access, with the port, the value and the PC of the instruction. A cassette motor change, with the tape position |
-| `[BOOT]` | The VDP display turns on or off (R#1), or the screen mode changes (R#0, R#1) |
-| `[CPU]` | An undefined opcode, or one line of the instruction history before a hang |
-| `[HANG]` | The same PC runs 1000 times in a row, or a HALT with interrupts disabled at the end of a frame |
+| Category | Line                                                                                                                                            |
+| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `[IO]`   | `IN` or `OUT` for each I/O port access, with the port, the value and the PC of the instruction. A cassette motor change, with the tape position |
+| `[BOOT]` | The VDP display turns on or off (R#1), or the screen mode changes (R#0, R#1)                                                                    |
+| `[CPU]`  | An undefined opcode, or one line of the instruction history before a hang                                                                       |
+| `[HANG]` | The same PC runs 1000 times in a row, or a HALT with interrupts disabled at the end of a frame                                                  |
 
 Before each `[HANG]` line, the log shows the last 64 instructions as `[CPU]  trace` lines. Each hang location is reported only once. The emulation does not stop at a `[HANG]` line. To stop at a HALT with interrupts disabled, use `bh` in the REPL.
 

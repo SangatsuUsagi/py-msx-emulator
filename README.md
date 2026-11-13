@@ -130,25 +130,25 @@ A mode register selects the Compatible or Plus mode of the SCC chip on the cartr
 
 > **Note**: the author does not own a real SCC-I (SCC+) cartridge or compatible software. This implementation uses publicly available technical documentation, and the author has not verified it against real hardware.
 
-| Item | Detail |
-| --- | --- |
-| Implementation | `msx/mapper.py:SCCICart` |
-| Activation | `--extension1`/`--extension2 scc_plus` (see [`docs/README_extension.md`](docs/README_extension.md#scc-i-cartridge-scc)) |
-| Memory map | 4 × 8 KB bank-switched RAM windows at `0x4000-0xBFFF`, mode register at `0xBFFE`/`0xBFFF` |
-| SCC register window | `0x9800-0x9FFF` (Compatible mode) or `0xB800-0xBFFF` (Plus mode), as the mode register selects |
+| Item                | Detail                                                                                                                  |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Implementation      | `msx/mapper.py:SCCICart`                                                                                                |
+| Activation          | `--extension1`/`--extension2 scc_plus` (see [`docs/README_extension.md`](docs/README_extension.md#scc-i-cartridge-scc)) |
+| Memory map          | 4 × 8 KB bank-switched RAM windows at `0x4000-0xBFFF`, mode register at `0xBFFE`/`0xBFFF`                               |
+| SCC register window | `0x9800-0x9FFF` (Compatible mode) or `0xB800-0xBFFF` (Plus mode), as the mode register selects                          |
 
 ### FM-PAC: MSX-MUSIC cartridge (YM2413/OPLL)
 
 An optional overlay cartridge. Enable it with `--extension1`/`--extension2 fmpac`. See [`docs/README_extension.md`](docs/README_extension.md#fm-pac) for activation and ROM requirements. The cartridge has a 64 KB banked ROM, 8 KB of battery-backed SRAM with an openMSX-compatible magic-value unlock, and a YM2413 (OPLL) FM sound chip. The chip gives 9-channel 2-operator melody synthesis (15 built-in instruments plus a user-defined tone), ADSR envelopes, and rhythm mode (bass drum, snare, tom, top cymbal, hi-hat). The emulator mixes the chip output into the audio output with PSG/SCC.
 
-| Item | Detail |
-| --- | --- |
-| Implementation | `msx/fmpac.py` (cartridge device), `msx/opll.py` (YM2413/OPLL chip) |
-| Activation | `--extension1`/`--extension2 fmpac` (see [`docs/README_extension.md`](docs/README_extension.md#fm-pac)), ROM at `roms/fmpac/fmpac.rom` |
-| Memory map | 64 KB ROM in four 16 KB banks (`0x7FF7` bank register) at `0x4000-0x7FFF`. 8 KB SRAM (openMSX-exact `0x1FFE`-byte usable region, magic-value unlock at `0x5FFE`/`0x5FFF`). Memory-mapped OPLL registers (`0x7FF4`/`0x7FF5`) and enable register (`0x7FF6`) |
-| I/O ports | `0x7C`/`0x7D`, gated by bit 0 of the enable register |
-| SRAM persistence | `saves/sram/fmpac.sram`. The emulator loads it on start and saves it on exit if it changed |
-| OPLL synthesis | Python port of emu2413 v1.5.9: log-domain synthesis (log-sin + exp tables), hardware envelope-rate tables with key-scaling, AM/PM LFO, the YM2413 instrument ROM, and rhythm mode (register `0x0E`: bass drum, snare, tom, top cymbal, hi-hat) with the real short-noise / LFSR taps |
+| Item             | Detail                                                                                                                                                                                                                                                                               |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Implementation   | `msx/fmpac.py` (cartridge device), `msx/opll.py` (YM2413/OPLL chip)                                                                                                                                                                                                                  |
+| Activation       | `--extension1`/`--extension2 fmpac` (see [`docs/README_extension.md`](docs/README_extension.md#fm-pac)), ROM at `roms/fmpac/fmpac.rom`                                                                                                                                               |
+| Memory map       | 64 KB ROM in four 16 KB banks (`0x7FF7` bank register) at `0x4000-0x7FFF`. 8 KB SRAM (openMSX-exact `0x1FFE`-byte usable region, magic-value unlock at `0x5FFE`/`0x5FFF`). Memory-mapped OPLL registers (`0x7FF4`/`0x7FF5`) and enable register (`0x7FF6`)                           |
+| I/O ports        | `0x7C`/`0x7D`, gated by bit 0 of the enable register                                                                                                                                                                                                                                 |
+| SRAM persistence | `saves/sram/fmpac.sram`. The emulator loads it on start and saves it on exit if it changed                                                                                                                                                                                           |
+| OPLL synthesis   | Python port of emu2413 v1.5.9: log-domain synthesis (log-sin + exp tables), hardware envelope-rate tables with key-scaling, AM/PM LFO, the YM2413 instrument ROM, and rhythm mode (register `0x0E`: bass drum, snare, tom, top cymbal, hi-hat) with the real short-noise / LFSR taps |
 
 - Known limitations:
   - Output rate conversion uses an accumulate-and-average decimator (chip clk/72 → 44100 Hz), not the windowed-sinc resampler of emu2413. The analog-style low-pass removes the residual imaging.
@@ -166,14 +166,14 @@ The cartridge connects to a stock MSX2 host. Its expanded slot thus coexists wit
 
 The author physically owns this cartridge and dumped its ROMs. Their SHA1 values match openMSX's `Sony_HBI-J1.xml`. This implementation thus targets real hardware, not only documentation.
 
-| Item | Detail |
-| --- | --- |
-| Implementation | `msx/kanji.py` (Kanji-ROM device), `msx/mapper.py:HalnoteMapper` (MSX-JE cartridge), `msx/machine_loader.py` (expanded overlay wiring) |
-| Activation | `--extension1`/`--extension2 hbi_j1` (see [`docs/README_extension.md`](docs/README_extension.md#sony-hbi-j1)), ROMs at `roms/hbi_j1/` |
-| Kanji-ROM I/O | Ports `0xD8-0xDB`: bit 1 selects JIS level (1/2), bit 0 selects column/row write vs. data read. A 5-bit read counter auto-increments per read and wraps to byte 0 of the same glyph every 32 reads, as checked on the author's HBI-J1 |
-| Sub-slot 0 | `HalnoteMapper`: 1 MB ROM (128 × 8 KB banks), 16 KB SRAM at `0x0000-0x3FFF` (bank-0 register bit 7), JIS2 dictionary sub-mapper over `0x7000-0x7FFF` (bank-1 register bit 7) |
-| Sub-slot 1 | Flat 32 KB Kanji driver + BASIC ROM at `0x4000-0xBFFF`. `0x0000-0x3FFF`/`0xC000-0xFFFF` are open bus |
-| SRAM persistence | `saves/sram/hbi-j1_msx-je.sram`. The emulator loads it on start and saves it on exit if it changed |
+| Item             | Detail                                                                                                                                                                                                                                |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Implementation   | `msx/kanji.py` (Kanji-ROM device), `msx/mapper.py:HalnoteMapper` (MSX-JE cartridge), `msx/machine_loader.py` (expanded overlay wiring)                                                                                                |
+| Activation       | `--extension1`/`--extension2 hbi_j1` (see [`docs/README_extension.md`](docs/README_extension.md#sony-hbi-j1)), ROMs at `roms/hbi_j1/`                                                                                                 |
+| Kanji-ROM I/O    | Ports `0xD8-0xDB`: bit 1 selects JIS level (1/2), bit 0 selects column/row write vs. data read. A 5-bit read counter auto-increments per read and wraps to byte 0 of the same glyph every 32 reads, as checked on the author's HBI-J1 |
+| Sub-slot 0       | `HalnoteMapper`: 1 MB ROM (128 × 8 KB banks), 16 KB SRAM at `0x0000-0x3FFF` (bank-0 register bit 7), JIS2 dictionary sub-mapper over `0x7000-0x7FFF` (bank-1 register bit 7)                                                          |
+| Sub-slot 1       | Flat 32 KB Kanji driver + BASIC ROM at `0x4000-0xBFFF`. `0x0000-0x3FFF`/`0xC000-0xFFFF` are open bus                                                                                                                                  |
+| SRAM persistence | `saves/sram/hbi-j1_msx-je.sram`. The emulator loads it on start and saves it on exit if it changed                                                                                                                                    |
 
 ### Audio output filter
 
@@ -198,17 +198,17 @@ MSX1 uses a 4-page × 4-slot dispatch. Slot 0 holds the BIOS ROM, slot 1 a cartr
 
 `--extension1`/`--extension2` can also expand primary slot 1 and slot 2, each independently. These expansions coexist with the slot 3 expansion on the same machine, and each has its own secondary slot register. See [the "Slot model" section of `docs/README_extension.md`](docs/README_extension.md#slot-model) for what each slot can hold and which extensions expand a slot. At startup, the emulator rejects the same ROM or extension id on both cartridge slots.
 
-| Item | Detail |
-| --- | --- |
-| Implementation | `msx/memory.py` |
-| Address space | Flat 64 KB (0x0000-0xFFFF), four 16 KB pages |
-| Slot 0 pages 0-1 | BIOS ROM (read-only, 0x0000-0x7FFF) |
-| Slot 0 page 2 | Logo ROM (`cbios_logo_msx1.rom`) at 0x8000-0xBFFF. The machine YAML declares it as a `pages: [2]` entry next to the BIOS. Reads return 0xFF if the file is absent |
-| Slot 0 page 3 | 16 KB SRAM at 0xC000-0xFFFF on some machines (e.g. `hb_10`). This is volatile work RAM. Unlike cartridge SRAM, it has no battery backup and the emulator does not save it. The machine YAML declares it as a `ram: {size_kb: 16, pages: [3]}` entry next to the BIOS |
-| Slot 1 | Cartridge ROM via mapper. Open bus (0xFF on read, writes ignored) when no slot 1 ROM is present. `--extension1` expands it into sub-slots, see [`docs/README_extension.md`](docs/README_extension.md#slot-model) |
-| Slot 2 | Second cartridge ROM, with the mapper that `--mapper2` selects. Open bus (0xFF on read, writes ignored) when no slot 2 ROM is present. `--extension2` expands it into sub-slots, see [`docs/README_extension.md`](docs/README_extension.md#slot-model) |
-| Slot 3 (MSX1) | 32 KB RAM at 0x8000-0xFFFF by default. Each machine sets the size (64 KB across all pages on `hb_10_64k`, unpopulated open bus on `hb_10`) |
-| Slot 3 (MSX2) | Expanded into 4 secondary slots: sub-ROM in 3-0, RAM mapper in 3-2 |
+| Item              | Detail                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Implementation    | `msx/memory.py`                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Address space     | Flat 64 KB (0x0000-0xFFFF), four 16 KB pages                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Slot 0 pages 0-1  | BIOS ROM (read-only, 0x0000-0x7FFF)                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Slot 0 page 2     | Logo ROM (`cbios_logo_msx1.rom`) at 0x8000-0xBFFF. The machine YAML declares it as a `pages: [2]` entry next to the BIOS. Reads return 0xFF if the file is absent                                                                                                                                                                                                                                                                                             |
+| Slot 0 page 3     | 16 KB SRAM at 0xC000-0xFFFF on some machines (e.g. `hb_10`). This is volatile work RAM. Unlike cartridge SRAM, it has no battery backup and the emulator does not save it. The machine YAML declares it as a `ram: {size_kb: 16, pages: [3]}` entry next to the BIOS                                                                                                                                                                                          |
+| Slot 1            | Cartridge ROM via mapper. Open bus (0xFF on read, writes ignored) when no slot 1 ROM is present. `--extension1` expands it into sub-slots, see [`docs/README_extension.md`](docs/README_extension.md#slot-model)                                                                                                                                                                                                                                              |
+| Slot 2            | Second cartridge ROM, with the mapper that `--mapper2` selects. Open bus (0xFF on read, writes ignored) when no slot 2 ROM is present. `--extension2` expands it into sub-slots, see [`docs/README_extension.md`](docs/README_extension.md#slot-model)                                                                                                                                                                                                        |
+| Slot 3 (MSX1)     | 32 KB RAM at 0x8000-0xFFFF by default. Each machine sets the size (64 KB across all pages on `hb_10_64k`, unpopulated open bus on `hb_10`)                                                                                                                                                                                                                                                                                                                    |
+| Slot 3 (MSX2)     | Expanded into 4 secondary slots: sub-ROM in 3-0, RAM mapper in 3-2                                                                                                                                                                                                                                                                                                                                                                                            |
 | Known limitations | All RAM starts with every byte 0x00 at power-on: main RAM, the RAM mapper, and cartridge SRAM with no save file. A real RAM chip powers on with each cell biased toward 0 or 1, in a pattern that stays mostly the same for each chip. The emulator does not reproduce these per-machine patterns as openMSX does. A program that reads work RAM before it writes it can therefore fail. For example, Mahjong Friend (雀フレンド) does not start on `hb_f1xd` |
 
 ### RAM mapper
@@ -230,20 +230,20 @@ A real-time clock at ports 0xB4-0xB5. On a real machine the battery keeps every 
 
 The emulator supports Flat (no bank switching), ASCII8, ASCII16, Konami, KonamiSCC, Majutsushi (DAC), ASCII8SRAM2/8, ASCII16SRAM2/8, R-Type, a fixed-page mapper (Page2/0x4000/0x8000), KoeiSRAM32, and GameMaster2. A SHA1-based ROM database selects the mapper automatically. To override it, use `--mapper`/`--mapper1` (slot 1) or `--mapper2` (slot 2). Both options accept the same type list.
 
-| Mapper | Description |
-| --- | --- |
-| `FlatMapper` | No bank switching. Mirrors the ROM across the 32 KB cartridge region. The CLI types `Mirrored` and `Normal` both select it |
-| `Ascii8Mapper` | Four 8 KB windows. Control registers at 0x6000-0x7FFF |
-| `Ascii16Mapper` | Two 16 KB windows. Control registers at 0x6000-0x7FFF |
-| `KonamiMapper` | Three 8 KB windows. A write to the window base address sets the bank register |
-| `KonamiSCCMapper` | Same as Konami. Activates the SCC when a program writes 0x3F to 0x9000 |
-| `MajutsushiMapper` | ASCII8 variant with DAC output on writes to 0x9000 |
-| `ASCII8SRAM2`, `ASCII8SRAM8` | ASCII8 with 2 KB or 8 KB battery-backed SRAM |
-| `ASCII16SRAM2`, `ASCII16SRAM8` | ASCII16 with 2 KB or 8 KB battery-backed SRAM |
-| `RTypeMapper` | 8 KB windows. Bank 0 is fixed at the ROM start |
-| `FixedPageMapper` | No bank switching. The ROM is visible only at a fixed base address (database types `Page2`, `0x4000`, `0x8000`). The rest of the cartridge region reads as open bus |
-| `KoeiSRAM32Mapper` | ASCII8 with 32 KB battery-backed SRAM. Adds 0x4000 to the set of windows that can select SRAM |
-| `GameMaster2Mapper` | Konami-style 128 KB ROM with 8 KB battery-backed SRAM. Each bank register selects a ROM page or a 4 KB SRAM half (mirrored across the 8 KB window). SRAM is writable at 0xB000-0xBFFF |
+| Mapper                         | Description                                                                                                                                                                           |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FlatMapper`                   | No bank switching. Mirrors the ROM across the 32 KB cartridge region. The CLI types `Mirrored` and `Normal` both select it                                                            |
+| `Ascii8Mapper`                 | Four 8 KB windows. Control registers at 0x6000-0x7FFF                                                                                                                                 |
+| `Ascii16Mapper`                | Two 16 KB windows. Control registers at 0x6000-0x7FFF                                                                                                                                 |
+| `KonamiMapper`                 | Three 8 KB windows. A write to the window base address sets the bank register                                                                                                         |
+| `KonamiSCCMapper`              | Same as Konami. Activates the SCC when a program writes 0x3F to 0x9000                                                                                                                |
+| `MajutsushiMapper`             | ASCII8 variant with DAC output on writes to 0x9000                                                                                                                                    |
+| `ASCII8SRAM2`, `ASCII8SRAM8`   | ASCII8 with 2 KB or 8 KB battery-backed SRAM                                                                                                                                          |
+| `ASCII16SRAM2`, `ASCII16SRAM8` | ASCII16 with 2 KB or 8 KB battery-backed SRAM                                                                                                                                         |
+| `RTypeMapper`                  | 8 KB windows. Bank 0 is fixed at the ROM start                                                                                                                                        |
+| `FixedPageMapper`              | No bank switching. The ROM is visible only at a fixed base address (database types `Page2`, `0x4000`, `0x8000`). The rest of the cartridge region reads as open bus                   |
+| `KoeiSRAM32Mapper`             | ASCII8 with 32 KB battery-backed SRAM. Adds 0x4000 to the set of windows that can select SRAM                                                                                         |
+| `GameMaster2Mapper`            | Konami-style 128 KB ROM with 8 KB battery-backed SRAM. Each bank register selects a ROM page or a 4 KB SRAM half (mirrored across the 8 KB window). SRAM is writable at 0xB000-0xBFFF |
 
 Slot 1 and slot 2 each select their mapper independently (`--mapper`/`--mapper1` and `--mapper2`, both auto-detected by default). Both slots support the same mapper set, including the SRAM-backed types. The SRAM of each slot persists to its own `saves/sram/<cartridge SHA1>.sram` path, written on exit if it changed.
 
@@ -282,12 +282,12 @@ The controller implements SPECIFY, SENSE INTERRUPT STATUS, SENSE DEVICE STATUS, 
 
 SHA1 title lookup for automatic game-title detection and mapper selection.
 
-| Item | Detail |
-| --- | --- |
-| Implementation | `host/romdb.py` |
-| Data | `roms/msx_romdb.json` |
-| Source | [openMSX software database](https://github.com/openMSX/openMSX/blob/master/share/softwaredb.xml) (see [Acknowledgements](#acknowledgements)) |
-| Fallback | If the database has no entry for the ROM, the emulator continues without a title and uses the `--mapper auto` heuristics |
+| Item           | Detail                                                                                                                                       |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Implementation | `host/romdb.py`                                                                                                                              |
+| Data           | `roms/msx_romdb.json`                                                                                                                        |
+| Source         | [openMSX software database](https://github.com/openMSX/openMSX/blob/master/share/softwaredb.xml) (see [Acknowledgements](#acknowledgements)) |
+| Fallback       | If the database has no entry for the ROM, the emulator continues without a title and uses the `--mapper auto` heuristics                     |
 
 ### I/O bus
 
@@ -299,11 +299,11 @@ Range-based port registration. The bus sends each read and write to the register
 
 The MSX parallel printer port. The guest writes a byte to the data port, and the falling edge of STROBE on the status port sends it. With `--printer-log FILE`, the bytes go to FILE unchanged. There is no printer emulation: the file holds what the guest sends to a printer.
 
-| Machine | Ports | Status read (ready / busy) |
-| --- | --- | --- |
-| `hb_10`, `hb_10_64k` | 0x90-0x91 | 0xFD / 0xFF |
-| `hb_f1xd`, `hb_f1xd_256k`, `fs_a1f` | 0x90-0x97, with mirrors | 0x00 / 0x02 |
-| `cbios_*` | No port | 0xFF |
+| Machine                             | Ports                   | Status read (ready / busy) |
+| ----------------------------------- | ----------------------- | -------------------------- |
+| `hb_10`, `hb_10_64k`                | 0x90-0x91               | 0xFD / 0xFF                |
+| `hb_f1xd`, `hb_f1xd_256k`, `fs_a1f` | 0x90-0x97, with mirrors | 0x00 / 0x02                |
+| `cbios_*`                           | No port                 | 0xFF                       |
 
 The status values and the mirrors come from the openMSX machine files. With no printer attached, the port reads busy. A real HB-F1XD with no printer reads the busy value in the table.
 
@@ -326,10 +326,10 @@ While a tape is mounted and the motor runs, the frontend runs as fast-forward an
 
 ### Keyboard / joystick input
 
-| Item | Detail |
-| --- | --- |
-| Keyboard | `msx/input.py` (the matrix: 11 rows × 8 bits, active-low, as in the MSX Technical Handbook) and `frontend/sdl2_keyboard.py` (host key to matrix cell mapping) |
-| Physical joystick | `frontend/sdl2_joystick.py`. SDL2 GameController (preferred) with a raw joystick fallback. Hot-plug and unplug |
+| Item               | Detail                                                                                                                                                                                                            |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Keyboard           | `msx/input.py` (the matrix: 11 rows × 8 bits, active-low, as in the MSX Technical Handbook) and `frontend/sdl2_keyboard.py` (host key to matrix cell mapping)                                                     |
+| Physical joystick  | `frontend/sdl2_joystick.py`. SDL2 GameController (preferred) with a raw joystick fallback. Hot-plug and unplug                                                                                                    |
 | Keyboard emulation | `frontend/sdl2_keyboard.py`. WASD = Joy1 directions. Z/X or ,/. = Trigger A/B. The arrow keys also give the directions. To override the key for a function, set `keyboard_joystick.buttons` in `py_emulator.yaml` |
 
 - Known limitations:
@@ -342,11 +342,11 @@ While a tape is mounted and the motor runs, the frontend runs as fast-forward an
 
 An optional MSX mouse that follows the host mouse. It connects to a joystick port in place of the physical or keyboard joystick on that port. It reproduces the real protocol. The MSX toggles pin 8 of the port, an output that PSG register 15 drives. Each toggle clocks out one 4-bit nibble of signed relative motion, in the order X high, X low, Y high, Y low. A zero-delta alternate cycle follows, so the MSX BIOS mouse detection identifies the device as a mouse, not a trackball. The left and right buttons drive the trigger A/B lines of the port.
 
-| Item | Detail |
-| --- | --- |
-| Implementation | `msx/mouse.py` (protocol state machine), `msx/psg.py` (register 14/15 wiring) |
-| Enable | `--mouse[=1\|2]` (CLI) or `mouse.enabled`/`mouse.port` in `py_emulator.yaml`. The CLI flag always overrides the config file |
-| Host input | SDL relative-mouse mode (cursor hidden and locked to the window). The motion scales with the integer `--scale` factor of the window |
+| Item           | Detail                                                                                                                              |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Implementation | `msx/mouse.py` (protocol state machine), `msx/psg.py` (register 14/15 wiring)                                                       |
+| Enable         | `--mouse[=1\|2]` (CLI) or `mouse.enabled`/`mouse.port` in `py_emulator.yaml`. The CLI flag always overrides the config file         |
+| Host input     | SDL relative-mouse mode (cursor hidden and locked to the window). The motion scales with the integer `--scale` factor of the window |
 
 - Known limitations:
   - The emulator does not implement the NYYRIKKI/Prodatron extended protocol (higher resolution, wheel, extra buttons).
@@ -417,20 +417,20 @@ Since v2.8.0, the core synthesizes the sound chips every frame, also in headless
 
 For each (runtime, game) pair, the author measured 10 runs of 10000 frames each. The score is the average of the remaining 8 runs, after the removal of the fastest and the slowest run. No cassette tape is mounted (the deck is empty) during the runs.
 
-| Platform | Runtime | Game | Avg FPS (`--benchmark`) | vs. 60 fps target |
-| --- | --- | --- | --- | --- |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 307.66 | ~5.1× |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer IV (CPU+V9938+PSG) | 582.56 | ~9.7× |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 102.50 | ~1.7× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 985.60 | ~16.4× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer IV (CPU+V9938+PSG) | 1366.11 | ~22.8× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 718.51 | ~12.0× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 79.88 | ~1.3× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer IV (CPU+V9938+PSG) | 155.55 | ~2.6× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 27.97 | ~0.47× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 222.86 | ~3.7× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer IV (CPU+V9938+PSG) | 285.31 | ~4.8× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 152.18 | ~2.5× |
+| Platform                   | Runtime                      | Game                                                                | Avg FPS (`--benchmark`) | vs. 60 fps target |
+| -------------------------- | ---------------------------- | ------------------------------------------------------------------- | ----------------------- | ----------------- |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13              | MSX1: Salamander (CPU+TMS9918+SCC)                                  | 307.66                  | ~5.1×             |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13              | MSX2: Dragon Slayer IV (CPU+V9938+PSG)                              | 582.56                  | ~9.7×             |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13              | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 102.50                  | ~1.7×             |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC)                                  | 985.60                  | ~16.4×            |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer IV (CPU+V9938+PSG)                              | 1366.11                 | ~22.8×            |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 718.51                  | ~12.0×            |
+| Raspberry Pi 5             | CPython 3.12.13              | MSX1: Salamander (CPU+TMS9918+SCC)                                  | 79.88                   | ~1.3×             |
+| Raspberry Pi 5             | CPython 3.12.13              | MSX2: Dragon Slayer IV (CPU+V9938+PSG)                              | 155.55                  | ~2.6×             |
+| Raspberry Pi 5             | CPython 3.12.13              | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 27.97                   | ~0.47×            |
+| Raspberry Pi 5             | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC)                                  | 222.86                  | ~3.7×             |
+| Raspberry Pi 5             | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer IV (CPU+V9938+PSG)                              | 285.31                  | ~4.8×             |
+| Raspberry Pi 5             | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 152.18                  | ~2.5×             |
 
 Not every tested combination reaches the raw 60 fps target. The smallest margin is ~0.47×, below the target, on Raspberry Pi 5 with CPython and Dragon Slayer VI. The FM-PAC (YM2413) synthesis is the heaviest per-frame load of the target titles. PyPy increases the same case to ~2.5×. The other Raspberry Pi 5 and CPython combinations reach the target: Salamander at ~1.3× and Dragon Slayer IV at ~2.6×.
 
@@ -548,37 +548,37 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 
 ### Command-line options
 
-| Option | Default | Description |
-| --- | --- | --- |
-| `cartridge` | _(none)_ | Path to the slot 1 cartridge ROM. Shorthand for `--slot1 cartridge --mapper1 auto`. Conflicts with `--slot1`/`--extension1` |
-| `--slot1 ROM1`, `--slot ROM1` | _(none)_ | Path to the slot 1 cartridge ROM, as an alternative to the positional `cartridge` argument. Conflicts with that argument and with `--extension1`. `--slot` is an alias for `--slot1`, in the same way as `--mapper` is an alias for `--mapper1` |
-| `--machine MACHINE_ID` | _(auto)_ | Machine configuration ID (e.g. `cbios_msx2_jp`). When omitted, the ROM database selects it automatically |
-| `--speed FLOAT` | `1.0` | Emulation speed multiplier |
-| `--scale N` | `3` | Integer window scale over the 256×212 base resolution (e.g. `2` for a small display, `4` for a large one) |
-| `--mapper TYPE`, `--mapper1 TYPE` | `auto` | Slot 1 mapper (`--mapper` is an alias for `--mapper1`): `auto`, `Mirrored`, `Normal`, `ASCII8`, `ASCII16`, `Konami`, `KonamiSCC`, `Majutsushi`, `ASCII8SRAM2`, `ASCII8SRAM8`, `ASCII16SRAM2`, `ASCII16SRAM8`, `R-Type`, `Page2`, `0x4000`, `0x8000`, `KoeiSRAM32`, `GameMaster2` |
-| `--slot2 ROM2` | _(none)_ | Path to the slot 2 cartridge ROM. Conflicts with `--extension2` |
-| `--mapper2 TYPE` | `auto` | Slot 2 mapper. Same type list as `--mapper1`, including KonamiSCC and every SRAM-backed type. Slot 2 SRAM persists in the same way as slot 1 SRAM. KonamiSCC shares the single SCC chip of the machine with slot 1 (see [Cartridge mappers](#cartridge-mappers)) |
-| `--extension1 ID`, `--extension2 ID`, `--extension ID` | _(none)_ | Overlay a slot 1/slot 2 extension device. See [`docs/README_extension.md`](docs/README_extension.md) for the full list of ids and what each one is. `--extension1` conflicts with the positional `cartridge`, `--slot1`, and `--mapper1`. `--extension2` conflicts with `--slot2`/`--mapper2`. At startup, the emulator rejects the same extension id (or the same ROM, for `--slot1`/`--slot2`) on both slots. `none` forces no extension overlay on that slot, even when `py_emulator.yaml` sets one. This makes `--slotN`/`--mapperN` of that slot available on the CLI. `--extension` is an alias for `--extension2`, with the same meaning it had before `--extension1`/`--extension2` existed |
-| `--fdd1 DSK [DSK ...]` | _(none)_ | Floppy `*.dsk` image(s) for drive A (machines with an FDC, e.g. `hb_f1xd`). The emulator mounts the first image at startup. F6 steps through the list. Writes go back to the file on exit, before a save state, and when the disk leaves its drive. Put the positional `cartridge` before `--fdd1` (or use `--slot1`). Otherwise the emulator reads the cartridge path as one more disk image |
-| `--fdd2 DSK` | _(none)_ | Floppy `*.dsk` image mounted in drive B, on a machine with two drives. Every shipped machine has one drive, so the emulator ignores `--fdd2` with a warning |
-| `--resume [FILE]` | _(none)_ | Resume from `saves/states/latest.state`, or a specific `.state` file. Mount the disks the state was saved with: the first `--fdd1` image must be the one that was in drive A |
-| `--mouse [1\|2]` | _(none)_ | Attach an MSX mouse to a joystick port (bare = Joy2). Overrides the `mouse` settings in `py_emulator.yaml`. Headless runs (`--count-frame`, `--benchmark`) attach it too, so a state saved with a mouse resumes there |
-| `--tape CAS` | _(none)_ | Mount a CAS tape image at startup. Only CAS is supported: convert a WAV recording to CAS with `tools/wav2cas.py`. A missing or invalid file stops with an error. With `--resume`, give the tape that the state was saved with |
-| `--tape-fast`, `--no-tape-fast` | on | Run as fast-forward while a tape is mounted and its motor runs. `--no-tape-fast` loads at normal speed |
-| `--printer-log FILE` | _(none)_ | Attach a printer to the printer port and write the raw bytes it receives to FILE (created or truncated). A machine with no port stops with an error. Cannot be used with `--benchmark` |
-| `--frame-skip MODE` | `auto` | Frame skip: `auto` skips VDP rendering on late frames. `none` disables frame skip |
-| `--debug` | off | Enable structured diagnostic logging to stderr |
-| `--log FILE` | _(none)_ | Write diagnostic log to a file (requires `--debug`) |
-| `--vdp-trace` | off | Enable VDP register-write tracing to stdout |
-| `--vdp-trace-out FILE` | stdout | Write VDP trace to FILE instead of stdout |
-| `--mapper-trace` | off | Enable cartridge mapper bank-switch tracing (MAP\_BANK records) |
-| `--mapper-trace-out FILE` | stdout | Write mapper trace to FILE instead of stdout |
-| `--count-frame N` | _(none)_ | Run exactly N frames headlessly and exit (no SDL window) |
-| `--benchmark [FRAMES]` | _(none)_ | Run headlessly, unthrottled, for FRAMES frames (default: 10000) and report average FPS. Combine with `--resume` to benchmark from a saved scene. Mutually exclusive with `--count-frame` |
-| `--break-point ADDRS` | _(none)_ | Comma-separated hex breakpoint addresses, max 4 |
-| `--watch-point ADDRS` | _(none)_ | Watchpoint addresses, max 4. Append `,r`, `,w`, or `,rw` after each address to restrict to read, write, or both (default: `rw`). Example: `C000,rw,D000,r` |
-| `--rpc` | off | Enable the embedded Unix-socket JSON-RPC control server (interactive run mode). See [Remote control](#remote-control-socket-rpc--mcp) |
-| `--rpc-socket PATH` | `/tmp/py_msx_emu.sock` | Unix socket path for `--rpc` (no effect without `--rpc`) |
+| Option                                                 | Default                | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ------------------------------------------------------ | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cartridge`                                            | _(none)_               | Path to the slot 1 cartridge ROM. Shorthand for `--slot1 cartridge --mapper1 auto`. Conflicts with `--slot1`/`--extension1`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `--slot1 ROM1`, `--slot ROM1`                          | _(none)_               | Path to the slot 1 cartridge ROM, as an alternative to the positional `cartridge` argument. Conflicts with that argument and with `--extension1`. `--slot` is an alias for `--slot1`, in the same way as `--mapper` is an alias for `--mapper1`                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `--machine MACHINE_ID`                                 | _(auto)_               | Machine configuration ID (e.g. `cbios_msx2_jp`). When omitted, the ROM database selects it automatically                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `--speed FLOAT`                                        | `1.0`                  | Emulation speed multiplier                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `--scale N`                                            | `3`                    | Integer window scale over the 256×212 base resolution (e.g. `2` for a small display, `4` for a large one)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `--mapper TYPE`, `--mapper1 TYPE`                      | `auto`                 | Slot 1 mapper (`--mapper` is an alias for `--mapper1`): `auto`, `Mirrored`, `Normal`, `ASCII8`, `ASCII16`, `Konami`, `KonamiSCC`, `Majutsushi`, `ASCII8SRAM2`, `ASCII8SRAM8`, `ASCII16SRAM2`, `ASCII16SRAM8`, `R-Type`, `Page2`, `0x4000`, `0x8000`, `KoeiSRAM32`, `GameMaster2`                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `--slot2 ROM2`                                         | _(none)_               | Path to the slot 2 cartridge ROM. Conflicts with `--extension2`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `--mapper2 TYPE`                                       | `auto`                 | Slot 2 mapper. Same type list as `--mapper1`, including KonamiSCC and every SRAM-backed type. Slot 2 SRAM persists in the same way as slot 1 SRAM. KonamiSCC shares the single SCC chip of the machine with slot 1 (see [Cartridge mappers](#cartridge-mappers))                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `--extension1 ID`, `--extension2 ID`, `--extension ID` | _(none)_               | Overlay a slot 1/slot 2 extension device. See [`docs/README_extension.md`](docs/README_extension.md) for the full list of ids and what each one is. `--extension1` conflicts with the positional `cartridge`, `--slot1`, and `--mapper1`. `--extension2` conflicts with `--slot2`/`--mapper2`. At startup, the emulator rejects the same extension id (or the same ROM, for `--slot1`/`--slot2`) on both slots. `none` forces no extension overlay on that slot, even when `py_emulator.yaml` sets one. This makes `--slotN`/`--mapperN` of that slot available on the CLI. `--extension` is an alias for `--extension2`, with the same meaning it had before `--extension1`/`--extension2` existed |
+| `--fdd1 DSK [DSK ...]`                                 | _(none)_               | Floppy `*.dsk` image(s) for drive A (machines with an FDC, e.g. `hb_f1xd`). The emulator mounts the first image at startup. F6 steps through the list. Writes go back to the file on exit, before a save state, and when the disk leaves its drive. Put the positional `cartridge` before `--fdd1` (or use `--slot1`). Otherwise the emulator reads the cartridge path as one more disk image                                                                                                                                                                                                                                                                                                       |
+| `--fdd2 DSK`                                           | _(none)_               | Floppy `*.dsk` image mounted in drive B, on a machine with two drives. Every shipped machine has one drive, so the emulator ignores `--fdd2` with a warning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `--resume [FILE]`                                      | _(none)_               | Resume from `saves/states/latest.state`, or a specific `.state` file. Mount the disks the state was saved with: the first `--fdd1` image must be the one that was in drive A                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `--mouse [1\|2]`                                       | _(none)_               | Attach an MSX mouse to a joystick port (bare = Joy2). Overrides the `mouse` settings in `py_emulator.yaml`. Headless runs (`--count-frame`, `--benchmark`) attach it too, so a state saved with a mouse resumes there                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `--tape CAS`                                           | _(none)_               | Mount a CAS tape image at startup. Only CAS is supported: convert a WAV recording to CAS with `tools/wav2cas.py`. A missing or invalid file stops with an error. With `--resume`, give the tape that the state was saved with                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `--tape-fast`, `--no-tape-fast`                        | on                     | Run as fast-forward while a tape is mounted and its motor runs. `--no-tape-fast` loads at normal speed                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `--printer-log FILE`                                   | _(none)_               | Attach a printer to the printer port and write the raw bytes it receives to FILE (created or truncated). A machine with no port stops with an error. Cannot be used with `--benchmark`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `--frame-skip MODE`                                    | `auto`                 | Frame skip: `auto` skips VDP rendering on late frames. `none` disables frame skip                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `--debug`                                              | off                    | Enable structured diagnostic logging to stderr                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `--log FILE`                                           | _(none)_               | Write diagnostic log to a file (requires `--debug`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `--vdp-trace`                                          | off                    | Enable VDP register-write tracing to stdout                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `--vdp-trace-out FILE`                                 | stdout                 | Write VDP trace to FILE instead of stdout                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `--mapper-trace`                                       | off                    | Enable cartridge mapper bank-switch tracing (MAP_BANK records)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `--mapper-trace-out FILE`                              | stdout                 | Write mapper trace to FILE instead of stdout                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `--count-frame N`                                      | _(none)_               | Run exactly N frames headlessly and exit (no SDL window)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `--benchmark [FRAMES]`                                 | _(none)_               | Run headlessly, unthrottled, for FRAMES frames (default: 10000) and report average FPS. Combine with `--resume` to benchmark from a saved scene. Mutually exclusive with `--count-frame`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `--break-point ADDRS`                                  | _(none)_               | Comma-separated hex breakpoint addresses, max 4                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `--watch-point ADDRS`                                  | _(none)_               | Watchpoint addresses, max 4. Append `,r`, `,w`, or `,rw` after each address to restrict to read, write, or both (default: `rw`). Example: `C000,rw,D000,r`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `--rpc`                                                | off                    | Enable the embedded Unix-socket JSON-RPC control server (interactive run mode). See [Remote control](#remote-control-socket-rpc--mcp)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `--rpc-socket PATH`                                    | `/tmp/py_msx_emu.sock` | Unix socket path for `--rpc` (no effect without `--rpc`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 
 ### Configuration file (`py_emulator.yaml`)
 
@@ -655,30 +655,30 @@ See `py_emulator.example.yaml` for the full annotated list and the valid button 
 
 ### In-emulator key bindings
 
-| Key | Action |
-| --- | --- |
-| Ctrl + Q | Quit |
-| Ctrl + C | Open the debugger REPL (see [`docs/debugger.md`](docs/debugger.md)). The REPL runs in the terminal that started the emulator |
-| F6 | Mount the next disk image of the `--fdd1` list in drive A (wraps to the first). No effect on machines without an FDC |
-| Shift + F6 | Eject the drive A disk, or insert the current list image again |
-| F7 (hold) | Fast-forward: run without the speed limit while you hold the key |
-| Shift + F7 | Turn fast-forward on or off (latched) |
-| F8 | Save state to `saves/states/<title>_YYYYMMDD_HHMMSS.state`* |
-| F9 | Load most recent save state. The drives must hold the disks they held at the save (it does not swap disks) |
-| F10 | Save screenshot to `saves/screenshots/screenshot_YYYYMMDD_HHMMSS.png` |
-| F11 | Pause or resume (separate from the RPC pause: neither one resumes the other) |
-| Shift + F11 | Toggle fullscreen |
-| F12 | Mute or unmute the audio (the sound chips keep running) |
-| Shift + F12 | Reset the machine |
-| Esc, F1-F5 | Passed through to the MSX keyboard matrix. Shift+F1..F5 give MSX F6-F10 |
-| Ctrl + F1 | MSX HOME |
-| Ctrl + F2 | MSX INS |
-| Ctrl + F3 | MSX DEL |
-| Ctrl + F4 | MSX STOP |
-| Ctrl + F5 | MSX SELECT |
-| Left Alt/Option | MSX GRAPH |
-| Right Alt/Option | MSX CODE/KANA |
-| Shift + 0 | MSX "_", the character that SHIFT+"\" gives. "\" is a JIS-only key that International keyboards do not have |
+| Key              | Action                                                                                                                       |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Ctrl + Q         | Quit                                                                                                                         |
+| Ctrl + C         | Open the debugger REPL (see [`docs/debugger.md`](docs/debugger.md)). The REPL runs in the terminal that started the emulator |
+| F6               | Mount the next disk image of the `--fdd1` list in drive A (wraps to the first). No effect on machines without an FDC         |
+| Shift + F6       | Eject the drive A disk, or insert the current list image again                                                               |
+| F7 (hold)        | Fast-forward: run without the speed limit while you hold the key                                                             |
+| Shift + F7       | Turn fast-forward on or off (latched)                                                                                        |
+| F8               | Save state to `saves/states/<title>_YYYYMMDD_HHMMSS.state`\*                                                                 |
+| F9               | Load most recent save state. The drives must hold the disks they held at the save (it does not swap disks)                   |
+| F10              | Save screenshot to `saves/screenshots/screenshot_YYYYMMDD_HHMMSS.png`                                                        |
+| F11              | Pause or resume (separate from the RPC pause: neither one resumes the other)                                                 |
+| Shift + F11      | Toggle fullscreen                                                                                                            |
+| F12              | Mute or unmute the audio (the sound chips keep running)                                                                      |
+| Shift + F12      | Reset the machine                                                                                                            |
+| Esc, F1-F5       | Passed through to the MSX keyboard matrix. Shift+F1..F5 give MSX F6-F10                                                      |
+| Ctrl + F1        | MSX HOME                                                                                                                     |
+| Ctrl + F2        | MSX INS                                                                                                                      |
+| Ctrl + F3        | MSX DEL                                                                                                                      |
+| Ctrl + F4        | MSX STOP                                                                                                                     |
+| Ctrl + F5        | MSX SELECT                                                                                                                   |
+| Left Alt/Option  | MSX GRAPH                                                                                                                    |
+| Right Alt/Option | MSX CODE/KANA                                                                                                                |
+| Shift + 0        | MSX "\_", the character that SHIFT+"\" gives. "\" is a JIS-only key that International keyboards do not have                 |
 
 \* `<title>` is the game title from the ROM database. If the database has no entry for the cartridge, `<title>` is `"py-msx-emulator"`.
 
@@ -812,16 +812,16 @@ builtin_devices:
 
 Key fields:
 
-| Field | Description |
-| --- | --- |
-| `generation` | `msx1` or `msx2`. Sets the VDP class and the memory model |
-| `cpu.clock_mhz` | Z80A clock frequency (3.579545 MHz for NTSC MSX). Documentation only: the loader does not read it |
-| `cpu.m1_wait_states` | Extra T-states per M1/opcode fetch (optional, default 0 = pure Z80). MSX machines use `1` |
-| `slots.primary.N` | Primary slot N: `{type: cartridge}`, `{type: ram, ...}`, or inline ROM `content` |
-| `slots.primary.N.expanded` | Set `true` to expand into 4 secondary slots |
-| `builtin_devices` | Devices wired directly (not slot-based): VDP, PSG, PPI, RTC, RAM mapper |
-| `overrides` | Per-machine device settings. The loader reads only `keyboard_type` and `control_read` for `ppi8255`, `form` for `printer_port` and `mapper_io`, `read_back` for `psg_ay8910` and `rtc_rp5c01`, and `pin67_read` for `psg_ay8910`. It accepts and ignores other keys (e.g. `vram_kb: 128` for V9938) |
-| `sha1` | Documentation only: the expected SHA1 of the dump. The loader does not compare it with the file, whether it is `null` or a hash. The core checks the SHA1 that the emulator calculates from the bytes it read |
+| Field                      | Description                                                                                                                                                                                                                                                                                         |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `generation`               | `msx1` or `msx2`. Sets the VDP class and the memory model                                                                                                                                                                                                                                           |
+| `cpu.clock_mhz`            | Z80A clock frequency (3.579545 MHz for NTSC MSX). Documentation only: the loader does not read it                                                                                                                                                                                                   |
+| `cpu.m1_wait_states`       | Extra T-states per M1/opcode fetch (optional, default 0 = pure Z80). MSX machines use `1`                                                                                                                                                                                                           |
+| `slots.primary.N`          | Primary slot N: `{type: cartridge}`, `{type: ram, ...}`, or inline ROM `content`                                                                                                                                                                                                                    |
+| `slots.primary.N.expanded` | Set `true` to expand into 4 secondary slots                                                                                                                                                                                                                                                         |
+| `builtin_devices`          | Devices wired directly (not slot-based): VDP, PSG, PPI, RTC, RAM mapper                                                                                                                                                                                                                             |
+| `overrides`                | Per-machine device settings. The loader reads only `keyboard_type` and `control_read` for `ppi8255`, `form` for `printer_port` and `mapper_io`, `read_back` for `psg_ay8910` and `rtc_rp5c01`, and `pin67_read` for `psg_ay8910`. It accepts and ignores other keys (e.g. `vram_kb: 128` for V9938) |
+| `sha1`                     | Documentation only: the expected SHA1 of the dump. The loader does not compare it with the file, whether it is `null` or a hash. The core checks the SHA1 that the emulator calculates from the bytes it read                                                                                       |
 
 To use a custom machine definition, add a new YAML file to `config/machines/` and pass its `id` to `--machine`. At load time, the emulator skips device entries with `implemented: false` in their device YAML and shows a warning.
 
