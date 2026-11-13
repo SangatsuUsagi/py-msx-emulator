@@ -206,8 +206,7 @@ Use PyPy for the full set (all 1604 files take about 3 minutes). On CPython,
 `--limit N` runs only the first N cases of each file. Cases where the core
 deliberately gives another result are listed, with their sources, in
 `tools/singlestep_known_divergences.json` (`--divergences <file>` uses another
-list). They are counted separately and do
-not fail the run. An entry that no longer matches any case is reported as
+list). They are counted separately and do not fail the run. An entry that no longer matches any case is reported as
 stale. The exit status is 1 on any other failure or on a stale entry, else 0.
 
 The cases come from an emulator core, not from real hardware. A port of the
@@ -229,7 +228,8 @@ The file in the repository holds the cases and their checkpoint frames, with
 no hashes yet. The save-state layout still changes (cassette, disk and other
 devices), so the hashes are recorded before the port of the core starts,
 after a review of the core and of the cases. The check reports a case with no
-recorded hashes and does not fail on it.
+recorded hashes and does not fail on it. The exit status is 1 if a case
+differs, else 0.
 
 ```bash
 venvs/py-msx-emulator/bin/python tools/golden_state.py           # check
@@ -301,18 +301,19 @@ python . path/to/game.rom --rpc
 python . path/to/game.rom --rpc --rpc-socket /tmp/py_msx_alt.sock
 ```
 
-The RPC methods cover these functions:
+To enable the server for every run, set it in `py_emulator.yaml`:
 
-- debugger pause/step/continue
-- breakpoints and watchpoints
-- memory read/write, VRAM read, disassembly
-- VDP registers
-- keyboard/joystick injection
-- screenshot capture
-- state save/load
-- disk swap
-- tape insert/eject/rewind/seek
+```yaml
+rpc:
+  enabled: true
+  socket: /tmp/py_msx_emu.sock
+```
 
+`--rpc-socket` overrides `rpc.socket`.
+
+The RPC methods control the debugger, breakpoints and watchpoints, memory,
+VRAM and VDP registers, keyboard and joystick input, screenshots, state
+save/load, the floppy disks and the tape.
 [`../docs/socket-rpc-mcp.md`](../docs/socket-rpc-mcp.md) documents the wire
 protocol and the full method reference.
 
@@ -322,14 +323,15 @@ below. To let an MCP client drive the emulator, see
 
 ### Security notes
 
-- Only local processes that run as the same user can reach the Unix socket.
+- The socket is a Unix domain socket, so only local processes can reach it.
+  It has no authentication of its own. The permissions of the socket file
+  control access. The server creates the socket again at each start, so a
+  `chmod` on the file does not last. On a shared host, use `--rpc-socket` to
+  put the socket in a directory that only you can open.
 - `memory.write` and `cpu.step` change the machine state, so they work
   **only while the emulator is paused**.
-- There is no authentication. On a shared host, restrict the socket with
-  `chmod 600`. If you do not, any other local user can connect and use
-  `memory.write`/`cpu.step` to change the state of the running machine. The
-  server is opt-in (`--rpc`) because it is a control surface. No socket exists
-  unless you ask for one.
+- RPC is off unless you give `--rpc` or set `rpc.enabled` in
+  `py_emulator.yaml`. A normal run opens no socket.
 
 ## `rpc_client.py`
 
@@ -354,16 +356,11 @@ value to `int`, `bool`, or `str`, as applicable. The default socket path is
 ## `mcp_server.py`
 
 Wraps the socket RPC API of the emulator as MCP tools, so an MCP client such as
-Claude Code can control a running emulator directly. The main operations are:
-
-- pause/step/continue the Z80
-- set breakpoints and watchpoints
-- read/write memory, read VRAM
-- inject keyboard and joystick input
-- capture screenshots
-
-See [`../docs/socket-rpc-mcp.md`](../docs/socket-rpc-mcp.md) for the
-architecture and the full tool list.
+Claude Code can control a running emulator directly: pause, step and continue
+the Z80, set breakpoints and watchpoints, read and write memory, inject input,
+and capture screenshots. See
+[`../docs/socket-rpc-mcp.md`](../docs/socket-rpc-mcp.md) for the architecture
+and the full tool list.
 
 The MCP server needs the optional `mcp` dependency:
 
@@ -378,10 +375,16 @@ python . path/to/game.rom --rpc
 # Register this MCP server with Claude Code (once, writes .mcp.json):
 claude mcp add --transport stdio --scope project msx-emulator \
     -- python tools/mcp_server.py
-claude mcp list        # msx-emulator  ●  connected
+claude mcp list        # check the registration
 ```
 
-Claude Code then starts this process automatically for each session. The
-server reads the socket path from `MSX_RPC_SOCKET` (default
+Use a `python` that has the `mcp` package. If you installed it in a virtual
+environment, give the full path of that environment's interpreter in place of
+`python`. Claude Code then starts this process automatically for each
+session. The server reads the socket path from `MSX_RPC_SOCKET` (default
 `/tmp/py_msx_emu.sock`). If you registered the server as above, you can set
 this variable in the `env` block of `.mcp.json`.
+
+The server waits at most 60 seconds for each response from the emulator, so
+keep `timeout_seconds` of `cpu_continue_until_pause` below 60. See
+[Known limitations](../docs/socket-rpc-mcp.md#known-limitations).
