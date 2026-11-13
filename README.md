@@ -2,7 +2,7 @@
 
 A functionally accurate MSX1/MSX2 emulator, written in pure Python 3.10+ and driven by machine-readable component specifications.
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-4685%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-4969%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -13,6 +13,8 @@ Every hardware component is pure Python. A machine-readable specification define
 The core (`msx/`) reads no file and no host clock. Code outside it uses the machine only through the core API (`msx/core_api.py`). `include/msx_core.h` is the C form of that API, at ABI version 1.7, so that a core in another language can replace the Python core. See [Porting the core](docs/technical-implementation.md#porting-the-core).
 
 The emulator needs BIOS ROMs, which the repository does not include. The free [C-BIOS](https://cbios.sourceforge.net/) works for the generic machines. [QUICK_START.md](QUICK_START.md) explains the setup.
+
+To try the emulator, start with [Installation](#installation) and [Usage](#usage). [Emulated hardware](#emulated-hardware) is a reference: it gives the scope and the known limitations of each component.
 
 ### Verified hardware and software
 
@@ -70,9 +72,8 @@ The CPU has the full register file (AF, BC, DE, HL, IX, IY, SP, PC, I, R, and th
 
 - Implementation: `msx/cpu/z80.py`, `msx/cpu/opcodes_main.py`, `msx/cpu/registers.py`
 - Known limitations:
-  - OTIR/INIR and similar block I/O instructions are not cycle-exact across page boundaries.
   - The undocumented flag bits Y (bit 5) and X (bit 3) follow the Zilog NMOS rules, including `BIT n,(HL)` (from the internal MEMPTR register), a repeating block instruction (`LDIR`/`LDDR`/`CPIR`/`CPDR`/`INIR`/`INDR`/`OTIR`/`OTDR`, from its own address) and `SCF`/`CCF` (from whether the previous instruction changed the flags).
-  - The emulator targets a Zilog-compatible Z80. The NEC and Sharp Z80-compatible CPUs in some MSX machines can differ in these flags; that is not modelled.
+  - The emulator targets a Zilog-compatible Z80. A real SONY HB-10 (NEC D780C-1) and HB-F1XD give the NEC NMOS result: `SCF` and `CCF` take Y and X from A only. The emulator does not model this difference.
 
 ### VDP (Video Display Processor): TMS9918A (MSX1)
 
@@ -84,11 +85,11 @@ The VDP has 16 KB of VRAM and 8 control registers. It implements Screen modes 0-
 
 ### VDP: Yamaha V9938 (MSX2)
 
-The VDP has 128 KB of VRAM, 28 control registers, and a programmable 16-color palette (9-bit GRB333). It implements Screen modes 0-8 (SCREEN 0 through SCREEN 8) and the horizontal line interrupt (R#19/R#23, IE1). It also implements the hardware command engine: HMMV, HMMM, HMMC, LMMV, LMMM, LMCM, LMMC, YMMM, LINE, PSET, POINT, SRCH. A banded renderer handles mid-frame register and palette changes.
+The VDP has 128 KB of VRAM, 24 control registers (R#0-R#23), and a programmable 16-color palette (9-bit, 3 bits each of R, G and B). It implements Screen modes 0-8 (SCREEN 0 through SCREEN 8) and the horizontal line interrupt (R#19/R#23, IE1). It also implements the hardware command engine: HMMV, HMMM, HMMC, LMMV, LMMM, LMCM, LMMC, YMMM, LINE, PSET, POINT, SRCH. A banded renderer handles mid-frame register and palette changes.
 
 - Implementation: `msx/vdp/v9938.py`, `msx/vdp/v9938_renderer.py`
 - Known limitations:
-  - Command timing is approximate, not cycle-accurate. The emulator does not faithfully reproduce beam-raced blits or double-buffered VRAM updates within a single frame. Each block command has one cost per byte or dot, measured on a real HB-F1XD with the display and sprites on. The speed-up with less display or sprite VRAM traffic is not modelled.
+  - Command timing is approximate, not cycle-accurate. The emulator does not faithfully reproduce beam-raced blits or double-buffered VRAM updates within a single frame. Each block command has a cost per byte or dot for each kind of raster line: blanking (border, vertical blanking, or display off), display with sprites off, and display with sprites on. The costs come from measurements on a real HB-F1XD. The number of sprites does not change the cost.
   - The emulator does not model the GRAPHIC 6/7 planar VRAM interleave. The real chip splits these modes across two VRAM ICs by even/odd byte. The emulator uses a linear addressing model instead. The result differs in only one case: a program writes VRAM in a planar mode, switches to a non-planar mode without a clear, and reads the data back.
   - The R#13 blink timer advances once per frame. This timer controls the TEXT2 character blink with R#12 colors and the GRAPHIC4-7 automatic page alternation. Thus a mid-frame R#13 write takes effect for the whole frame. The emulator does not implement the undocumented R#1 bit 2 per-line blink timing. The EO bit of R#9 drives the GRAPHIC4-7 automatic even/odd page alternation, as on a real V9938. The half-scanline CRT field-fusion shift that gives true interlaced output (double vertical resolution) is a deliberate non-goal, to keep the renderer simple and fast.
 
@@ -169,11 +170,10 @@ The author physically owns this cartridge and dumped its ROMs. Their SHA1 values
 | --- | --- |
 | Implementation | `msx/kanji.py` (Kanji-ROM device), `msx/mapper.py:HalnoteMapper` (MSX-JE cartridge), `msx/machine_loader.py` (expanded overlay wiring) |
 | Activation | `--extension1`/`--extension2 hbi_j1` (see [`docs/README_extension.md`](docs/README_extension.md#sony-hbi-j1)), ROMs at `roms/hbi_j1/` |
-| Kanji-ROM I/O | Ports `0xD8-0xDB`: bit 1 selects JIS level (1/2), bit 0 selects column/row write vs. data read. A 5-bit read counter auto-increments per read and wraps to byte 0 of the same glyph every 32 reads |
+| Kanji-ROM I/O | Ports `0xD8-0xDB`: bit 1 selects JIS level (1/2), bit 0 selects column/row write vs. data read. A 5-bit read counter auto-increments per read and wraps to byte 0 of the same glyph every 32 reads, as checked on the author's HBI-J1 |
 | Sub-slot 0 | `HalnoteMapper`: 1 MB ROM (128 × 8 KB banks), 16 KB SRAM at `0x0000-0x3FFF` (bank-0 register bit 7), JIS2 dictionary sub-mapper over `0x7000-0x7FFF` (bank-1 register bit 7) |
 | Sub-slot 1 | Flat 32 KB Kanji driver + BASIC ROM at `0x4000-0xBFFF`. `0x0000-0x3FFF`/`0xC000-0xFFFF` are open bus |
 | SRAM persistence | `saves/sram/hbi-j1_msx-je.sram`. The emulator loads it on start and saves it on exit if it changed |
-| Known limitations | The real-hardware behavior after 32 consecutive Kanji-ROM reads without an address rewrite is unverified. This implementation uses the documented openMSX behavior (wrap to byte 0 of the same glyph) as ground truth |
 
 ### Audio output filter
 
@@ -260,7 +260,7 @@ Loading a save state does not swap disks. Each drive must already hold the disk 
 
 - Implementation: `msx/fdc/wd2793.py`, `msx/fdc/interface.py`
 - Known limitations:
-  - No timing model: commands execute instantly. There is no seek/step rate, no revolution-based ID search, and no head-load or verify-after-seek delay.
+  - Only the Type I commands (RESTORE, SEEK, STEP) take time. Their step rate, head settle, and verify run on the machine clock, and the head-load (HLD) output is modelled. The Type II and III commands (sector, address, and track transfers) have no timing model. The DRQ of each byte paces the transfer, and there is no revolution-based ID search.
   - READ TRACK is a bare stub.
   - WRITE TRACK discards the stream content and formats by byte count only. It does not interpret real gap bytes or address marks.
 
@@ -272,7 +272,7 @@ The controller implements SPECIFY, SENSE INTERRUPT STATUS, SENSE DEVICE STATUS, 
 
 - Implementation: `msx/fdc/tc8566af.py`, `msx/fdc/interface.py`
 - Known limitations:
-  - No timing model (the same functional-model approach as the WD2793).
+  - No timing model: every command completes at once.
   - Non-DMA mode only. The emulator does not model the DRQ2/-DACK2/DMATC pins of the chip.
   - The emulator does not implement READ DELETED DATA, WRITE DELETED DATA, READ DIAGNOSTIC, READ ID, or SCAN. The Disk BASIC boot and sector-I/O path does not need them.
   - Like WRITE TRACK on the WD2793, FORMAT discards the streamed descriptor bytes. It only blanks every sector of the current track and side. It does not write real gap, sync, ID, or CRC bytes.
@@ -286,7 +286,7 @@ SHA1 title lookup for automatic game-title detection and mapper selection.
 | --- | --- |
 | Implementation | `host/romdb.py` |
 | Data | `roms/msx_romdb.json` |
-| Source | [openMSX software database](https://github.com/openMSX/openMSX/blob/master/share/softwaredb.xml) (reference only. This project compiled all entries independently as factual data) |
+| Source | [openMSX software database](https://github.com/openMSX/openMSX/blob/master/share/softwaredb.xml) (see [Acknowledgements](#acknowledgements)) |
 | Fallback | If the database has no entry for the ROM, the emulator continues without a title and uses the `--mapper auto` heuristics |
 
 ### I/O bus
@@ -305,9 +305,10 @@ The MSX parallel printer port. The guest writes a byte to the data port, and the
 | `hb_f1xd`, `hb_f1xd_256k`, `fs_a1f` | 0x90-0x97, with mirrors | 0x00 / 0x02 |
 | `cbios_*` | No port | 0xFF |
 
-The status values and the mirrors come from the openMSX machine files. They are not yet verified on real hardware. With no printer attached, the port reads busy.
+The status values and the mirrors come from the openMSX machine files. With no printer attached, the port reads busy. A real HB-F1XD with no printer reads the busy value in the table.
 
 - Implementation: `msx/printer.py`, `host/printer_output.py`
+- Known limitations: a real HB-10 with no printer reads 0x02 on all eight ports 0x90-0x97, but the emulator reads 0xFF. The reads with a printer attached and ready are not yet checked on real hardware.
 
 ### Cassette tape
 
@@ -315,7 +316,12 @@ The cassette port plays a CAS tape image. `--tape FILE.cas` (or the `tape` key o
 
 While a tape is mounted and the motor runs, the frontend runs as fast-forward and the window title shows `[TAPE]`. `--no-tape-fast` loads at normal speed. The speed does not change the result of a load. A save state records the identity of the tape signal (its size and SHA1), the position and the motor. It loads only with the same tape mounted.
 
-- Known limitations: CAS files only. Convert a WAV recording to CAS with `tools/wav2cas.py`. TSX files are not supported. There is no recording (the cassette output, Port C bit 5, is not implemented) and no fast loader: a load takes the time of the real tape, or less with tape-fast. Tape loads are not yet checked on real hardware. While a tape is mounted, the CPU loop counts the clock at each instruction, so CPython runs slightly slower: 2.7% on an MSX2 cartridge game in the benchmark, with the motor off. PyPy shows no measurable difference. Eject the tape to get the full speed back.
+- Known limitations:
+  - CAS files only. Convert a WAV recording to CAS with `tools/wav2cas.py`. TSX files are not supported.
+  - There is no recording: the cassette output (Port C bit 5) is not implemented.
+  - There is no fast loader. A load takes the time of the real tape, or less with tape-fast.
+  - Tape loads are not yet checked on real hardware.
+  - While a tape is mounted, the CPU loop counts the clock at each instruction, so CPython runs slightly slower: 2.7% on an MSX2 cartridge game in the benchmark, with the motor off. PyPy shows no measurable difference. Eject the tape to get the full speed back.
 - Implementation: `msx/cassette.py` (the core plays the signal), `host/cas_image.py` (CAS conversion), `host/tape.py` (the mounted file and its blocks)
 
 ### Keyboard / joystick input
@@ -357,7 +363,7 @@ The frontend also gives the hardware palette, mono audio at 44100 Hz through the
 
 ### State save/load
 
-A complete hardware snapshot in a stdlib JSON container. It includes the CPU, RAM, VDP, PSG, the PPI latches, SCC, FM-PAC/OPLL, mapper banks, FDC register and phase state, the RTC, the mouse, the printer port lines, the cassette position and motor, and the identity of the mounted disk and tape. The file is canonical JSON (RFC 8785): the same machine state always gives the same bytes, also from another implementation. It holds integers only, and byte blobs such as RAM and VRAM as base64 strings. [`msx/snapshot.schema.json`](msx/snapshot.schema.json) (JSON Schema) defines its layout. The format version is 23. Save states from earlier versions do not load. A save state also records the machine configuration that it comes from (see [Machine configuration](#machine-configuration)). It loads only into the same machine, extensions and cartridge ROM. Each save also writes a PNG screenshot and updates the `saves/states/latest.*` symlinks for quick resume. A save records the mounted `.dsk` by path, size, and SHA1. If the current disk does not match at load time, the load fails with an error and does not continue silently. The same applies to the mounted tape.
+A complete hardware snapshot in a stdlib JSON container. It includes the CPU, RAM, VDP, PSG, the PPI latches, SCC, FM-PAC/OPLL, mapper banks, FDC register and phase state, the RTC, the mouse, the printer port lines, the cassette position and motor, and the identity of the mounted disk and tape. The file is canonical JSON (RFC 8785): the same machine state always gives the same bytes, also from another implementation. It holds integers only, and byte blobs such as RAM and VRAM as base64 strings. [`msx/snapshot.schema.json`](msx/snapshot.schema.json) (JSON Schema) defines its layout. The format version is 25. Save states from earlier versions do not load. A save state also records the machine configuration that it comes from (see [Machine configuration](#machine-configuration)). It loads only into the same machine, extensions and cartridge ROM. Each save also writes a PNG screenshot and updates the `saves/states/latest.*` symlinks for quick resume. A save records the mounted `.dsk` by path, size, and SHA1. If the current disk does not match at load time, the load fails with an error and does not continue silently. The same applies to the mounted tape.
 
 - Implementation: `msx/state.py` (snapshot encoding), `msx/snapshot.schema.json` (layout), `host/state_files.py` (files)
 
@@ -823,7 +829,7 @@ To use a custom machine definition, add a new YAML file to `config/machines/` an
 
 ## Running tests
 
-The test suite has 4685 tests and covers all major components. It includes unit tests for individual opcodes and hardware registers, and integration tests that connect multiple components. It also includes scenario-level tests, with conditions that come directly from the component specs.
+The test suite has 4969 tests and covers all major components. It includes unit tests for individual opcodes and hardware registers, and integration tests that connect multiple components. It also includes scenario-level tests, with conditions that come directly from the component specs.
 
 ```bash
 # Install the development dependencies (pytest, ruff, mypy)
@@ -919,7 +925,7 @@ py-msx-emulator/
 ├── allium/                # Allium behaviour specs, verifying spec/implementation alignment (not published yet)
 ├── openspec/
 │   └── specs/             # Component specifications (not published yet)
-├── tests/                 # Test suite (4685 tests)
+├── tests/                 # Test suite (4969 tests)
 ├── py_emulator.example.yaml # Annotated example of the optional config file
 ├── QUICK_START.md         # Requirements, installation, BIOS setup
 ├── CHANGELOG.md           # Version history
