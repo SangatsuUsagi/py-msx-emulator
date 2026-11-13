@@ -325,13 +325,13 @@ class Debugger:
 
     def _cmd_dump(self, args: list[str]) -> None:
         if not args:
-            print("Usage: dump ADDR [SIZE]")
+            print("Usage: dm ADDR [SIZE]")
             return
         try:
             addr = int(args[0], 16) & 0xFFFF
             size = int(args[1], 16) if len(args) > 1 else 128
         except ValueError:
-            print("dump: invalid address or size (hex expected)")
+            print("dm: invalid address or size (hex expected)")
             return
 
         for row in range(0, size, 16):

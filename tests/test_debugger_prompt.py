@@ -223,13 +223,13 @@ class TestDump:
         dbg = Debugger(_make_machine())
         dbg._cmd_dump(["ZZZZ"])
         out = capsys.readouterr().out
-        assert "invalid" in out.lower()
+        assert out.startswith("dm: invalid")
 
     def test_no_args(self, capsys):
         dbg = Debugger(_make_machine())
         dbg._cmd_dump([])
         out = capsys.readouterr().out
-        assert "Usage" in out
+        assert out.strip() == "Usage: dm ADDR [SIZE]"
 
 
 # ---------------------------------------------------------------------------
