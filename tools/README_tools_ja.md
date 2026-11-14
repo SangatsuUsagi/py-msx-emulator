@@ -164,9 +164,9 @@ venvs/pypy-msx-emulator/bin/python tools/run_singlestep_tests.py \
 
 ## `golden_state.py`
 
-コア全体を決まった条件で動かし（ゴールデンケース）、結果のハッシュを `tests/vectors/golden_state.json` と比べます。各ケースでは、機種、スロット 1 のカートリッジ（なくてもよい）、入力の手順、確認点のフレームを指定します。確認点ごとに、次の 3 種類の SHA-256 を記録できます。セーブステートの各セクション（`cpu`、`memory`、`vdp`、`psg` など）、そのフレームまでの音声、そのフレームの映像です。一致しないときは、ケース、フレーム、セクションを示します。
+コア全体を決まった条件で動かし（ゴールデンケース）、結果のハッシュを `tests/vectors/golden_state.json` と比べます。各ケースでは、機種、スロット 1 のカートリッジ（なくてもよい）、入力の手順、確認点のフレームを指定します。確認点ごとに、次の 3 種類の SHA-256 を記録できます。セーブステートの各セクション（`cpu`、`memory`、`vdp`、`psg` など）、そのフレームまでの音声、そのフレームの映像です。一致しないときは、ケース、フレーム、一致しないハッシュ（ステートのセクション、`audio`、`video`）を示します。
 
-リポジトリのファイルには、ケースと確認点のフレームだけがあり、ハッシュはまだ記録していません。カセットやディスクなどの機器への対応で、セーブステートのレイアウトはまだ変わります。そのため、ハッシュはコアの移植を始める前に、コアとケースを見直してから記録します。照合では、ハッシュのないケースはその旨を表示するだけで、失敗にはしません。一致しないケースがあると終了コードは 1、それ以外は 0 です。
+リポジトリのファイルには、すべての確認点の音声と映像のハッシュを記録しています。ステートのセクションのハッシュは、動作が変わらなくても、セーブステートのレイアウトが変わるたびに変わります（カセットやディスクなどの機器への対応）。そのため、これはコアの移植を始める前に、コアとケースを見直してから記録します。照合では、確認点に記録してあるハッシュだけを比べます。ハッシュのないケースはその旨を表示するだけで、失敗にはしません。一致しないケースがあると終了コードは 1、それ以外は 0 です。
 
 ROM はこのリポジトリに含めていません。ROM がないケースや、SHA-256 が違うケースは、パスを示してスキップします。次のファイルを置いてください。
 
@@ -191,18 +191,19 @@ make
 
 ```bash
 venvs/py-msx-emulator/bin/python tools/golden_state.py           # 照合
-venvs/py-msx-emulator/bin/python tools/golden_state.py --write   # 記録
+venvs/py-msx-emulator/bin/python tools/golden_state.py --write   # 音声と映像を記録
+venvs/py-msx-emulator/bin/python tools/golden_state.py --write --state   # ステートのセクションも記録
 ```
 
-変更で動作が変わらないことを確かめるには、変更の前にファイルのコピーへハッシュを記録し、変更の後にそのコピーと照合します。
+音声や映像のハッシュが変わっても、コアのどの部分が変わったかはわかりません。調べるには、変更の前にファイルのコピーへすべてのハッシュを記録し、変更の後にそのコピーと照合します。一致しないときは、ステートのセクションも示します。
 
 ```bash
 cp tests/vectors/golden_state.json /tmp/golden_state.json
-venvs/py-msx-emulator/bin/python tools/golden_state.py --write --vectors /tmp/golden_state.json  # 変更の前
+venvs/py-msx-emulator/bin/python tools/golden_state.py --write --state --vectors /tmp/golden_state.json  # 変更の前
 venvs/py-msx-emulator/bin/python tools/golden_state.py --vectors /tmp/golden_state.json          # 変更の後
 ```
 
-ハッシュをリポジトリに記録した後は、意図して動作を変えたときに `--write` で記録し直し、新しいファイルをコミットします。テストスイートでは `tests/test_golden_state.py` が同じ照合をします。
+意図して動作を変えたときは、`--write` で記録し直し、新しいファイルをコミットします。テストスイートでは `tests/test_golden_state.py` が同じ照合をします。
 
 ハッシュはこのコアの動作を記録したもので、実機の動作ではありません。ハッシュで動作の変化を検出でき、コアを移植したときも、同じケースを動かして Python のコアと比べられます。
 

@@ -935,7 +935,7 @@ Python のコードは、`allium/core-frontend.allium` にある言語に依存�
 4. **残りの音源とカートリッジ**：SCC、DAC とキークリック、表を持たせた OPLL、SRAM 付きのマッパー。
 5. **FDC**（WD2793 と TC8566AF）とメディアの API。
 
-どの段階でも、Python のコアとバイト列を比べます。同じ設定と同じ `InputFrame` の列から、同じ `video_pixels`、音声、スナップショットのバイト列が得られなければなりません。`tests/vectors/golden_state.json` には、このような実行を定めてあります。3 機種の C-BIOS の起動と 2 本のホームブリューのゲームについて、入力の手順と、決まった確認点のフレームを持ちます。確認点ごとに、スナップショットの部分ごと、音声、映像の SHA-256 を記録できます。スナップショットの形はまだ変わるので、ハッシュは移植を始める前に、コアとケースを見直してから記録します。`tools/golden_state.py` は Python のコアをこのファイルと照合し、移植したコアも同じファイルを読めます。必要な ROM と置き場所は [`tools/README_tools_ja.md`](../tools/README_tools_ja.md#golden_statepy) に書いてあります。
+どの段階でも、Python のコアとバイト列を比べます。同じ設定と同じ `InputFrame` の列から、同じ `video_pixels`、音声、スナップショットのバイト列が得られなければなりません。`tests/vectors/golden_state.json` には、このような実行を定めてあります。3 機種の C-BIOS の起動と 2 本のホームブリューのゲームについて、入力の手順と、決まった確認点のフレームを持ちます。確認点ごとに音声と映像の SHA-256 を記録してあり、スナップショットの部分ごとの SHA-256 も記録できます。スナップショットの形はまだ変わるので、部分ごとのハッシュは移植を始める前に、コアとケースを見直してから記録します。`tools/golden_state.py` は Python のコアをこのファイルと照合し、移植したコアも同じファイルを読めます。必要な ROM と置き場所は [`tools/README_tools_ja.md`](../tools/README_tools_ja.md#golden_statepy) に書いてあります。
 
 ## 移植性
 

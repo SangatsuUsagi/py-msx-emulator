@@ -53,7 +53,7 @@ def _check_or_skip(case: dict[str, Any]) -> list[str]:
     has none."""
     if not golden.has_recorded_hashes(case):
         pytest.skip(f"{case['id']}: no recorded hashes")
-    return golden.differences(case, _run_or_skip(case))
+    return golden.differences(case, _run_once(case["id"]))
 
 
 def _frame_only(case: dict[str, Any]) -> dict[str, Any]:
@@ -79,6 +79,19 @@ def test_a_mismatch_names_where_it_differs() -> None:
     assert golden.differences(case, actual) == []
     case["checkpoints"][1]["state"]["vdp"] = "0" * 64
     assert golden.differences(case, actual) == [f"{_BOOT} frame 300: state section vdp differs"]
+
+
+def test_an_audio_or_video_mismatch_names_where_it_differs() -> None:
+    # dev-golden-state "An audio or video mismatch names where it differs".
+    actual = _run_once(_BOOT)
+    case = copy.deepcopy(_CASES[_BOOT])
+    case["checkpoints"] = [point.as_json(with_state=False) for point in actual]
+    assert golden.differences(case, actual) == []
+    case["checkpoints"][1]["audio"] = "0" * 64
+    assert golden.differences(case, actual) == [f"{_BOOT} frame 300: audio differs"]
+    case["checkpoints"][1]["audio"] = actual[1].audio
+    case["checkpoints"][0]["video"] = "0" * 64
+    assert golden.differences(case, actual) == [f"{_BOOT} frame 60: video differs"]
 
 
 def test_a_case_with_no_recorded_hashes_is_skipped() -> None:
@@ -107,6 +120,24 @@ def test_a_checkpoint_may_give_its_frame_only(tmp_path: Path) -> None:
     assert golden.differences(read, actual) == [f"{_BOOT} frame 300: audio differs"]
 
 
+def test_a_checkpoint_may_give_audio_and_video_only(tmp_path: Path) -> None:
+    # dev-golden-state "A checkpoint may give audio and video only": the file
+    # is read, the checkpoint counts as recorded, and the state is not compared.
+    path = tmp_path / "vectors.json"
+    case = _frame_only(_CASES[_BOOT])
+    case["checkpoints"] = [{"frame": 60, "audio": "1" * 64, "video": "2" * 64},
+                           {"frame": 300, "audio": "3" * 64, "video": "4" * 64}]
+    golden.write_vectors({"cases": [case], "format_version": 1}, path)
+    read = golden.read_vectors(path)["cases"][0]
+    assert read["checkpoints"] == case["checkpoints"]
+    assert golden.has_recorded_hashes(read)
+    actual = [golden.Checkpoint(frame=60, state={"cpu": "5" * 64}, audio="1" * 64,
+                                video="2" * 64),
+              golden.Checkpoint(frame=300, state={"cpu": "6" * 64}, audio="3" * 64,
+                                video="4" * 64)]
+    assert golden.differences(read, actual) == []
+
+
 def test_the_check_does_not_fail_on_a_case_with_no_recorded_hashes(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -117,6 +148,37 @@ def test_the_check_does_not_fail_on_a_case_with_no_recorded_hashes(
     assert golden.main(["--vectors", str(path)]) == 0
     lines = capsys.readouterr().out.splitlines()
     assert lines == [f"{case_id}: no recorded hashes" for case_id in sorted(_CASES)]
+
+
+def _write_boot_case(tmp_path: Path, argv: list[str]) -> list[dict[str, Any]]:
+    """The checkpoints that `--write` records for the boot case alone."""
+    _run_once(_BOOT)  # skips when C-BIOS is absent
+    path = tmp_path / "vectors.json"
+    golden.write_vectors({"cases": [_frame_only(_CASES[_BOOT])], "format_version": 1}, path)
+    assert golden.main([*argv, "--vectors", str(path)]) == 0
+    checkpoints: list[dict[str, Any]] = golden.read_vectors(path)["cases"][0]["checkpoints"]
+    return checkpoints
+
+
+def test_writing_records_audio_and_video_by_default(tmp_path: Path) -> None:
+    # dev-golden-state "Writing records audio and video by default".
+    checkpoints = _write_boot_case(tmp_path, ["--write"])
+    assert [set(point) for point in checkpoints] == [{"frame", "audio", "video"}] * 2
+    assert checkpoints == [point.as_json(with_state=False) for point in _run_once(_BOOT)]
+
+
+def test_writing_with_state_records_every_hash(tmp_path: Path) -> None:
+    # dev-golden-state "Writing with --state records every hash".
+    checkpoints = _write_boot_case(tmp_path, ["--write", "--state"])
+    assert [set(point) for point in checkpoints] == [{"frame", "state", "audio", "video"}] * 2
+    assert checkpoints == [point.as_json() for point in _run_once(_BOOT)]
+
+
+def test_the_repository_file_records_audio_and_video() -> None:
+    # dev-golden-state "Every checkpoint has audio and video".
+    for case in _DATA["cases"]:
+        for point in case["checkpoints"]:
+            assert set(point) == {"frame", "audio", "video"}, case["id"]
 
 
 def test_a_missing_rom_skips_the_case(tmp_path: Path) -> None:
@@ -183,6 +245,7 @@ def test_rendering_does_not_change_a_result() -> None:
     # dev-golden-state "Rendering does not change a result".
     rendered = _run_or_skip(_CASES[_BOOT], render_all=True)
     assert [point.state for point in rendered] == [point.state for point in _run_once(_BOOT)]
+    assert [point.audio for point in rendered] == [point.audio for point in _run_once(_BOOT)]
 
 
 def test_writing_twice_gives_the_same_file(tmp_path: Path) -> None:

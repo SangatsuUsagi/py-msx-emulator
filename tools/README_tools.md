@@ -164,9 +164,9 @@ The cases come from an emulator core, not from real hardware. A port of the core
 
 ## `golden_state.py`
 
-Runs fixed cases of the whole core and compares hashes of the result with `tests/vectors/golden_state.json`. A case gives a machine, an optional slot 1 cartridge, an input script and checkpoint frames. At each checkpoint the file can record the SHA-256 of each section of the saved state (`cpu`, `memory`, `vdp`, `psg` and the others), of the audio up to that frame, and of the video of that frame. A mismatch names the case, the frame and the section.
+Runs fixed cases of the whole core and compares hashes of the result with `tests/vectors/golden_state.json`. A case gives a machine, an optional slot 1 cartridge, an input script and checkpoint frames. At each checkpoint the file can record the SHA-256 of each section of the saved state (`cpu`, `memory`, `vdp`, `psg` and the others), of the audio up to that frame, and of the video of that frame. A mismatch names the case, the frame and the hash that differs (a state section, `audio` or `video`).
 
-The file in the repository holds the cases and their checkpoint frames, with no hashes yet. The save-state layout still changes (cassette, disk and other devices), so the hashes are recorded before the port of the core starts, after a review of the core and of the cases. The check reports a case with no recorded hashes and does not fail on it. The exit status is 1 if a case differs, else 0.
+The file in the repository records the audio and video hashes of every checkpoint. The state-section hashes change whenever the save-state layout changes (cassette, disk and other devices), even when the behavior does not. So they are recorded only before the port of the core starts, after a review of the core and of the cases. The check compares only the hashes that a checkpoint records. It reports a case with no recorded hashes and does not fail on it. The exit status is 1 if a case differs, else 0.
 
 The ROMs are not in this repository. A case whose ROM is absent, or has another SHA-256, is skipped, with the path in the reason. Put these files in place:
 
@@ -191,18 +191,19 @@ Then copy `build/uno.rom` to `roms/homebrew/uno-msx2.rom`, and check that its SH
 
 ```bash
 venvs/py-msx-emulator/bin/python tools/golden_state.py           # check
-venvs/py-msx-emulator/bin/python tools/golden_state.py --write   # record
+venvs/py-msx-emulator/bin/python tools/golden_state.py --write   # record audio and video
+venvs/py-msx-emulator/bin/python tools/golden_state.py --write --state   # also record the state sections
 ```
 
-To check that a change keeps the behavior, record the hashes in a copy of the file before the change, and check against the copy after the change:
+A changed audio or video hash does not name the part of the core that changed. To find it, record every hash in a copy of the file before the change, and check against the copy after the change. A mismatch then also names the state section:
 
 ```bash
 cp tests/vectors/golden_state.json /tmp/golden_state.json
-venvs/py-msx-emulator/bin/python tools/golden_state.py --write --vectors /tmp/golden_state.json  # before the change
+venvs/py-msx-emulator/bin/python tools/golden_state.py --write --state --vectors /tmp/golden_state.json  # before the change
 venvs/py-msx-emulator/bin/python tools/golden_state.py --vectors /tmp/golden_state.json          # after the change
 ```
 
-After the hashes are in the repository, run `--write` after an intended change of behavior and commit the new file. `tests/test_golden_state.py` runs the same check in the test suite.
+After an intended change of behavior, run `--write` and commit the new file. `tests/test_golden_state.py` runs the same check in the test suite.
 
 The hashes record what this core does, not what a real MSX does. They catch a change in behavior, and a port of the core can compare itself with the Python core by running the same cases.
 

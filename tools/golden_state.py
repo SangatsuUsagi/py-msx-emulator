@@ -5,12 +5,19 @@
 optional slot 1 cartridge (a path and its SHA-256), the cartridge mapper, an
 input script of key matrix cells held from a first to a last frame (frames
 count from 1), and checkpoint frames. For each checkpoint N the file can
-record the SHA-256 of each top-level section of ``save_state()`` after frame
-N, as RFC 8785 canonical JSON, the SHA-256 of the audio of frames 1 to N, and
-the SHA-256 of the video pixels of frame N. Only checkpoint frames are
-rendered. A checkpoint with no hashes gives its frame only, and is not
-compared. The hashes are recorded with ``--write`` before the native core
-port starts, after the save-state layout is settled.
+record the SHA-256 of the audio of frames 1 to N, the SHA-256 of the video
+pixels of frame N, and the SHA-256 of each top-level section of
+``save_state()`` after frame N, as RFC 8785 canonical JSON. Only checkpoint
+frames are rendered. A checkpoint has one of three forms: ``{frame}``,
+``{frame, audio, video}`` or ``{frame, state, audio, video}``. A checkpoint
+with no hashes is not compared, and only the hashes that a checkpoint
+records are compared.
+
+``--write`` records the audio and video hashes, and ``--write --state`` also
+records the state-section hashes. The repository file records audio and
+video only: the state sections change with every save-state layout change,
+so they are recorded before the native core port starts, after the layout is
+settled.
 
 The hashes record what this core does, not what a real MSX does: a mismatch
 is a change in behavior, or a difference between two implementations of the
@@ -25,6 +32,8 @@ SHA-256, is skipped.
 Usage:
     venvs/py-msx-emulator/bin/python tools/golden_state.py           # check
     venvs/py-msx-emulator/bin/python tools/golden_state.py --write   # record
+    venvs/py-msx-emulator/bin/python tools/golden_state.py --write --state \
+        --vectors /tmp/golden_state.json                          # record all
 
 The exit status is 1 when a case differs, else 0. A skipped case and a case
 with no recorded hashes do not fail the check, and ``--write`` keeps the old
@@ -73,7 +82,11 @@ class Checkpoint:
     audio: str
     video: str
 
-    def as_json(self) -> dict[str, Any]:
+    def as_json(self, with_state: bool = True) -> dict[str, Any]:
+        """The checkpoint for the file, without the state sections unless
+        `with_state`."""
+        if not with_state:
+            return {"frame": self.frame, "audio": self.audio, "video": self.video}
         return {"frame": self.frame, "state": self.state, "audio": self.audio,
                 "video": self.video}
 
@@ -184,30 +197,29 @@ def run_case(
 
 
 def has_recorded_hashes(case: dict[str, Any]) -> bool:
-    """Whether a checkpoint of the case gives its hashes."""
+    """Whether a checkpoint of the case gives any hash."""
     for point in case["checkpoints"]:
-        if "state" in point:
+        if "state" in point or "audio" in point or "video" in point:
             return True
     return False
 
 
 def differences(case: dict[str, Any], actual: list[Checkpoint]) -> list[str]:
     """One line for each hash of `actual` that differs from the case's
-    record, naming the case, the frame and the hash. A checkpoint with no
-    recorded hashes is not compared."""
+    record, naming the case, the frame and the hash. Only the hashes that a
+    checkpoint records are compared."""
     lines: list[str] = []
     recorded = {int(point["frame"]): point for point in case["checkpoints"]}
     for point in actual:
         expected = recorded[point.frame]
-        if "state" not in expected:
-            continue
         where = f"{case['id']} frame {point.frame}"
-        for name in sorted(set(expected["state"]) | set(point.state)):
-            if expected["state"].get(name) != point.state.get(name):
-                lines.append(f"{where}: state section {name} differs")
-        if expected["audio"] != point.audio:
+        if "state" in expected:
+            for name in sorted(set(expected["state"]) | set(point.state)):
+                if expected["state"].get(name) != point.state.get(name):
+                    lines.append(f"{where}: state section {name} differs")
+        if "audio" in expected and expected["audio"] != point.audio:
             lines.append(f"{where}: audio differs")
-        if expected["video"] != point.video:
+        if "video" in expected and expected["video"] != point.video:
             lines.append(f"{where}: video differs")
     return lines
 
@@ -215,7 +227,9 @@ def differences(case: dict[str, Any], actual: list[Checkpoint]) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Write or check the golden core hashes.")
     parser.add_argument("--write", action="store_true",
-                        help="record the hashes instead of checking them")
+                        help="record the audio and video hashes instead of checking them")
+    parser.add_argument("--state", action="store_true",
+                        help="with --write, also record the state-section hashes")
     parser.add_argument("--vectors", type=Path, default=DEFAULT_VECTORS,
                         help="the data file (default: tests/vectors/golden_state.json)")
     args = parser.parse_args(argv)
@@ -232,7 +246,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{case['id']}: skipped, {exc}")
             continue
         if args.write:
-            case["checkpoints"] = [point.as_json() for point in actual]
+            case["checkpoints"] = [point.as_json(args.state) for point in actual]
             print(f"{case['id']}: recorded")
             continue
         lines = differences(case, actual)
