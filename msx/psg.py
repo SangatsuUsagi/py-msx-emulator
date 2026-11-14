@@ -444,18 +444,20 @@ class PSG:
                 # Repeating shape: reload counter; alternate reverses the ramp
                 # immediately (no dwell). (_env_step & 0x20) is the underflow bit.
                 #
-                # PORT-NOTE: _env_step went negative here (Python ints are
-                #   arbitrary precision, so -1 & 0x20 == 0x20).
-                # Rust equivalent: an unsigned type wraps instead of going
-                #   negative; use a signed i32 for _env_step, or an explicit
-                #   wrapping_sub + bit-5 check, so bit 5 still flags the -1
-                #   boundary.
-                # C++ equivalent: same — use a signed int32_t, since unsigned
-                #   underflow wraps to a large positive value instead.
+                # PORT-NOTE: _env_step is -1 here (Python ints are arbitrary
+                #   precision, so -1 & 0x20 == 0x20 and -1 & 0x1F == 0x1F).
+                #   An unsigned type also gives these two results, because the
+                #   underflow wraps to all ones. The hazard is the test above:
+                #   `_env_step < 0` is never true for an unsigned type, so the
+                #   end of the period is never found.
+                # Rust equivalent: a signed i32 for _env_step, or a test of
+                #   _env_step == 0 before the decrement. An unsigned underflow
+                #   also panics in a debug build.
+                # C++ equivalent: same — a signed int32_t, or the test before
+                #   the decrement.
                 # Kept as-is here because: semantic necessity, not
-                #   performance — Python's arbitrary-precision two's-complement
-                #   masking already gives the signed-underflow behavior a port
-                #   must introduce explicitly via a signed type.
+                #   performance — the decrement and the sign test are the
+                #   shape of the hardware counter.
                 if self._env_alternate and (self._env_step & 0x20):
                     self._env_attack ^= 0x1F
                 self._env_step &= 0x1F
