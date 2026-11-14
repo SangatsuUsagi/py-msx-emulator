@@ -164,17 +164,20 @@ venvs/pypy-msx-emulator/bin/python tools/run_singlestep_tests.py \
 
 ## `golden_state.py`
 
-コア全体を決まった条件で動かし（ゴールデンケース）、結果のハッシュを `tests/vectors/golden_state.json` と比べます。各ケースでは、機種、スロット 1 のカートリッジ（なくてもよい）、入力の手順、確認点のフレームを指定します。確認点ごとに、次の 3 種類の SHA-256 を記録できます。セーブステートの各セクション（`cpu`、`memory`、`vdp`、`psg` など）、そのフレームまでの音声、そのフレームの映像です。一致しないときは、ケース、フレーム、一致しないハッシュ（ステートのセクション、`audio`、`video`）を示します。
+コア全体を決まった条件で動かし（ゴールデンケース）、結果のハッシュを `tests/vectors/golden_state.json` と比べます。各ケースでは、機種、スロット 1 のカートリッジ、ドライブ A のディスクイメージ、テープイメージ（この 3 つはなくてもよい）、入力の手順、確認点のフレームを指定します。確認点ごとに、次の 3 種類の SHA-256 を記録できます。セーブステートの各セクション（`cpu`、`memory`、`vdp`、`psg` など）、そのフレームまでの音声、そのフレームの映像です。一致しないときは、ケース、フレーム、一致しないハッシュ（ステートのセクション、`audio`、`video`）を示します。
 
 リポジトリのファイルには、すべての確認点の音声と映像のハッシュを記録しています。ステートのセクションのハッシュは、動作が変わらなくても、セーブステートのレイアウトが変わるたびに変わります（カセットやディスクなどの機器への対応）。そのため、これはコアの移植を始める前に、コアとケースを見直してから記録します。照合では、確認点に記録してあるハッシュだけを比べます。ハッシュのないケースはその旨を表示するだけで、失敗にはしません。一致しないケースがあると終了コードは 1、それ以外は 0 です。
 
-ROM はこのリポジトリに含めていません。ROM がないケースや、SHA-256 が違うケースは、パスを示してスキップします。次のファイルを置いてください。
+ROM とメディアはこのリポジトリに含めていません。ROM やメディアがないケースや、メディアの SHA-256 が違うケースは、パスを示してスキップします。テープとディスクのケースには、`hb_10` と `hb_f1xd` の ROM も必要です。このリポジトリでは入手元を示せないので、自分の実機から吸い出してください。ない場合、この 2 ケースはスキップします。メディアは `tests/media/` に置きます。このディレクトリは `.gitignore` で除外しています。
 
 | パス                           | 入手元                                                                                                                                                   | SHA-256                                                            |
 | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
 | `roms/cbios/`                  | [C-BIOS](https://cbios.sourceforge.net/)。C-BIOS の機種を使うときと同じ                                                                                  | （照合しない）                                                     |
-| `roms/homebrew/noborunoca.rom` | [NOBORUNOCA v1.0.2](https://github.com/h1romas4/noborunoca/releases/tag/v1.0.2) の `noborunoca.rom`（MIT）                                               | `57a3be2fe5c3190daa3e69cf23cd262cdc8af98c60993ea941d43c815cbb25f6` |
-| `roms/homebrew/uno-msx2.rom`   | [commodore-uno v1.0.5](https://github.com/jhonnaker1/commodore-uno/releases/tag/v1.0.5) の `uno-msx2.rom`（MIT）、または v1.0.5 をビルドしたもの（下記） | `74d74d8720e623a7b8aadce8e0b0c9094f8a2162339a8e7c677c7732f673ddb8` |
+| `roms/hb_10/`、`roms/hb_f1xd/` | 自分の Sony HB-10 と HB-F1XD（ファイル名は `config/machines/hb_10.yaml` と `hb_f1xd.yaml`）                                                              | （照合しない）                                                     |
+| `tests/media/noborunoca.rom`   | [NOBORUNOCA v1.0.2](https://github.com/h1romas4/noborunoca/releases/tag/v1.0.2) の `noborunoca.rom`（MIT）                                               | `57a3be2fe5c3190daa3e69cf23cd262cdc8af98c60993ea941d43c815cbb25f6` |
+| `tests/media/uno-msx2.rom`     | [commodore-uno v1.0.5](https://github.com/jhonnaker1/commodore-uno/releases/tag/v1.0.5) の `uno-msx2.rom`（MIT）、または v1.0.5 をビルドしたもの（下記） | `74d74d8720e623a7b8aadce8e0b0c9094f8a2162339a8e7c677c7732f673ddb8` |
+| `tests/media/FREEBALL.DSK`     | [MSX-10Liners](https://github.com/martin-rizzo/MSX-10Liners) のコミット `0d7d72c` の `05_FREEBALL/FREEBALL.DSK`（CC0）                                   | `359115f0bf475a172d7815d53a23ee447bd2f4c38e0ebc0b93116566642bdbcf` |
+| `tests/media/FREEBALL.cas`     | 同じコミットの `05_FREEBALL/FREEBALL.BAS` を変換したもの（下記）                                                                                         | `6fb1112f51e6013538c9686fda7811ab11563c43f76d4084dbfd591a20a6d20d` |
 
 表の SHA-256 は、commodore-uno v1.0.5 をビルドした ROM の値です。バージョンが違うと ROM が変わることがあるので、v1.0.5 を使ってください。v1.0.5 と v1.0.10 のリリースの `uno-msx2.rom` は、このビルドと同じ SHA-256 です。ROM をビルドするには、[SDCC](https://sdcc.sourceforge.net/) と GNU make を使います。
 
@@ -187,7 +190,18 @@ cd commodore-uno/msx2
 make
 ```
 
-できた `build/uno.rom` を `roms/homebrew/uno-msx2.rom` にコピーし、SHA-256 が表の値と一致することを確かめてください。
+できた `build/uno.rom` を `tests/media/uno-msx2.rom` にコピーし、SHA-256 が表の値と一致することを確かめてください。
+
+ディスクとテープのケースは、同じゲームを使います。ディスクイメージと BASIC のプログラムをダウンロードし、プログラムを [`bas2wav.py`](#bas2wavpy) と [`wav2cas.py`](#wav2caspy) で CAS ファイルに変換します。`FREEBALL.BAS` は `tests/media/` に残してください。テストがもう一度変換し、結果の SHA-256 を確かめます。
+
+```bash
+BASE=https://raw.githubusercontent.com/martin-rizzo/MSX-10Liners/0d7d72ca0fc2184b612e068e93837b27556f4ed7/05_FREEBALL
+mkdir -p tests/media
+curl -o tests/media/FREEBALL.DSK $BASE/FREEBALL.DSK
+curl -o tests/media/FREEBALL.BAS $BASE/FREEBALL.BAS
+venvs/py-msx-emulator/bin/python tools/bas2wav.py tests/media/FREEBALL.BAS /tmp/FREEBALL.wav
+venvs/py-msx-emulator/bin/python tools/wav2cas.py /tmp/FREEBALL.wav tests/media/FREEBALL.cas
+```
 
 ```bash
 venvs/py-msx-emulator/bin/python tools/golden_state.py           # 照合

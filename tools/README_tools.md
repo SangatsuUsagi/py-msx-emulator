@@ -164,17 +164,20 @@ The cases come from an emulator core, not from real hardware. A port of the core
 
 ## `golden_state.py`
 
-Runs fixed cases of the whole core and compares hashes of the result with `tests/vectors/golden_state.json`. A case gives a machine, an optional slot 1 cartridge, an input script and checkpoint frames. At each checkpoint the file can record the SHA-256 of each section of the saved state (`cpu`, `memory`, `vdp`, `psg` and the others), of the audio up to that frame, and of the video of that frame. A mismatch names the case, the frame and the hash that differs (a state section, `audio` or `video`).
+Runs fixed cases of the whole core and compares hashes of the result with `tests/vectors/golden_state.json`. A case gives a machine, an optional slot 1 cartridge, an optional disk image for drive A, an optional tape image, an input script and checkpoint frames. At each checkpoint the file can record the SHA-256 of each section of the saved state (`cpu`, `memory`, `vdp`, `psg` and the others), of the audio up to that frame, and of the video of that frame. A mismatch names the case, the frame and the hash that differs (a state section, `audio` or `video`).
 
 The file in the repository records the audio and video hashes of every checkpoint. The state-section hashes change whenever the save-state layout changes (cassette, disk and other devices), even when the behavior does not. So they are recorded only before the port of the core starts, after a review of the core and of the cases. The check compares only the hashes that a checkpoint records. It reports a case with no recorded hashes and does not fail on it. The exit status is 1 if a case differs, else 0.
 
-The ROMs are not in this repository. A case whose ROM is absent, or has another SHA-256, is skipped, with the path in the reason. Put these files in place:
+The ROMs and media are not in this repository. A case whose ROM or medium is absent, or whose medium has another SHA-256, is skipped, with the path in the reason. The tape and disk cases also need the ROMs of the `hb_10` and `hb_f1xd` machines. This repository gives no source for them: dump them from your own machine, or those two cases are skipped. Put the media in `tests/media/`, which `.gitignore` excludes:
 
 | Path                           | Source                                                                                                                                        | SHA-256                                                            |
 | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
 | `roms/cbios/`                  | [C-BIOS](https://cbios.sourceforge.net/), as for any C-BIOS machine                                                                           | (not checked)                                                      |
-| `roms/homebrew/noborunoca.rom` | `noborunoca.rom` of [NOBORUNOCA v1.0.2](https://github.com/h1romas4/noborunoca/releases/tag/v1.0.2) (MIT)                                     | `57a3be2fe5c3190daa3e69cf23cd262cdc8af98c60993ea941d43c815cbb25f6` |
-| `roms/homebrew/uno-msx2.rom`   | `uno-msx2.rom` of [commodore-uno v1.0.5](https://github.com/jhonnaker1/commodore-uno/releases/tag/v1.0.5) (MIT), or a build of v1.0.5 (below) | `74d74d8720e623a7b8aadce8e0b0c9094f8a2162339a8e7c677c7732f673ddb8` |
+| `roms/hb_10/`, `roms/hb_f1xd/` | Your own Sony HB-10 and HB-F1XD (file names in `config/machines/hb_10.yaml` and `hb_f1xd.yaml`)                                               | (not checked)                                                      |
+| `tests/media/noborunoca.rom`   | `noborunoca.rom` of [NOBORUNOCA v1.0.2](https://github.com/h1romas4/noborunoca/releases/tag/v1.0.2) (MIT)                                     | `57a3be2fe5c3190daa3e69cf23cd262cdc8af98c60993ea941d43c815cbb25f6` |
+| `tests/media/uno-msx2.rom`     | `uno-msx2.rom` of [commodore-uno v1.0.5](https://github.com/jhonnaker1/commodore-uno/releases/tag/v1.0.5) (MIT), or a build of v1.0.5 (below) | `74d74d8720e623a7b8aadce8e0b0c9094f8a2162339a8e7c677c7732f673ddb8` |
+| `tests/media/FREEBALL.DSK`     | `05_FREEBALL/FREEBALL.DSK` of [MSX-10Liners](https://github.com/martin-rizzo/MSX-10Liners) at commit `0d7d72c` (CC0)                          | `359115f0bf475a172d7815d53a23ee447bd2f4c38e0ebc0b93116566642bdbcf` |
+| `tests/media/FREEBALL.cas`     | `05_FREEBALL/FREEBALL.BAS` of the same commit, converted (below)                                                                              | `6fb1112f51e6013538c9686fda7811ab11563c43f76d4084dbfd591a20a6d20d` |
 
 The SHA-256 in the table comes from a build of commodore-uno v1.0.5. Another version can give another ROM, so use v1.0.5. The `uno-msx2.rom` files of the v1.0.5 and v1.0.10 releases have the same SHA-256 as that build. To build the ROM, use [SDCC](https://sdcc.sourceforge.net/) and GNU make:
 
@@ -187,7 +190,18 @@ cd commodore-uno/msx2
 make
 ```
 
-Then copy `build/uno.rom` to `roms/homebrew/uno-msx2.rom`, and check that its SHA-256 is the value in the table.
+Then copy `build/uno.rom` to `tests/media/uno-msx2.rom`, and check that its SHA-256 is the value in the table.
+
+The disk and tape cases use the same game. Download the disk image and the BASIC program, and convert the program to a CAS file with [`bas2wav.py`](#bas2wavpy) and [`wav2cas.py`](#wav2caspy). Keep `FREEBALL.BAS` in `tests/media/`: a test converts it again and checks the SHA-256 of the result.
+
+```bash
+BASE=https://raw.githubusercontent.com/martin-rizzo/MSX-10Liners/0d7d72ca0fc2184b612e068e93837b27556f4ed7/05_FREEBALL
+mkdir -p tests/media
+curl -o tests/media/FREEBALL.DSK $BASE/FREEBALL.DSK
+curl -o tests/media/FREEBALL.BAS $BASE/FREEBALL.BAS
+venvs/py-msx-emulator/bin/python tools/bas2wav.py tests/media/FREEBALL.BAS /tmp/FREEBALL.wav
+venvs/py-msx-emulator/bin/python tools/wav2cas.py /tmp/FREEBALL.wav tests/media/FREEBALL.cas
+```
 
 ```bash
 venvs/py-msx-emulator/bin/python tools/golden_state.py           # check

@@ -5,6 +5,8 @@ from __future__ import annotations
 import copy
 import importlib.util
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -12,13 +14,15 @@ from typing import Any
 
 import pytest
 
+_ROOT = Path(__file__).parent.parent
 
-def _load_tool() -> ModuleType:
-    path = Path(__file__).parent.parent / "tools" / "golden_state.py"
-    spec = importlib.util.spec_from_file_location("golden_state", path)
+
+def _load_tool(name: str = "golden_state") -> ModuleType:
+    path = _ROOT / "tools" / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    sys.modules["golden_state"] = module
+    sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -29,6 +33,9 @@ _CASES = {case["id"]: case for case in _DATA["cases"]}
 _BOOT = "cbios-msx1-boot"
 _MSX1_HOMEBREW = "msx1-homebrew-scroller"
 _MSX2_HOMEBREW = "msx2-homebrew-card-game"
+_TAPE = "msx1-tape-breakout"
+_DISK = "msx2-disk-breakout"
+_MEDIA_KEYS = ("cartridge", "disk", "tape")
 # Runs with only the checkpoint frames rendered, by case id: several
 # scenarios read the same run.
 _RUNS: dict[str, list[Any]] = {}
@@ -213,8 +220,8 @@ def _plain_values(node: object) -> bool:
 def test_a_case_is_self_contained() -> None:
     # dev-golden-state "A case is self-contained".
     assert _plain_values(_DATA)
-    keys = {"id", "machine", "cartridge_path", "cartridge_sha256", "mapper", "inputs",
-            "checkpoints"}
+    keys = {"id", "machine", "cartridge_path", "cartridge_sha256", "mapper", "disk_path",
+            "disk_sha256", "tape_path", "tape_sha256", "inputs", "checkpoints"}
     for case in _DATA["cases"]:
         assert set(case) == keys
     case = _CASES[_MSX1_HOMEBREW]
@@ -223,6 +230,29 @@ def test_a_case_is_self_contained() -> None:
     pressed[8] = 0xFE
     assert golden.key_matrix(case, 400) == bytes(pressed)
     assert golden.key_matrix(case, 406) == bytes([0xFF] * 11)
+
+
+def test_a_case_gives_a_disk_and_a_tape_or_none() -> None:
+    # dev-golden-state "A case gives a disk and a tape or none".
+    for case in _DATA["cases"]:
+        for kind in ("disk", "tape"):
+            pair = (case[f"{kind}_path"], case[f"{kind}_sha256"])
+            assert pair == (None, None) or all(isinstance(value, str) for value in pair)
+
+
+def test_every_medium_is_under_tests_media() -> None:
+    # dev-golden-state "Every medium is under tests/media".
+    for case in _DATA["cases"]:
+        for kind in _MEDIA_KEYS:
+            path = case[f"{kind}_path"]
+            assert path is None or path.startswith("tests/media/"), (case["id"], path)
+
+
+def test_the_media_directory_is_not_in_the_repository() -> None:
+    # dev-golden-state "The media directory is not in the repository".
+    result = subprocess.run(["git", "check-ignore", "-q", "tests/media/FREEBALL.DSK"],
+                            cwd=_ROOT, check=False)
+    assert result.returncode == 0
 
 
 def test_a_section_hash_is_the_hash_of_its_canonical_json() -> None:
@@ -257,8 +287,8 @@ def test_writing_twice_gives_the_same_file(tmp_path: Path) -> None:
     assert first.read_bytes() == second.read_bytes() == golden.DEFAULT_VECTORS.read_bytes()
 
 
-def test_five_cases() -> None:
-    # dev-golden-state "Five cases".
+def test_seven_cases() -> None:
+    # dev-golden-state "Seven cases".
     machines = {case_id: case["machine"] for case_id, case in _CASES.items()}
     assert machines == {
         "cbios-msx1-boot": "cbios_msx1",
@@ -266,7 +296,11 @@ def test_five_cases() -> None:
         "cbios-msx2-pal-boot": "cbios_msx2_eu",
         _MSX1_HOMEBREW: "cbios_msx1",
         _MSX2_HOMEBREW: "cbios_msx2",
+        _TAPE: "hb_10",
+        _DISK: "hb_f1xd",
     }
+    assert _CASES[_TAPE]["tape_path"] is not None and _CASES[_TAPE]["disk_path"] is None
+    assert _CASES[_DISK]["disk_path"] is not None and _CASES[_DISK]["tape_path"] is None
     for case_id in ("cbios-msx1-boot", "cbios-msx2-boot", "cbios-msx2-pal-boot"):
         assert _CASES[case_id]["cartridge_path"] is None
         assert _CASES[case_id]["inputs"] == []
@@ -275,7 +309,7 @@ def test_five_cases() -> None:
 def test_the_file_pins_the_msx1_release() -> None:
     # dev-golden-state "The file pins the MSX1 release".
     case = _CASES[_MSX1_HOMEBREW]
-    assert case["cartridge_path"] == "roms/homebrew/noborunoca.rom"
+    assert case["cartridge_path"] == "tests/media/noborunoca.rom"
     assert case["cartridge_sha256"] == (
         "57a3be2fe5c3190daa3e69cf23cd262cdc8af98c60993ea941d43c815cbb25f6"
     )
@@ -284,7 +318,7 @@ def test_the_file_pins_the_msx1_release() -> None:
 def test_the_file_pins_the_msx2_release() -> None:
     # dev-golden-state "The file pins the MSX2 release".
     case = _CASES[_MSX2_HOMEBREW]
-    assert case["cartridge_path"] == "roms/homebrew/uno-msx2.rom"
+    assert case["cartridge_path"] == "tests/media/uno-msx2.rom"
     assert case["cartridge_sha256"] == (
         "74d74d8720e623a7b8aadce8e0b0c9094f8a2162339a8e7c677c7732f673ddb8"
     )
@@ -313,3 +347,139 @@ def test_the_msx2_homebrew_case_reaches_a_cpu_turn() -> None:
     assert after
     for point in after:
         assert point.state["vdp"] != title.state["vdp"]
+
+
+def test_the_file_pins_the_disk() -> None:
+    # dev-golden-state "The file pins the disk".
+    case = _CASES[_DISK]
+    assert case["disk_path"] == "tests/media/FREEBALL.DSK"
+    assert case["disk_sha256"] == (
+        "359115f0bf475a172d7815d53a23ee447bd2f4c38e0ebc0b93116566642bdbcf"
+    )
+
+
+def test_the_file_pins_the_tape() -> None:
+    # dev-golden-state "The file pins the tape".
+    case = _CASES[_TAPE]
+    assert case["tape_path"] == "tests/media/FREEBALL.cas"
+    assert case["tape_sha256"] == (
+        "6fb1112f51e6013538c9686fda7811ab11563c43f76d4084dbfd591a20a6d20d"
+    )
+
+
+# On the JIS layout, SHIFT with the "2" key types a double quote.
+_JIS_SHIFTED = {"2": '"'}
+_SHIFT = (6, 0)
+
+
+def _typed_text(inputs: list[dict[str, int]]) -> str:
+    """The text that `inputs` type on the Japanese keyboard matrix, checking
+    that each key is released before the next is pressed."""
+    from frontend.sdl2_keyboard import KEY_MATRIX_JP
+
+    names: dict[tuple[int, int], str] = {}
+    for code, cell in KEY_MATRIX_JP.items():
+        if 32 < code < 127 or code == 13:
+            names.setdefault(cell, "\r" if code == 13 else chr(code).upper())
+    presses: dict[tuple[int, int], list[tuple[int, int]]] = {}
+    for held in inputs:
+        presses.setdefault((held["first"], held["last"]), []).append((held["row"], held["bit"]))
+    text = ""
+    last = 0
+    for (first, end), cells in sorted(presses.items()):
+        assert first > last
+        last = end
+        shifted = _SHIFT in cells
+        keys = [cell for cell in cells if cell != _SHIFT]
+        assert len(keys) == 1
+        char = names[keys[0]]
+        text += _JIS_SHIFTED[char] if shifted else char
+    return text
+
+
+def test_the_tape_case_types_its_load_command() -> None:
+    # dev-golden-state "The tape case types its load command".
+    case = _CASES[_TAPE]
+    prompt = case["checkpoints"][0]["frame"]
+    title = case["checkpoints"][1]["frame"]
+    typing = [held for held in case["inputs"] if held["first"] < title]
+    assert min(held["first"] for held in typing) > prompt
+    assert _typed_text(typing) == 'RUN"CAS:"\r'
+
+
+def test_the_tape_case_runs_the_game_from_tape() -> None:
+    # dev-golden-state "The tape case runs the game from tape": the first
+    # checkpoint is at the BASIC prompt, the second on the game's title.
+    points = _run_once(_TAPE)
+    assert points[1].state["vdp"] != points[0].state["vdp"]
+
+
+def test_the_disk_case_boots_the_game_from_disk() -> None:
+    # dev-golden-state "The disk case boots the game from disk", and the disk
+    # image is only read.
+    case = _CASES[_DISK]
+    title = case["checkpoints"][1]["frame"]
+    assert all(held["first"] > title for held in case["inputs"])
+    points = _run_once(_DISK)
+    assert points[1].state["vdp"] != points[0].state["vdp"]
+    image = (_ROOT / case["disk_path"]).read_bytes()
+    assert golden.sha256_hex(image) == case["disk_sha256"]
+
+
+def _root_without_roms(tmp_path: Path) -> Path:
+    os.symlink(_ROOT / "config", tmp_path / "config")
+    return tmp_path
+
+
+@pytest.mark.parametrize(("case_id", "kind", "rom"), [
+    (_TAPE, "tape", "roms/hb_10/"),
+    (_DISK, "disk", "roms/hb_f1xd/"),
+])
+def test_a_missing_machine_rom_skips_the_case(
+    tmp_path: Path, case_id: str, kind: str, rom: str
+) -> None:
+    # dev-golden-state "A missing machine ROM skips the case".
+    case = copy.deepcopy(_CASES[case_id])
+    case[f"{kind}_path"] = None
+    case[f"{kind}_sha256"] = None
+    with pytest.raises(pytest.skip.Exception, match=rom):
+        _run_or_skip(case, root=_root_without_roms(tmp_path))
+
+
+@pytest.mark.parametrize("case_id", [_TAPE, _DISK])
+def test_a_missing_disk_or_tape_image_skips_the_case(tmp_path: Path, case_id: str) -> None:
+    # dev-golden-state "A missing disk or tape image skips the case".
+    case = _CASES[case_id]
+    path = case["tape_path"] or case["disk_path"]
+    with pytest.raises(pytest.skip.Exception, match=f"{path} is absent"):
+        _run_or_skip(case, root=tmp_path)
+
+
+@pytest.mark.parametrize("case_id", [_TAPE, _DISK])
+def test_a_disk_or_tape_image_with_another_hash_is_skipped(
+    tmp_path: Path, case_id: str
+) -> None:
+    # dev-golden-state "A disk or tape image with another hash is skipped".
+    case = _CASES[case_id]
+    kind = "tape" if case["tape_path"] else "disk"
+    medium = tmp_path / case[f"{kind}_path"]
+    medium.parent.mkdir(parents=True)
+    medium.write_bytes(bytes(16))
+    with pytest.raises(golden.MissingRom) as exc_info:
+        golden.medium_bytes(case, kind, tmp_path)
+    assert case[f"{kind}_path"] in str(exc_info.value)
+    assert golden.sha256_hex(bytes(16)) in str(exc_info.value)
+    assert case[f"{kind}_sha256"] in str(exc_info.value)
+
+
+def test_the_conversion_gives_the_pinned_tape(tmp_path: Path) -> None:
+    # dev-golden-state "The conversion gives the pinned tape".
+    source = _ROOT / "tests" / "media" / "FREEBALL.BAS"
+    if not source.is_file():
+        pytest.skip("tests/media/FREEBALL.BAS is absent")
+    bas2wav = _load_tool("bas2wav")
+    wav2cas = _load_tool("wav2cas")
+    assert bas2wav.main([str(source), str(tmp_path / "FREEBALL.wav")]) == 0
+    assert wav2cas.main([str(tmp_path / "FREEBALL.wav"), str(tmp_path / "FREEBALL.cas")]) == 0
+    cas = (tmp_path / "FREEBALL.cas").read_bytes()
+    assert golden.sha256_hex(cas) == _CASES[_TAPE]["tape_sha256"]

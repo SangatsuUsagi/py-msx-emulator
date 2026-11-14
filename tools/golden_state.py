@@ -2,7 +2,8 @@
 """Run the golden cases of the whole core and write or check their hashes.
 
 ``tests/vectors/golden_state.json`` lists fixed runs ("cases"): a machine, an
-optional slot 1 cartridge (a path and its SHA-256), the cartridge mapper, an
+optional slot 1 cartridge, the cartridge mapper, an optional disk image for
+drive A, an optional tape image (each medium a path and its SHA-256), an
 input script of key matrix cells held from a first to a last frame (frames
 count from 1), and checkpoint frames. For each checkpoint N the file can
 record the SHA-256 of the audio of frames 1 to N, the SHA-256 of the video
@@ -24,10 +25,13 @@ is a change in behavior, or a difference between two implementations of the
 core. The file is language-neutral, so a port of the core can read the same
 cases (dev-golden-state).
 
-The ROMs are not part of this repository. C-BIOS comes from the machine YAML
-paths (``roms/cbios/``), and each homebrew ROM from the path its case gives
-(see tools/README_tools.md). A case whose ROM is absent, or has another
-SHA-256, is skipped.
+The ROMs and media are not part of this repository. The machine ROMs come
+from the machine YAML paths: ``roms/cbios/`` for the C-BIOS cases, and
+``roms/hb_10/`` and ``roms/hb_f1xd/`` for the tape and disk cases. Each
+cartridge, disk and tape image comes from the path its case gives, under
+``tests/media/`` (see tools/README_tools.md). A case whose ROM or medium is
+absent, or whose medium has another SHA-256, is skipped. The disk image is
+only read: a run never writes it back.
 
 Usage:
     venvs/py-msx-emulator/bin/python tools/golden_state.py           # check
@@ -59,6 +63,7 @@ from host.machine_config import (  # noqa: E402
     load_machine_config,
     load_machine_spec,
 )
+from host.tape import TapeDeck  # noqa: E402
 from msx.boundary import STATUS_OK  # noqa: E402
 from msx.core_api import CoreApi  # noqa: E402
 from msx.input import InputFrame  # noqa: E402
@@ -70,7 +75,7 @@ _KEY_ROWS = 11
 
 
 class MissingRom(Exception):
-    """A ROM that a case needs is absent or has another SHA-256."""
+    """A ROM or medium that a case needs is absent or has another SHA-256."""
 
 
 @dataclass(frozen=True)
@@ -115,36 +120,53 @@ def write_vectors(data: dict[str, Any], path: Path = DEFAULT_VECTORS) -> None:
     path.write_bytes(canonical_json(data) + b"\n")
 
 
-def cartridge_bytes(case: dict[str, Any], root: Path = _PROJECT_ROOT) -> bytes | None:
-    """The case's cartridge ROM, or None for a boot case. Raises MissingRom
-    when the file is absent or its SHA-256 differs."""
-    if case["cartridge_path"] is None:
+def medium_bytes(
+    case: dict[str, Any], kind: str, root: Path = _PROJECT_ROOT
+) -> bytes | None:
+    """The case's `kind` medium ("cartridge", "disk" or "tape"), or None
+    when the case has none. Raises MissingRom when the file is absent or its
+    SHA-256 differs."""
+    name = case[f"{kind}_path"]
+    if name is None:
         return None
-    path = root / str(case["cartridge_path"])
+    path = root / str(name)
     if not path.is_file():
-        raise MissingRom(f"{case['cartridge_path']} is absent")
+        raise MissingRom(f"{name} is absent")
     data = path.read_bytes()
     actual = sha256_hex(data)
-    if actual != case["cartridge_sha256"]:
-        raise MissingRom(
-            f"{case['cartridge_path']} has SHA-256 {actual}, "
-            f"expected {case['cartridge_sha256']}"
-        )
+    expected = case[f"{kind}_sha256"]
+    if actual != expected:
+        raise MissingRom(f"{name} has SHA-256 {actual}, expected {expected}")
     return data
 
 
+def cartridge_bytes(case: dict[str, Any], root: Path = _PROJECT_ROOT) -> bytes | None:
+    """The case's cartridge ROM, or None for a case with no cartridge."""
+    return medium_bytes(case, "cartridge", root)
+
+
 def build_case_machine(case: dict[str, Any], root: Path = _PROJECT_ROOT) -> CoreApi:
-    """The case's machine, built as the CLI's headless run builds it."""
+    """The case's machine, built as the CLI's headless run builds it, with
+    its disk in drive A and its tape mounted. The disk is never written back
+    (the run ignores the loaded config's disk_files)."""
     cartridge = cartridge_bytes(case, root)
+    disk = None
+    if medium_bytes(case, "disk", root) is not None:
+        disk = root / str(case["disk_path"])
+    tape = None
+    if medium_bytes(case, "tape", root) is not None:
+        tape = root / str(case["tape_path"])
     config_dir = root / "config"
     try:
         spec = load_machine_spec(
             case["machine"], config_dir, load_device_registry(config_dir), root
         )
         if cartridge is None:
-            loaded = load_machine_config(spec)
+            loaded = load_machine_config(spec, fdd1=disk)
         else:
-            loaded = load_machine_config(spec, cartridge1=cartridge, mapper1=case["mapper"])
+            loaded = load_machine_config(
+                spec, cartridge1=cartridge, mapper1=case["mapper"], fdd1=disk
+            )
     except MachineLoadError as exc:
         if "not found" in str(exc):
             raise MissingRom(str(exc)) from exc
@@ -152,6 +174,8 @@ def build_case_machine(case: dict[str, Any], root: Path = _PROJECT_ROOT) -> Core
     result = create_machine(loaded.config)
     if result.status != STATUS_OK or result.machine is None:
         raise MachineLoadError(result.error_text.decode("utf-8"))
+    if tape is not None:
+        TapeDeck(result.machine).load(tape)
     return result.machine
 
 
