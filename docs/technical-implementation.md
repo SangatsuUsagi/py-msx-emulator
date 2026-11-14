@@ -4,6 +4,8 @@
 
 This document describes the internal structure of the MSX1/MSX2 emulator: the CPU, interrupts, I/O, the VDP, audio, frame pacing, memory and slots, the floppy and cassette interfaces, and the machine YAML and its loader. It ends with the core boundary and notes for a port to another language.
 
+This document is for contributors who know Python but not the MSX hardware. If you are new, read the three parties in [Core boundary and porting guide](#core-boundary-and-porting-guide) first. Each component section can be read on its own.
+
 - [CPU emulation](#cpu-emulation)
 - [Interrupt management](#interrupt-management)
 - [I/O bus](#io-bus)
@@ -44,8 +46,8 @@ When the main dispatcher finds a prefix byte, it fetches the next byte and dispa
 
 1. If `nmi_pending` is set, push PC, jump to 0x0066, and return 11 T-states.
 2. If `iff1` and `int_pending` are both true and `ei_pending` is not set, accept the interrupt. Modes 0 and 1 (the MSX puts 0xFF, `RST 38H`, on the bus): push PC, jump to 0x0038, 13 T-states. Mode 2: push PC, read the 16-bit handler address from `(I << 8) | 0xFF`, jump to it, 19 T-states.
-3. If `ei_pending` is set, clear it. EI enables interrupts only after the instruction that follows it. Step 2 checks `ei_pending` and this step clears it, so an interrupt that step 2 would accept waits for exactly one step.
-4. If `halted` is set, advance `4 + m1_wait_states` T-states without an opcode fetch. The value is 4 on a pure Z80 core, and the MSX M1 wait also applies.
+3. If `ei_pending` is set, clear it. Step 2 checks `ei_pending` and this step clears it, so EI enables interrupts only after the instruction that follows it.
+4. If `halted` is set, advance `4 + m1_wait_states` T-states without an opcode fetch. The value is 4 on a pure Z80 core, and the MSX M1 wait (one T-state per opcode-fetch cycle, see below) also applies.
 5. Otherwise, record the current PC in the clock record's `instruction_pc` (`msx/clock.py`), move `q_next` into `q` and clear `q_next` (Q, read by `SCF`/`CCF`), fetch the opcode byte and increment R (inline in `step()`), and dispatch.
 
 `_fetch()` reads one byte from `read_byte(PC)` and increments PC. R increments once per M1 cycle: `step()` does it inline for the primary opcode, and `_fetch_opcode()` does it for the opcode byte after a CB/DD/ED/FD prefix. Operand and displacement bytes, including the displacement and final opcode of `DDCB`/`FDCB`, do not touch R. Only bits 0-6 of R count. Bit 7 is sticky and changes only through a full register write such as `LD R,A`. A real SONY HB-F1XD and HB-10 give the same R steps.
@@ -60,13 +62,14 @@ This budget is different from the Z80A clock (3.579545 MHz) divided by a flat 60
 
 A real MSX adds one wait state to every Z80 M1 cycle (opcode fetch). The core models this with a configurable `Z80.m1_wait_states` field. The default is `0`, a pure datasheet Z80, so the core stays reusable for non-MSX systems. MSX machine YAMLs set `cpu.m1_wait_states: 1`, and `machine_loader` passes this value to the `Z80(...)` constructor.
 
-The core adds the wait per M1 cycle, not per instruction byte. `step()` adds `m1_wait_states` for the primary opcode fetch. Each prefix handler (`_op_prefix_cb/dd/fd/ed`) adds it again for the second M1. Thus:
+The core adds the wait per M1 cycle, not per instruction byte. `step()` adds `m1_wait_states` for the primary opcode fetch. Each prefix handler (`_op_prefix_cb/dd/fd/ed`) adds it again for the second M1:
 
 - An unprefixed instruction gets `+1`, whatever its operand length.
 - A `CB`/`ED`/`DD`/`FD` instruction gets `+2`.
 - `DDCB`/`FDCB` gets `+2`, because the displacement and the final opcode are operand reads, not M1 cycles.
+- Each extra prefix of a chain (`DD DD`, `DD FD`, ...) adds `4 + m1_wait_states`. The last prefix selects IX or IY. The whole chain runs in one `step()`, so a run of DD/FD bytes with no end never leaves the step, as in openMSX.
 
-This matches openMSX (`Z80.hh` `WAIT_CYCLES = 1`, M1 base 5 vs datasheet 4). The frame budget stays at 59,736 T-states, so the wait decreases the number of instructions per frame. Code with timing from the CPU loop (e.g. software-PCM audio from a delay loop) thus runs at the correct hardware rate, not ~13% fast. The wait has no effect on the interrupt cadence (VBlank) or the PSG pitch.
+This matches openMSX (`Z80.hh` `WAIT_CYCLES = 1`, M1 base 5 vs datasheet 4). The frame budget stays at 59,736 T-states, so the wait decreases the number of instructions per frame. Code with timing from the CPU loop (e.g. software-PCM audio from a delay loop) runs at the correct hardware rate, not ~13% fast. The wait has no effect on the interrupt cadence (VBlank) or the pitch of the PSG (AY-3-8910 sound chip).
 
 ### Instruction exercisers
 
@@ -104,7 +107,7 @@ For each case, the tool builds a `Z80` with flat 64 KB RAM and no M1 wait state.
 | JSON field            | Core state                                                                                  |
 | --------------------- | ------------------------------------------------------------------------------------------- |
 | `a f b c d e h l i r` | `A`, `F`, the bytes of `BC`/`DE`/`HL`, `I`, `R`                                             |
-| `pc sp ix iy wz`      | `PC`, `SP`, `IX`, `IY`, `WZ` (MEMPTR)                                                       |
+| `pc sp ix iy wz`      | `PC`, `SP`, `IX`, `IY`, `WZ` (MEMPTR, the Z80 internal address register)                    |
 | `af_ bc_ de_ hl_`     | the shadow registers                                                                        |
 | `iff1 iff2 im`        | `iff1`, `iff2`, `im`                                                                        |
 | `ei`                  | `ei_pending` (EI just ran: no interrupt before the next instruction)                        |
@@ -123,7 +126,7 @@ The tool does not compare the bus state of each cycle. It also does not compare 
 - `core` and `tests`: the behavior of the core and of the tests
 - `reference`: the sources
 
-A failing case of a listed file counts as a known divergence when the entry's `fields` include all of its differing fields. The tool reports an entry as stale when it matches no case among the files run. A fix in the core thus also needs a change to the list. The exit status is 0 when there is no other failure and no stale entry. It is 1 otherwise, and 2 for a command-line error.
+A failing case of a listed file counts as a known divergence when the entry's `fields` include all of its differing fields. The tool reports an entry as stale when it matches no case among the files run, so a fix in the core also needs a change to the list. The exit status is 0 when there is no other failure and no stale entry. It is 1 otherwise, and 2 for a command-line error.
 
 Result: the core matches all 1,604,000 cases except two groups. Both groups are known divergences:
 
@@ -132,11 +135,13 @@ Result: the core matches all 1,604,000 cases except two groups. Both groups are 
 
 The tests come from an emulator core, so they do not decide either case. Both questions stay open.
 
-A port of the core to another language can use the same JSON files and the same divergence list. They check the port one instruction at a time, with no MSX machine and no stubbed operating system. A cycle-accurate port can also check its bus activity against `cycles`. This tool does not use `cycles`.
+A port of the core to another language can use the same JSON files and the same divergence list. They check the port one instruction at a time, with no MSX machine and no stubbed operating system. A cycle-accurate port can also check its bus activity against `cycles`.
 
 ### Known limitations
 
-The undocumented flag bits Y (bit 5) and X (bit 3) follow the documented per-instruction rules, including three less common sources: `BIT n,(HL)` takes them from the internal MEMPTR register, a repeating block instruction (`LDIR`/`LDDR`/`CPIR`/`CPDR`/`INIR`/`INDR`/`OTIR`/`OTDR`) takes them from its own address, and `SCF`/`CCF` depend on whether the previous instruction changed the flags. `SCF`/`CCF` follow the Zilog NMOS rule; NEC and ST CMOS Z80s differ ([Undocumented Flags](https://github.com/hoglet67/Z80Decoder/wiki/Undocumented-Flags)). The emulator targets a Zilog-compatible Z80. A real SONY HB-10 (NEC D780C-1) and HB-F1XD give the NEC NMOS result: `SCF` and `CCF` take Y and X from A only. The emulator does not model this difference. TODO: run the same test with Zilog, Sharp and NEC Z80s in one HB-10 (through a CPU socket) and record each result. A repeating `INIR`/`INDR`/`OTIR`/`OTDR` also changes H and P/V, and sets MEMPTR to its own address + 1 ([redcode/Z80](https://github.com/redcode/Z80)).
+The emulator models the undocumented flags Y and X, except the per-CPU difference in `SCF`/`CCF`. The undocumented flag bits Y (bit 5) and X (bit 3) follow the per-instruction rules that the sources below describe, including three less common sources: `BIT n,(HL)` takes them from the internal MEMPTR register, a repeating block instruction (`LDIR`/`LDDR`/`CPIR`/`CPDR`/`INIR`/`INDR`/`OTIR`/`OTDR`) takes them from its own address, and `SCF`/`CCF` depend on whether the previous instruction changed the flags. A repeating `INIR`/`INDR`/`OTIR`/`OTDR` also changes H and P/V, and sets MEMPTR to its own address + 1 ([redcode/Z80](https://github.com/redcode/Z80)).
+
+The limitation is in `SCF`/`CCF`. The emulator follows the Zilog NMOS rule. NEC and ST CMOS Z80s differ ([Undocumented Flags](https://github.com/hoglet67/Z80Decoder/wiki/Undocumented-Flags)). A real SONY HB-10 (NEC D780C-1) and HB-F1XD give the NEC NMOS result: `SCF` and `CCF` take Y and X from A only. The emulator does not model this difference. TODO: run the same test with Zilog, Sharp and NEC Z80s in one HB-10 (through a CPU socket) and record each result.
 
 ---
 
@@ -144,13 +149,13 @@ The undocumented flag bits Y (bit 5) and X (bit 3) follow the documented per-ins
 
 ### MSX1: level-based VBlank IRQ
 
-On MSX1, the TMS9918A VDP has a single interrupt source: VBlank, which the VDP raises at the start of vertical blanking. Its interrupt line is the level `F && IE0` (S#0 bit 7 and R#1 bit 5). `VDP.irq` caches this level, and the VDP calculates it again when either input changes:
+On MSX1, the TMS9918A VDP (the video chip) has a single interrupt source: VBlank, which the VDP raises at the start of vertical blanking. Its interrupt line is the level `F && IE0` (S#0 bit 7 and R#1 bit 5, where S#n is status register n and R#n is control register n). `VDP.irq` caches this level, and the VDP calculates it again when either input changes:
 
 - `VDP.begin_vblank()` sets F after `Machine.run_frame()` renders the frame at the `display_height` scanline boundary. If a break stops the frame before this point, the next `run_frame` call continues the frame and sets F when it reaches the boundary.
 - A read of S#0 clears F.
 - A write to R#1 changes IE0.
 
-If a program sets IE0 while F is still pending, the line thus goes high immediately, as on real hardware. `Machine.run_frame()` samples the line at every instruction boundary, in the same way as the MSX2 path below:
+If a program sets IE0 while F is still pending, the line goes high immediately, as on real hardware. `Machine.run_frame()` samples the line at every instruction boundary:
 
 ```python
 cpu.int_pending = vdp.irq
@@ -160,9 +165,7 @@ The MSX1 path has no per-scanline interrupts.
 
 ### MSX2: level-based IRQ
 
-On MSX2 (V9938), interrupts are level-based. The inner loop of `Machine.run_frame()` samples the `irq` of the VDP at every instruction boundary. It uses the same `cpu.int_pending = vdp.irq` line as the MSX1 path above.
-
-`V9938.irq` gives the result of `irq_pending()`:
+On MSX2 (V9938), interrupts are also level-based, and `Machine.run_frame()` samples them with the same `cpu.int_pending = vdp.irq` line. `V9938.irq` caches the result of `irq_pending()`, and `update_irq()` calculates it again when an input changes:
 
 ```python
 def irq_pending(self) -> bool:
@@ -193,13 +196,11 @@ for line in range(first_line, end_line):   # 262 NTSC lines per frame
     vdp9938.begin_scanline(line)
 ```
 
-The CPU sees a level change from `begin_scanline` at its next instruction boundary.
-
 The loop runs in two segments: the lines up to and including `vblank_start_line`, then the rest of the frame. The machine renders the frame between them, before the VBlank interrupt handler runs (see [VDP](#vdp)). A break stops the loop at an instruction boundary. The machine keeps the line and the T-state count, and the next `run_frame` continues there, so each frame is rendered, counted and mixed once.
 
 While the CPU idles and cannot take an interrupt, the loop calls `Z80.step_idle_batch()` instead of `step()`. The CPU idles when it is halted or when it has just run `JR $` (`18 FE`, a jump to itself), the loop many games use to wait for the VBlank interrupt. One call advances the whole idle run up to the end of the line, with the same R value and T-state total as stepping it. Before it batches a `JR $`, the call checks that the two bytes at PC are still `18 FE`. The loop does not batch while a V9938 command runs, so that `tick()` still advances the command timer (CE, TR) after each instruction.
 
-`begin_scanline(line)` calculates the effective IRQ line as `(R#19 − R#23) & 0xFF`. It sets S#1 bit 0 (FH) when `line == effective_irq_line` and IE1 (R#0 bit 4) is set. The compare can target any line 0-255, including the border and vertical-blanking lines. The VDP does not latch FH while IE1 is clear. Thus, if a program sets IE1 later, no interrupt occurs for a line that has already passed.
+`begin_scanline(line)` calculates the effective IRQ line as `(R#19 − R#23) & 0xFF`. It sets S#1 bit 0 (FH) when `line == effective_irq_line` and IE1 (R#0 bit 4) is set. The compare can target any line 0-255, including the border and vertical-blanking lines. The VDP does not latch FH while IE1 is clear, so if a program sets IE1 later, no interrupt occurs for a line that has already passed.
 
 FH stays set until a read of S#1, or until a write to R#0 clears IE1. Each of these clears FH and evaluates `irq` again.
 
@@ -211,35 +212,35 @@ FH stays set until a read of S#1, or until a write to R#0 clears IE1. Each of th
 
 ### Registration and dispatch
 
-`IOBus` (`msx/io.py`) holds two lists of `(start, end, handler)` tuples: one for reads and one for writes. Devices register themselves during machine construction:
+`IOBus` (`msx/io.py`) holds two lists of `(start, end, handler)` tuples: one for reads and one for writes. `msx/machine_loader.py` registers the range of each device while it builds the machine. A range comes from the `io_ports` of the device YAML, else from the default of the loader. For example, for the VDP (`_register_common_io`):
 
 ```python
-# V9938. The TMS9918A uses 0x98-0x99.
-io.register_read(0x98, 0x9B, vdp.read_port)
-io.register_write(0x98, 0x9B, vdp.write_port)
+vdp_s, vdp_e = _io_range(spec, vdp_dev_id, vdp_default_ports)  # V9938 0x98-0x9B, TMS9918A 0x98-0x99
+io.register_read(vdp_s, vdp_e, vdp.read_port)
+io.register_write(vdp_s, vdp_e, vdp.write_port)
 ```
 
 `read_port` and `write_port` mask the incoming 16-bit Z80 port address to 8 bits (`port &= 0xFF`) and do a linear scan. The first registered handler whose `[start, end]` range includes the port wins. If no handler matches, reads return 0xFF (open bus).
 
 ### Logging
 
-The bus holds the machine's trace buffer (`_trace`). While `TRACE_DEBUG` is on in the trace kinds, it records each port access. It records a read after the handler returns, because the value is known only then. A read that no handler matches records 0xFF. It records a write before the dispatch, because the call site already sets the value. Each record holds the port, the value, and the address of the current instruction.
+The bus holds the machine's trace buffer (`_trace`). While `TRACE_DEBUG` is on in the trace kinds, it records each port access. It records a read after the handler returns, because the value is known only then. A read that no handler matches records 0xFF. It records a write before the dispatch, because the call site already sets the value. Each record holds the port, the value, the address of the current instruction, the cycle count and the frame number.
 
 ### Standard port map
 
-| Port(s)   | Device                                                                                                    |
-| --------- | --------------------------------------------------------------------------------------------------------- |
-| 0x98-0x99 | VDP (TMS9918A)                                                                                            |
-| 0x98-0x9B | VDP (V9938): 0x9A palette, 0x9B indirect register                                                         |
-| 0xA0-0xA2 | PSG (AY-3-8910)                                                                                           |
-| 0x7C-0x7D | FM-PAC OPLL (with `--extensionN fmpac`)                                                                   |
-| 0x90-0x91 | Printer port (`hb_10`, `hb_10_64k`)                                                                       |
-| 0x90-0x97 | Printer port (S-1985 machines)                                                                            |
-| 0xA8-0xAB | PPI (i8255)                                                                                               |
-| 0xB4-0xB5 | RTC (RP5C01, MSX2 only)                                                                                   |
-| 0xB6-0xB7 | RTC read-back mirror, read only (S-1985 machines)                                                         |
-| 0xD8-0xDB | Kanji ROM (`hbi_j1` and similar extensions)                                                               |
-| 0xFC-0xFF | RAM mapper segment registers (MSX2 only). On S-1985 machines a read returns `(last write & 0x1F) \| 0x80` |
+| Port(s)   | Device                                                                                                                                                                                                                  |
+| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0x98-0x99 | VDP (TMS9918A)                                                                                                                                                                                                          |
+| 0x98-0x9B | VDP (V9938): 0x9A palette, 0x9B indirect register                                                                                                                                                                       |
+| 0xA0-0xA2 | PSG (AY-3-8910)                                                                                                                                                                                                         |
+| 0x7C-0x7D | FM-PAC OPLL (with `--extensionN fmpac`)                                                                                                                                                                                 |
+| 0x90-0x91 | Printer port (`hb_10`, `hb_10_64k`)                                                                                                                                                                                     |
+| 0x90-0x97 | Printer port (machines with the S-1985, the MSX2 system-engine LSI)                                                                                                                                                     |
+| 0xA8-0xAB | PPI (i8255)                                                                                                                                                                                                             |
+| 0xB4-0xB5 | RTC (RP5C01, MSX2 only)                                                                                                                                                                                                 |
+| 0xB6-0xB7 | RTC read-back mirror, read only (S-1985 machines)                                                                                                                                                                       |
+| 0xD8-0xDB | Kanji ROM (`hbi_j1` and similar extensions)                                                                                                                                                                             |
+| 0xFC-0xFF | RAM mapper segment registers: slot 3's mapper, or the mapper of a 512 KB extension (also on MSX1). On S-1985 machines a read returns `(last write to the port & 0x1F) \| 0x80`, also when the machine has no RAM mapper |
 
 ---
 
@@ -249,14 +250,14 @@ The bus holds the machine's trace buffer (`_trace`). While `TRACE_DEBUG` is on i
 
 `msx/vdp/vdp.py` implements the TMS9918A, and `msx/vdp/renderer.py` holds its renderer. It has 16 KB VRAM and 8 control registers, and it supports screen modes 0-3 (Text, Graphic 1/2, Multicolor).
 
-`render_frame()` renders the 256×192 active frame partway through `Machine.run_frame()`, at the start of vertical blanking. `Machine.run_frame()` then calls `VDP.begin_vblank()` to set the VBlank flag and update the interrupt line (`VDP.irq`). The renderer pads the frame to a constant 256×212 output (10 border rows at the top and bottom) through the shared `msx/vdp/_geometry.py` helper. Every frame thus keeps a stable 4:3 geometry, whatever the active line count of the VDP is (see V9938 `display_height` below).
+`render_frame()` renders the 256×192 active frame partway through `Machine.run_frame()`, at the start of vertical blanking. `Machine.run_frame()` then calls `VDP.begin_vblank()` to set the VBlank flag and update the interrupt line (`VDP.irq`). The renderer pads the frame to a constant 256×212 output (10 border rows at the top and bottom) through the shared `msx/vdp/_geometry.py` helper. The output height stays the same, whatever the active line count of the VDP is (see V9938 `display_height` below).
 
 ### V9938 (MSX2)
 
 `msx/vdp/v9938.py` implements the V9938, and `msx/vdp/v9938_renderer.py` holds its renderer. These are the main differences from the TMS9918A:
 
 - 128 KB VRAM
-- 24 control registers (R#0-R#23; a write to R#24-R#27 is only stored) plus 15 command-engine registers (R#32-R#46)
+- 24 control registers (R#0-R#23) plus 15 command-engine registers (R#32-R#46). A write to R#24-R#27 is only stored
 - Programmable 16-color palette (9-bit, 3 bits each of R, G and B). The `_MSX2_DEFAULT_PALETTE` that the VDP loads at reset matches the power-on values in the V9938 data book
 - Ten status registers S#0-S#9: S#0 (VBlank/sprite), S#1 (H-line FH), S#2 (command engine CE/TR, retrace HR/VR), S#3-S#6 (sprite collision coordinates), S#7 (color), S#8/S#9 (SRCH X coordinate)
 - Hardware command engine
@@ -282,13 +283,13 @@ Each entry is one of two types (`msx/vdp/_v9938_defs.py`), and readers tell them
 - `_RegChange(line, reg, value)` for a register write
 - `_PaletteChange(line, idx, rgb)` for a palette write (port 0x9A). `rgb` is the 9-bit entry as the palette stores it, `r << 6 | g << 3 | b`
 
-`begin_scanline(0)` (frame start) clears the log. `render_frame()` does not clear it. `V9938.to_rgb24()` thus can use the log when it converts the frame to RGB24 inside the core, to apply the correct palette per scanline.
+`begin_scanline(0)` (frame start) clears the log, and also keeps a copy of the registers and the palette (`_frame_start_regs`, `_frame_start_palette`). `render_frame()` does not clear the log, so `V9938.to_rgb24()` can use the log when it converts the frame to RGB24 inside the core, to apply the correct palette per scanline.
 
-`render_frame_v9938(vdp)` examines `_reg_write_log` to find band boundaries. A band boundary is a line where a display-relevant value differs from the snapshot of the previous band. The renderer renders each contiguous band `[y0, y1)` with the register state at its start. It calls the per-band renderers with explicit `y_start` and `y_end` parameters. Each scanline gets exactly one render across all bands.
+`render_frame_v9938(vdp)` builds bands from `_reg_write_log` (`_build_bands`). A write logged at line N takes effect from line N+1, and each such line starts a new band, even when the value is the same. The first band uses the frame-start copy. The renderer skips a write to R#18, because no band renderer reads it, and a write that takes effect after the last active line. The renderer renders each contiguous band `[y0, y1)` with the register state at its start. It calls the per-band renderers with explicit `y_start` and `y_end` parameters. Each scanline gets exactly one render across all bands.
 
-When the log is empty (no mid-frame writes), `render_frame_v9938` renders the frame in a single pass.
+When the log is empty (no mid-frame writes), `render_frame_v9938` renders the frame in a single pass. When a frame has both 256-dot and 512-dot bands, the renderer doubles each pixel of the 256-dot bands to fill the 512-dot frame (`_width_runs`, `_widen_rows`).
 
-The renderer draws sprites once per sprite attribute table (SAT) region. A SAT region is a maximal run of consecutive bands with the same SAT base (R#5/R#11). When the SAT base stays the same across the frame (the usual case), there is exactly one sprite pass, as in a single-pass render. When the SAT base changes mid-frame (e.g. a sprite multiplexer), the renderer draws the sprites of each region from the SAT of that region. Different regions thus read different buffers, and the same sprite does not appear twice.
+The renderer draws sprites once per sprite attribute table (SAT) region. A SAT region is a maximal run of consecutive bands, of one display width, that have the same SAT base (R#5/R#11) and the same values of the other registers that a sprite pass reads once: R#0 M3-M5, R#1 BL/M1/M2/SI/MAG, R#6, R#8 TP and R#9 LN (`_sprite_pass_key`). When these stay the same across the frame (the usual case), there is exactly one sprite pass, as in a single-pass render. When the SAT base changes mid-frame (e.g. a sprite multiplexer), the renderer draws the sprites of each region from the SAT of that region, so the same sprite does not appear twice.
 
 ### Command engine
 
@@ -310,7 +311,15 @@ The V9938 hardware command engine supports byte-level and pixel-level VRAM opera
 | SRCH    | Search a scanline for a color match (result in S#8/S#9) |
 | ABRT    | Abort the active command                                |
 
-LINE, PSET, POINT and SRCH complete during the write to R#46, and CE stays 0. HMMV, HMMM, YMMM, LMMV and LMMM write VRAM at once and keep CE set for a timed budget (`_cmd_remaining`), which `V9938.tick(n)` decrements. HMMC, LMMC and LMCM keep CE set until the CPU moves the last byte or dot. While a command runs, the machine calls `tick(n)` after each instruction with the T-states that the instruction used. While no command runs, the machine only adds the T-states to `_line_cycle`, the horizontal-retrace timer that `tick(n)` also advances (see [H-line interrupt](#h-line-interrupt)). Software that busy-waits on S#2 bit 0 (CE) sees CE clear after the budget expires.
+Codes 1-3 are reserved and behave as STOP (ABRT).
+
+CE (S#2 bit 0) behaves in one of three ways, which depend on the command:
+
+- LINE, PSET, POINT and SRCH complete during the write to R#46, and CE stays 0.
+- HMMV, HMMM, YMMM, LMMV and LMMM write VRAM at once and keep CE set for a timed budget (`_cmd_remaining`), which `V9938.tick(n)` decrements.
+- HMMC, LMMC and LMCM keep CE set until the CPU moves the last byte or dot.
+
+While a command runs, the machine calls `tick(n)` after each instruction with the T-states that the instruction used. While no command runs, the machine only adds the T-states to `_line_cycle`, the horizontal-retrace timer that `tick(n)` also advances (see [H-line interrupt](#h-line-interrupt)). Software that busy-waits on S#2 bit 0 (CE) sees CE clear after the budget expires.
 
 Each block command has three costs per element, in 1/16 T-state, one for each kind of raster line. A line is blank when it is in the border or vertical blanking, or when the display is off (R#1 BL = 0). An active line is sprites-off when R#8 SPD = 1, and sprites-on otherwise. The number of sprites does not change the cost.
 
@@ -322,33 +331,35 @@ Each block command has three costs per element, in 1/16 T-state, one for each ki
 | `_LMMV_COST16` | 261   | 331         | 368        | per dot       |
 | `_LMMM_COST16` | 347   | 356         | 525        | per dot       |
 
-At dispatch, `_cmd_remaining` is the element count times the cost of the current line kind, divided by 16. `begin_scanline()` finds the kind of each new line. When the kind changes while a command runs, it converts `_cmd_remaining` to the new cost. `_cmd_remaining` therefore stays a count of T-states. The costs come from timing full-page SCREEN 5 commands on a real SONY HB-F1XD with the display on and off, 192 and 212 lines, and sprites on and off. The emulator gives each of these times within 2 jiffies (1/60 s). The cost does not change inside a line. GRAPHIC 5, 6 and 7 (SCREEN 6-8) use the costs measured in SCREEN 5 (GRAPHIC 4).
+At dispatch, `_cmd_remaining` is the element count times the cost of the current line kind, divided by 16. `begin_scanline()` finds the kind of each new line. When the kind changes while a command runs, it converts `_cmd_remaining` to the new cost. `_cmd_remaining` stays a count of T-states. The costs come from timing full-page SCREEN 5 commands on a real SONY HB-F1XD with the display on and off, 192 and 212 lines, and sprites on and off. The emulator gives each of these times within 2 jiffies (1/60 s). The cost does not change inside a line. GRAPHIC 5, 6 and 7 (SCREEN 6-8) use the costs measured in SCREEN 5 (GRAPHIC 4).
 
 Outside GRAPHIC 4-7, HMMV writes one byte per line at `(Y × 128) | 0xFF` and ignores DX and NX. It costs one HMMV unit per line. The other commands end at once with no VRAM write.
 
 A write to R#44 (COL) sets the HMMC/LMMC transfer latch (`_cmd_transfer`). The first pixel or byte of a transfer comes from a pending COL write. The engine does not load it automatically when the command starts. This matches the openMSX behavior.
 
-`_apply_log()` in `v9938.py` applies the logical operations (IMP, AND, OR, XOR, NOT) per pixel.
+`_apply_log()` in `v9938.py` applies the logical operations (IMP, AND, OR, XOR, NOT) per pixel. `_vram_pixel_write()` handles the rest of the LOG field before it: the transparent operations (LOG bit 3: TIMP, TAND, TOR, TXOR, TNOT) skip a source dot of 0, and the undefined codes 5-7 write nothing.
 
 ### Known limitations
 
-- Command timing is approximate. The engine uses measured costs per element for each line kind (see above). LINE, PSET, POINT and SRCH take no time. It does not model the VRAM access slots inside a line, and it does not use the per-command cycle counts of the V9938 data book.
+- Command timing is approximate. The engine uses measured costs per element for each line kind, and LINE, PSET, POINT and SRCH take no time (see above). It does not model the VRAM access slots inside a line, and it does not use the per-command cycle counts of the V9938 data book.
 - The engine writes the VRAM results when the command starts, not incrementally. Software that reads VRAM while a command is nominally in progress can see the completed result before CE clears.
-- The emulator renders each frame in one pass at the start of vertical blanking, after the CPU has run the active lines. VDP commands write into VRAM at once. This is true for the V9938 and the TMS9918A. The emulator does not reproduce VRAM updates that follow the raster within a frame (beam-raced blits, double-buffered title screens). The banded renderer above recovers mid-frame _register_ changes, but not mid-frame VRAM content.
+- The emulator renders each frame (V9938 and TMS9918A) in one pass at the start of vertical blanking, after the CPU has run the active lines. It does not reproduce VRAM updates that follow the raster within a frame (beam-raced blits, double-buffered title screens). The banded renderer above recovers mid-frame _register_ changes, but not mid-frame VRAM content.
 
 ---
 
 ## Audio
 
-Five sources render audio: the PSG (`msx/psg.py`), the SCC (`msx/scc.py`), the OPLL of the FM-PAC (`msx/opll.py`), the Majutsushi DAC, and the PPI key click. Each one renders signed 16-bit mono PCM at 44,100 Hz. A frame has 735 samples on NTSC machines and 882 on PAL machines. At the end of every `Machine.run_frame()`, `AudioMixer` (`msx/audio_mixer.py`) adds the outputs of the chips that the machine has and clamps the result to 16 bits. This happens with or without a frontend, so the chips advance the same way in a headless run. The SDL2 frontend gets the buffer in `step_frame`'s `FrameOutput` (see [Frame stepping](#frame-stepping)), passes it through the output low-pass filter, and queues it to SDL. The machine holds only the latest frame, so audio that nobody takes does not accumulate.
+Five sources render audio: the PSG (`msx/psg.py`), the SCC (cartridge wavetable sound chip, `msx/scc.py`), the OPLL (FM sound chip) of the FM-PAC (`msx/opll.py`), the Majutsushi DAC (cartridge DAC), and the key click of the PPI (the I/O chip for the keyboard and slot select). Each one renders signed 16-bit mono PCM at 44,100 Hz. A frame has 735 samples on NTSC machines and 882 on PAL machines. At the end of every `Machine.run_frame()`, `AudioMixer` (`msx/audio_mixer.py`) adds the outputs of the chips that the machine has and clamps the result to 16 bits. This happens with or without a frontend, so the chips advance the same way in a headless run. The SDL2 frontend gets the buffer in `step_frame`'s `FrameOutput` (see [Frame stepping](#frame-stepping)), passes it through the output low-pass filter, and queues it to SDL. The machine holds only the latest frame, so audio that nobody takes does not accumulate.
 
-The Majutsushi DAC and the key click (PPI Port C bit 7) share one write-driven DAC channel, `EventDac` in `msx/dac.py`. The owner converts each write to a signed 16-bit level and passes it with the cycle of the write. A write that does not change the level records nothing. `generate_samples` gives sample `i` the level of the last change at or before cycle `frame_start + i * (frame_end - frame_start) // n`. A change thus starts at the first sample whose cycle is at or after the change, and the level holds until the next change. When a frame has no change and the level is 0, it returns `None`, and the mixer mixes nothing for that channel.
+### DAC channels (EventDac)
+
+The Majutsushi DAC and the key click (PPI Port C bit 7) each use a write-driven DAC channel of the same class, `EventDac` in `msx/dac.py`, and the mixer mixes the two as separate buffers. The owner converts each write to a signed 16-bit level and passes it with the cycle of the write. A write that does not change the level records nothing. `generate_samples` gives sample `i` the level of the last change at or before cycle `frame_start + i * (frame_end - frame_start) // n`. A change starts at the first sample whose cycle is at or after the change, and the level holds until the next change. When a frame has no change and the level is 0, it returns `None`, and the mixer mixes nothing for that channel.
 
 ### Sub-frame software PCM
 
 `PSG.generate_samples(n, frame_start, frame_end)` reproduces software PCM that a program plays through rapid volume-register writes:
 
-1. `write_port` records each register write as `(cycle, reg, value)`. It reads the cycle from the machine's clock record (`msx/clock.py`), whose cycle is `machine.cycle_count`. The fast frame loop adds the T-states of each scanline to `cycle_count` at the end of the line. The position of a write thus has a resolution of one scanline (228 T-states, about 2.8 samples).
+1. `write_port` records each register write as `(cycle, reg, value)`. It reads the cycle from the machine's clock record (`msx/clock.py`), whose cycle is `machine.cycle_count`. The fast frame loop adds the T-states of each scanline to `cycle_count` at the end of the line, so the position of a write has a resolution of one scanline (228 T-states, about 2.8 samples).
 2. `generate_samples` goes back to the register and generator state at the first write of the frame.
 3. It renders the buffer again as consecutive segments. Each write starts a new segment at the sample position `clamp((cycle - frame_start) * n // (frame_end - frame_start), 0, n)`.
 4. The tone, noise, and envelope state carry across segments.
@@ -357,9 +368,9 @@ A frame with no recorded writes renders from one register snapshot in a single p
 
 ### Tone integration (period-0 PCM carrier)
 
-Software PCM keeps the tone generator enabled at tone period 0. This gives an ultrasonic carrier (the output toggles at ~224 kHz, a ~112 kHz square wave), which the real analog output filters to a ~50 % duty average. The volume register thus carries the PCM. If the emulator point-sampled `tone_out` at 44.1 kHz, the carrier would alias into a full/zero chop, and approximately half the samples would be zero.
+Software PCM keeps the tone generator enabled at tone period 0. This gives an ultrasonic carrier (the output toggles at ~224 kHz, a ~112 kHz square wave), which the real analog output filters to a ~50 % duty average. The volume register carries the PCM. If the emulator point-sampled `tone_out` at 44.1 kHz, the carrier would alias into a full/zero chop, and approximately half the samples would be zero.
 
-The emulator thus **integrates the tone of each channel over the output sample**. The inner loop counts the PSG ticks during which the square wave was high (`hi0/hi1/hi2`). The mixer then scales the channel amplitude by `hi / ticks`. For audible tones (no toggle within a sample), `hi` is `ticks` or `0`, so the result is bit-for-bit the same as point-sampling. Only the ultrasonic carrier changes: it becomes its band-limited duty average.
+The emulator therefore integrates the tone of each channel over the output sample. The inner render loop of the PSG counts the PSG ticks during which the square wave was high (`hi0/hi1/hi2`), and scales the channel amplitude by `hi / ticks`. For audible tones (no toggle within a sample), `hi` is `ticks` or `0`, so the result is bit-for-bit the same as point-sampling. Only the ultrasonic carrier changes: it becomes its band-limited duty average.
 
 ### Output low-pass filter
 
@@ -373,43 +384,45 @@ The filter removes the residual high-frequency imaging and aliasing that point-s
 
 The core has no clock of its own: `step_frame` runs one frame as fast as the host can. The SDL2 frontend paces the frames in real time with `FrameTimer` (`frontend/frame_timer.py`). Headless runs (`--count-frame`, `--benchmark`) use no timer.
 
-The target rate is the nominal `VideoStandard.target_fps` of the machine (60 for NTSC, 50 for PAL), multiplied by `--speed`. The frame interval is `1 / (fps * speed)`. A rate of 0 or less (for example `--speed 0`) falls back to a 60 Hz interval. The pacing uses the nominal rate, not the ~59.92 Hz field rate of real hardware, and the audio uses the same nominal rate (735 samples per NTSC frame, 882 per PAL frame). The audio queue thus fills at the rate that the device drains it.
+The target rate is the nominal `VideoStandard.target_fps` of the machine (60 for NTSC, 50 for PAL), multiplied by `--speed`. The frame interval is `1 / (fps * speed)`. A rate of 0 or less (for example `--speed 0`) falls back to a 60 Hz interval. The pacing uses the nominal rate, not the ~59.92 Hz field rate of real hardware. The audio uses the same nominal rate (see [Audio](#audio)), so the audio queue fills at the rate that the device drains it.
 
 `tick()` waits until the deadline of the current frame. It sleeps until 2 ms before the deadline and spins for the rest (see [Spin loop in the frame timer](#spin-loop-in-the-frame-timer)). The next deadline is the previous deadline plus one interval. A sleep that wakes up late therefore makes the next wait shorter, and the sustained rate stays at the target. If that next deadline has already passed, the frame overran a whole interval, and the deadline restarts at the current time plus one interval. The timer never runs frames back to back to catch up. With a sleep that always wakes 3 ms late, 600 ticks at 60 fps take 10 seconds, within one interval (`tests/test_frame_timer.py`).
 
 `tick()` returns the real time since the previous tick. With `--frame-skip auto` (the default), the frontend compares it with the interval. If a frame took more than `_FRAME_OVERRUN_RATIO` (1.05) intervals, the skip counter goes up by 1, to at most `_MAX_FRAME_SKIP` (4). Otherwise it goes down by 1. While the counter is above 0, the next frame runs with `render_video=False`: the core skips the pixel rendering, but it still runs the CPU, the VDP status and the audio. The frontend shows the previous picture again.
 
-During fast-forward (F7, Shift+F7), the frontend calls `tick_unpaced()` instead of `tick()`. It counts the frame for the fps measurement and restarts the deadline from the current time, but it does not wait. The frontend renders a frame only when at least one display interval passed since the last shown frame, and it queues no audio. The first `tick()` after fast-forward thus waits a full interval.
+The frontend runs as fast-forward while F7 is held or Shift+F7 locks it, and while a tape is mounted and its motor runs (tape-fast: `--tape-fast`, on by default, `--no-tape-fast` to turn it off). During fast-forward, the frontend calls `tick_unpaced()` instead of `tick()`. It counts the frame for the fps measurement and restarts the deadline from the current time, but it does not wait. The frontend renders a frame only when at least one display interval passed since the last shown frame, and it queues no audio. The first `tick()` after fast-forward waits a full interval. A change into or out of fast-forward resets the skip counter and clears the audio queue of SDL, so no old audio plays.
 
 `fps_measured` is the tick count of the last measurement window, divided by its length (at least one second). The window title shows it.
+
+---
 
 ## Memory and slot system
 
 ### MSX1 slot layout
 
-`Memory` (`msx/memory.py`) maps the flat 64 KB address space through a 4-page × 4-slot dispatch. The slot-select register (port 0xA8, through the PPI) selects the slot for each 16 KB page. Bits `[2N+1 : 2N]` of the register select the slot for page N.
+A slot is the MSX mechanism that selects, per 16 KB page, which ROM or RAM the CPU sees. `Memory` (`msx/memory.py`) maps the flat 64 KB address space through a 4-page × 4-slot dispatch. The slot-select register (port 0xA8, through the PPI) selects the slot for each 16 KB page. Bits `[2N+1 : 2N]` of the register select the slot for page N.
 
 Default MSX1 layout:
 
-| Slot | Content                                                                    |
-| ---- | -------------------------------------------------------------------------- |
-| 0    | BIOS ROM (read-only). Some machines add 16 KB RAM at page 3 (e.g. `hb_10`) |
-| 1    | Cartridge ROM via mapper                                                   |
-| 2    | Second cartridge or open bus (reads 0xFF)                                  |
-| 3    | 32 KB RAM at pages 2-3 (0x8000-0xFFFF). Each machine sets the size         |
+| Slot | Content                                                                           |
+| ---- | --------------------------------------------------------------------------------- |
+| 0    | BIOS ROM (read-only). Some machines add 16 KB RAM at page 3 (e.g. `hb_10`)        |
+| 1    | Cartridge ROM via mapper                                                          |
+| 2    | Second cartridge or open bus (reads 0xFF)                                         |
+| 3    | RAM. Each machine sets the size: none on `hb_10` (open bus), 64 KB on `hb_10_64k` |
 
 ### MSX2 expanded sub-slot
 
-On MSX2, slot 3 is expanded (`sub_slot_enabled = True`). A read of 0xFFFF returns `~sub_slot_reg`, so software can detect sub-slot support. The sub-slot register (`sub_slot_reg`) selects which of the four secondary slots occupies each page within the expanded primary slot.
+On MSX2, slot 3 is expanded (`sub_slot_enabled = True`). A read of 0xFFFF returns `~sub_slot_reg`, so software can detect sub-slot support. The sub-slot register (`sub_slot_reg`) selects which of the four secondary slots occupies each page within the expanded primary slot. An expanded extension overlay (see below) also makes slot 1 or slot 2 expanded (`slot1_sub_slot_enabled`, `slot2_sub_slot_enabled`), with its own sub-slot register at 0xFFFF of that slot.
 
 Default MSX2 layout:
 
-| Sub-slot | Content                             |
-| -------- | ----------------------------------- |
-| 3-0      | C-BIOS Sub ROM (read-only)          |
-| 3-1      | Empty                               |
-| 3-2      | RAM via RAM mapper (128 KB default) |
-| 3-3      | Empty                               |
+| Sub-slot | Content                                                      |
+| -------- | ------------------------------------------------------------ |
+| 3-0      | C-BIOS (an open-source replacement BIOS) Sub ROM (read-only) |
+| 3-1      | Empty                                                        |
+| 3-2      | RAM via RAM mapper (128 KB default)                          |
+| 3-3      | Empty                                                        |
 
 This is the layout of the C-BIOS machines. The machine YAML sets the sub-slot of each role. The RAM mapper answers only in its own sub-slot (`ram_mapper_subslot`): 3-0 on `fs_a1f` and 3-3 on `hb_f1xd_256k`. `hb_f1xd` has flat 64 KB RAM in 3-3 and no RAM mapper.
 
@@ -424,51 +437,76 @@ This is the layout of the C-BIOS machines. The machine YAML sets the sub-slot of
 | 0xFE | 2    | 0x8000-0xBFFF |
 | 0xFF | 3    | 0xC000-0xFFFF |
 
-A write of a segment number to a register remaps that page immediately. The mapper masks the number with `bank_mask`: the smallest power of two that covers the segment count, minus 1 (7 for 128 KB). A read returns the segment number with the unused upper bits set to 1. When the segment count is not a power of two, a masked number can be at or above the count. Such a number selects segment `number & (count - 1)`, as openMSX does (48 KB: number 3 selects segment 2). On S-1985 machines (`mapper_io` with `form: s1985`), a read of 0xFC-0xFF instead returns `(last write & 0x1F) | 0x80`.
+A write of a segment number to a register remaps that page immediately. The mapper masks the number with `bank_mask`: the smallest power of two that covers the segment count, minus 1 (7 for 128 KB). A read returns the segment number with the unused upper bits set to 1. When the segment count is not a power of two, a masked number can be at or above the count. Such a number selects segment `number & (count - 1)`, as openMSX does (48 KB: number 3 selects segment 2). On S-1985 machines (`mapper_io` with `form: s1985`), a read of 0xFC-0xFF instead returns `(last write to the port & 0x1F) | 0x80`.
 
-A machine has at most one RAM mapper. `_wire_mapper_ports` registers 0xFC-0xFF for it.
+A machine has at most one RAM mapper: the one in slot 3, or the one of an extension overlay in slot 1 or 2 (a 512 KB extension, also on MSX1). `_wire_mapper_ports` registers 0xFC-0xFF for it. On an S-1985 machine it registers the S-1985 latch instead, also when the machine has no RAM mapper (`hb_f1xd`).
 
 ---
 
 ## Floppy disk (FDC)
 
-The floppy subsystem is a generic layer (`msx/fdc/`). A new controller chip or connection style connects to this layer without changes to `Memory`. At present, the layer has two controllers and two connection styles: the WD2793 with the Sony/Philips style, and the TC8566AF with its own style.
+The floppy subsystem is a generic layer (`msx/fdc/`). A new controller chip or connection style connects to this layer without changes to `Memory`. At present, the layer has two controllers and two connection styles: the WD2793 with the Sony/Philips style, and the TC8566AF with its own style. The implementation boots Disk BASIC, supports `CALL FORMAT`, and reads and writes files.
 
-| Layer      | File                                               | Responsibility                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| ---------- | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Disk image | `disk_image.py` (`DskDiskImage`)                   | Holds a `*.dsk` sector image that the host made from the bytes of the file. Gets the geometry the way openMSX does: a 720 KB image is always 9 sectors/track and 2 sides. Otherwise it uses the sectors/track and heads of the BPB (BIOS Parameter Block) when the boot sector starts with a jump instruction, else 9 sectors/track with 1 side for a 360 KB image and 2 sides for other sizes. An invalid BPB also takes this default. The FAT media byte is not used. Buffers writes and marks the image dirty. `host/media.py` writes a dirty image back to its file on exit, before a save state, and when the disk leaves its drive                                                                                                                                                                                                |
-| Drive      | `disk_drive.py` (`DiskDrive`)                      | One physical drive. Holds the mounted image, tracks the head position, and gives sector read/write                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| Controller | `wd2793.py` (`WD2793`), `tc8566af.py` (`TC8566AF`) | The FDC chip. `WD2793`: Type I-IV command decode, status register, data/track/sector registers, `abort()`. Only the Type I commands take time: the step rate (6/12/20/30 ms), the 30 ms head settle, and a verify that fails after 5 revolutions run on the machine clock, and the head-load output drops after 15 index pulses. The Type II and III commands have no timing model. The DRQ of each byte paces the transfer. `TC8566AF` (uPD765 family): Command/Execution/Result phase model, Main Status Register, non-DMA transfers, no directly addressable track/sector register. It counts a present cylinder number (PCN) per drive apart from the head, as openMSX does, and its drives report Track 0 and Write Protected only while the motor is on                                                                           |
-| Interface  | `interface.py`                                     | Connection style between the controller and the memory bus. Both styles cover 0x4000-0xBFFF, as openMSX maps them: the DISK ROM shows at 0x4000-0x7FFF only, and the registers repeat at 0xBFF8-0xBFFF. `SonyPhilipsInterface` (= openMSX PhilipsFDC) puts the WD2793 registers at 0x7FF8-0x7FFB, the side register at 0x7FFC, the drive and motor register at 0x7FFD, and the INTRQ/DRQ status at 0x7FFF. 0x7FFE is not connected. Bit 2 of 0x7FFC and 0x7FFD reads 0 after a disk change, and a read of 0x7FFD clears the change. `TC8566AFInterface` puts two control registers, the Main Status Register, and the Data Register at 0x7FF8-0x7FFB, reads fixed values at 0x7FFC-0x7FFF, and reads 0xFF at 0x7FF0-0x7FF7. Its registers repeat at 0xBFF0-0xBFFF. Both styles share `swap()`, which mounts and ejects disks at runtime |
+| Layer      | File                                               | Responsibility                                                                                                                                                 |
+| ---------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Disk image | `disk_image.py` (`DskDiskImage`)                   | Holds a `*.dsk` sector image that the host made from the bytes of the file                                                                                     |
+| Drive      | `disk_drive.py` (`DiskDrive`)                      | One physical drive. Holds the mounted image, tracks the head position, and gives sector read/write                                                             |
+| Controller | `wd2793.py` (`WD2793`), `tc8566af.py` (`TC8566AF`) | The FDC chip                                                                                                                                                   |
+| Interface  | `interface.py`                                     | Connection style between the controller and the memory bus (see the address table below). Both styles share `swap()`, which mounts and ejects disks at runtime |
 
-The `fdc:` block in the machine YAML declares the controller and the connection style of a machine. The two shipped floppy machines thus differ only in data:
+`DskDiskImage` gets the geometry the way openMSX does. A 720 KB image is always 9 sectors/track and 2 sides. Otherwise it uses the sectors/track and heads of the BPB (BIOS Parameter Block) when the boot sector starts with a jump instruction, else from the FAT media byte (the first byte of sector 1, 0xF8 or more: bit 1 set gives 8 sectors/track, bit 0 set gives 2 sides). The default is 9 sectors/track with 1 side for a 360 KB image and 2 sides for other sizes. An image with a jump instruction but an invalid BPB takes the default, without the media byte. `DskDiskImage` buffers writes and marks the image dirty. `host/media.py` writes a dirty image back to its file on exit, before a save state, and when the disk leaves its drive.
 
-- The Sony HB-F1XD (`hb_f1xd`) puts the WD2793 and its DISK ROM in slot 3 sub-slot 0, with 64 KB of flat RAM in sub-slot 3.
+`WD2793` has Type I-IV command decode, a status register, the data/track/sector registers and `abort()`. Only the Type I commands take time: the step rate (6/12/20/30 ms), the 30 ms head settle, and a verify that fails after 5 revolutions run on the machine clock, and the head-load output drops after 15 index pulses. The Type II and III commands have no timing model. The DRQ of each byte paces the transfer. `TC8566AF` (uPD765 family) has a Command/Execution/Result phase model, a Main Status Register and non-DMA transfers, and no directly addressable track/sector register. It counts a present cylinder number (PCN) per drive apart from the head, as openMSX does, and its drives report Track 0 and Write Protected only while the motor is on.
+
+Both connection styles cover 0x4000-0xBFFF, as openMSX maps them. The DISK ROM shows at 0x4000-0x7FFF only. The registers repeat in page 2: at 0xBFF8-0xBFFF for `SonyPhilipsInterface`, and at 0xBFF0-0xBFFF for `TC8566AFInterface`.
+
+| Address       | `SonyPhilipsInterface` (= openMSX PhilipsFDC) | `TC8566AFInterface`                                                    |
+| ------------- | --------------------------------------------- | ---------------------------------------------------------------------- |
+| 0x7FF0-0x7FF7 | DISK ROM                                      | reads 0xFF                                                             |
+| 0x7FF8-0x7FFB | WD2793 registers                              | two control registers, the Main Status Register, and the Data Register |
+| 0x7FFC        | side register                                 | reads a fixed value                                                    |
+| 0x7FFD        | drive and motor register                      | reads a fixed value                                                    |
+| 0x7FFE        | not connected                                 | reads a fixed value                                                    |
+| 0x7FFF        | INTRQ/DRQ status                              | reads a fixed value                                                    |
+
+On `SonyPhilipsInterface`, bit 2 of 0x7FFC and 0x7FFD reads 0 after a disk change, and a read of 0x7FFD clears the change.
+
+The `fdc:` block in the machine YAML declares the controller and the connection style of a machine. The shipped floppy machines differ only in data:
+
+- The Sony HB-F1XD (`hb_f1xd`) puts the WD2793 and its DISK ROM in slot 3 sub-slot 0, with 64 KB of flat RAM in sub-slot 3. `hb_f1xd_256k` is the same machine with a 256 KB RAM mapper in sub-slot 3.
 - The Panasonic FS-A1F (`fs_a1f`) uses the TC8566AF and spreads the roles across its four secondary slots: a 64 KB RAM mapper in sub-slot 0, SUB ROM in 1, and the FDC in 2. This machine definition comes from publicly available technical documentation and is not verified on real hardware.
 
-`--fdd1`/`--fdd2` mount images into drives A/B. `--fdd1` can take a list of images. Three paths swap disks at runtime. All of them call `swap_disk()` in `host/media.py`. It first writes a dirty outgoing image back to its file, and then calls `Machine.mount_disk()`, which calls the `swap()` of the floppy interface. On success, it records the new file in the `DiskFiles` table that the three paths share:
+`--fdd1`/`--fdd2` mount images into drives A/B. Every shipped floppy machine declares `drives: 1`, so only drive A exists and `--fdd2` has no drive. `--fdd1` can take a list of images. Three paths swap disks at runtime. All of them call `swap_disk()` in `host/media.py`. It reads the new file, writes a dirty outgoing image back to its file, and then calls `Machine.mount_disk()`, or `Machine.eject_disk()` for an eject. Both call the `swap()` of the floppy interface. On success, it records the new file in the `DiskFiles` table that the three paths share:
 
 - The F6/Shift+F6 hotkeys of the SDL2 frontend step through the `--fdd1` list, or eject and insert the drive A disk again.
 - The `fdd1`/`fdd2` commands of the debugger.
 - The `fdd.swap` method of the socket RPC server.
 
-The implementation boots Disk BASIC, supports `CALL FORMAT`, and reads and writes files. The host writes the changed sectors back to the `.dsk` file on exit, before a save state, and when the disk leaves its drive. `machine.fdc` is `None` on machines with no floppy interface.
+`machine.fdc` is `None` on machines with no floppy interface.
+
+---
 
 ## Cassette tape
 
-The cassette port has three parts. The host converts a CAS file into a tape signal. The core plays the signal on the cassette input, and the guest drives the motor.
+The cassette port has three parts. The host converts a CAS file (a tape image format that stores the tape blocks) into a tape signal. The core plays the signal on the cassette input, and the guest (the MSX software that runs in the emulator) drives the motor.
 
 | Part           | File                               | Responsibility                                                                                                                                                                                                                                                                     |
 | -------------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | CAS conversion | `host/cas_image.py` (`parse_cas`)  | Finds the 8-byte block headers at any offset, groups the blocks into files by their type bytes (binary, BASIC, ASCII), and synthesizes the signal at 1200 baud. Returns the block list (number, start, type, name, length), the warnings, the edge list and the length in T-states |
 | Mounted file   | `host/tape.py` (`TapeDeck`)        | Reads and converts the file, mounts the edge list through `mount_tape`, and keeps the file name and the block list for the CLI, the debugger, the RPC and the frontend. The core knows no file name                                                                                |
-| Cassette port  | `msx/cassette.py` (`CassettePort`) | Holds the edge list and the position, gives the input level to PSG register 14 bit 7, and takes the motor from PPI Port C bit 4                                                                                                                                                    |
+| Cassette port  | `msx/cassette.py` (`CassettePort`) | Holds the end time of each edge (made from the edge list) and the position, gives the input level to PSG register 14 bit 7, and takes the motor from PPI Port C bit 4                                                                                                              |
 
 The edge list is the interface between the host and the core: unsigned 32-bit little-endian intervals in T-states between level changes, the first interval at level 1. The core does not parse CAS. A bit is 4 samples at 4800 Hz: a 0 bit is the levels 1 1 0 0 (one 1200 Hz cycle), a 1 bit is 1 0 1 0 (two 2400 Hz cycles). The level change at sample k is at T-state `k * 3579545 // 4800`, so the intervals have no rounding drift. The silence and sync lengths are those of the openMSX CAS player: 2 s of silence and 8000 one bits before the first block of a file, 1 s and 2000 one bits before the other blocks. With no tape, with the motor off and past the end of the tape, the input reads 1. A machine with no cassette port reads bit 7 as 0.
 
-The position is a T-state count into the tape. It grows by one per T-state while the motor runs. The port computes it from the cycle count when it is needed (a read, a motor change, a seek or a save), so it does no work between those events. A read must see the time of its own instruction. While a tape is mounted, the frame loop thus counts the cycles after each instruction (`_run_lines_exact` in `msx/machine.py`), not once per scanline. The choice depends on "mounted", not on "motor on": a mount happens only between frames, so the arm in use does not depend on where the host breaks a frame. The tape result thus does not depend on host stepping, breakpoints or the frontend speed. One side effect: while a tape is mounted, the PSG and key-click events get exact instruction times, so the audio can differ a little from a run with no tape.
+The position is a T-state count into the tape. It grows by one per T-state while the motor runs. The port computes it from the cycle count when it is needed (a read, a motor change, a seek or a save), so it does no work between those events.
+
+A read must see the time of its own instruction, so while a tape is mounted, the frame loop counts the cycles after each instruction (`_run_lines_exact` in `msx/machine.py`), not once per scanline. The choice depends on "mounted", not on "motor on": a mount happens only between frames, so the arm in use does not depend on where the host breaks a frame. The tape result therefore does not depend on host stepping, breakpoints or the frontend speed. One side effect: while a tape is mounted, the PSG and key-click events get exact instruction times, so the audio can differ a little from a run with no tape.
 
 The motor follows Port C bit 4 (0 = on) while the PPI drives Port C as output (control bit 3 = 0). A mode-set word drives the latch again, so the BIOS mode word 0x82 starts the motor if the latch holds 0. A reset keeps the tape, the position and the motor. The save state holds the tape identity (the size and SHA1 of the edge list), the position and the motor, never the edge list. A load counts the position from the restored cycle count, and it rejects a state whose tape identity differs from the mounted tape.
+
+The port plays CAS files only (`tools/wav2cas.py` converts a WAV recording to CAS). There is no recording, because the cassette output (Port C bit 5) is not implemented.
+
+---
 
 ## Machine and extension YAML schema
 
@@ -478,16 +516,16 @@ Each field in this section matches an explicit `.get()` call in the loader. A ke
 
 ### Device YAML (`config/devices/*.yaml`)
 
-| Field         | Type        | Required            | Read by                                                                                                                                                                 |
-| ------------- | ----------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`          | string      | yes                 | Must equal the filename stem, or `load_device_registry` raises `MachineLoadError`                                                                                       |
-| `type`        | string      | yes                 | The loader checks that the key is present, but never checks the value (`io_device`, by convention)                                                                      |
-| `implemented` | bool        | no (default `true`) | `false` skips the device during `builtin_devices` resolution, with a stderr warning and no hard failure. A device definition can thus land before its emulation         |
-| `io_ports`    | list of int | no                  | The first and last elements become the `(start, end)` I/O range of the device. If the key is absent, `build_machine` uses `_DEFAULT_IO_PORTS` (`msx/machine_loader.py`) |
+| Field         | Type        | Required            | Read by                                                                                                                                                                                                                           |
+| ------------- | ----------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`          | string      | yes                 | Must equal the filename stem, or `load_device_registry` raises `MachineLoadError`                                                                                                                                                 |
+| `type`        | string      | yes                 | The loader checks that the key is present, but never checks the value (`io_device` for most devices, `fdc` for the two FDC files)                                                                                                 |
+| `implemented` | bool        | no (default `true`) | `false` skips the device during `builtin_devices` resolution, with a stderr warning and no hard failure, so a device definition can land before its emulation. Every device in `config/devices/` is currently `implemented: true` |
+| `io_ports`    | list of int | no                  | The first and last elements become the `(start, end)` I/O range of the device. If the key is absent, `build_machine` uses `_DEFAULT_IO_PORTS` (`msx/machine_loader.py`), or 0x98-0x9B for `vdp_v9938`                             |
 
-`_DeviceDef.raw` stores every other key (`name`, `chip`, `controls`, `vram_kb`, `segment_size_kb`, `keyboard_type`, ...), but generic code does _not_ read them. The loader reads `io_ports` above with `dev.raw.get(...)`. It reads five device options through `_device_option`, which takes the machine's `overrides` value first and the device YAML value second: `keyboard_type` and `control_read` (`ppi8255` only), `form` (`printer_port` and `mapper_io` only), `read_back` (`psg_ay8910` and `rtc_rp5c01` only), and `pin67_read` (`psg_ay8910` only).
+`_DeviceDef.raw` stores every other key (`name`, `chip`, `controls`, `vram_kb`, `segment_size_kb`, `keyboard_type`, ...), but generic code does not read them. The loader reads `io_ports` above with `dev.raw.get(...)`. It reads five device options through `_device_option`, which takes the machine's `overrides` value first and the device YAML value second: `keyboard_type` and `control_read` (`ppi8255` only), `form` (`printer_port` and `mapper_io` only), `read_back` (`psg_ay8910` and `rtc_rp5c01` only), and `pin67_read` (`psg_ay8910` only).
 
-Nothing reads `vram_kb: 128` in `vdp_v9938.yaml`. The VRAM size of the V9938 is the hardcoded `_VRAM_SIZE = 131072` constant in `msx/vdp/v9938.py`. That key and its per-machine copy `overrides: {vram_kb: 128}` (below) thus document intent but have no effect on the running emulator.
+Nothing reads `vram_kb: 128` in `vdp_v9938.yaml`. The VRAM size of the V9938 is the hardcoded `_VRAM_SIZE = 131072` constant in `msx/vdp/v9938.py`. That key and its per-machine copy `overrides: {vram_kb: 128}` (below) document intent but have no effect on the running emulator.
 
 ```yaml
 id: vdp_v9938
@@ -497,25 +535,25 @@ name: Yamaha V9938 Video Display Processor (MSX2)
 chip: v9938
 io_ports: [0x98, 0x99, 0x9A, 0x9B]
 controls: video_display_processor
-vram_kb: 128 # documentation only -- see note above
+vram_kb: 128 # documentation only (see the note above)
 ```
 
 ### Machine YAML (`config/machines/*.yaml`)
 
-| Field                       | Type          | Default      | Notes                                                                                                                                                                                                        |
-| --------------------------- | ------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `schema_version`            | int           | (none)       | Must be exactly `1`                                                                                                                                                                                          |
-| `id`                        | string        | (none)       | Must equal the filename stem                                                                                                                                                                                 |
-| `generation`                | string        | (none)       | `msx1` or `msx2`. Any other value raises an error                                                                                                                                                            |
-| `name`                      | string        | `id`         | Display name only                                                                                                                                                                                            |
-| `rom_base`                  | string        | `roms/cbios` | Directory (relative to the project root) for the `file` of every `rom:` block                                                                                                                                |
-| `video_standard`            | string        | `ntsc`       | `ntsc` → 59,736 T-states / 262 lines per frame. `pal` → 71,364 / 313 (used by `cbios_msx1_eu` and `cbios_msx2_eu`). Also selects the real-time pacing target of the SDL2 frontend (60 fps NTSC / 50 fps PAL) |
-| `cpu.m1_wait_states`        | int           | `0`          | Extra T-states per Z80 M1 cycle. See [CPU emulation](#cpu-emulation) above                                                                                                                                   |
-| `cpu.type`, `cpu.clock_mhz` | string, float | (none)       | Documentation only. The loader never reads them                                                                                                                                                              |
-| `slots.primary`             | mapping       | (none)       | Keys `0`-`3`. The loader reads only `0` and `3` (below)                                                                                                                                                      |
-| `builtin_devices`           | list          | `[]`         | See below                                                                                                                                                                                                    |
-| `io_device`                 | mapping       | (none)       | Optional machine-level global I/O device, with the same shape as the `io_device` of an extension overlay (below)                                                                                             |
-| `default_extensions`        | list          | (none)       | Documentation only. The loader never reads it                                                                                                                                                                |
+| Field                       | Type          | Default      | Notes                                                                                                                                                                                                                                                                                    |
+| --------------------------- | ------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schema_version`            | int           | (none)       | Must be exactly `1`                                                                                                                                                                                                                                                                      |
+| `id`                        | string        | (none)       | Must equal the filename stem                                                                                                                                                                                                                                                             |
+| `generation`                | string        | (none)       | `msx1` or `msx2`. Any other value raises an error                                                                                                                                                                                                                                        |
+| `name`                      | string        | `id`         | Display name only                                                                                                                                                                                                                                                                        |
+| `rom_base`                  | string        | `roms/cbios` | Directory (relative to the project root) for the `file` of every `rom:` block                                                                                                                                                                                                            |
+| `video_standard`            | string        | `ntsc`       | `ntsc` → 59,736 T-states / 262 lines per frame. `pal` → 71,364 / 313 (used by `cbios_msx1_eu` and `cbios_msx2_eu`). Also selects the real-time pacing target of the SDL2 frontend (60 fps NTSC / 50 fps PAL). The loader lowercases the value. Any other value raises `MachineLoadError` |
+| `cpu.m1_wait_states`        | int           | `0`          | Extra T-states per Z80 M1 cycle, 0-15 (the core rejects other values). See [CPU emulation](#cpu-emulation) above                                                                                                                                                                         |
+| `cpu.type`, `cpu.clock_mhz` | string, float | (none)       | Documentation only. The loader never reads them                                                                                                                                                                                                                                          |
+| `slots.primary`             | mapping       | (none)       | Keys `0`-`3`. The loader reads only `0` and `3` (below)                                                                                                                                                                                                                                  |
+| `builtin_devices`           | list          | `[]`         | See below                                                                                                                                                                                                                                                                                |
+| `io_device`                 | mapping       | (none)       | Optional machine-level global I/O device, with the same shape as the `io_device` of an extension overlay (below)                                                                                                                                                                         |
+| `default_extensions`        | list          | (none)       | Documentation only. The loader never reads it                                                                                                                                                                                                                                            |
 
 #### Slot 0 (fixed)
 
@@ -531,6 +569,8 @@ vram_kb: 128 # documentation only -- see note above
 - The entry whose `pages` includes `0` or `1`: the main BIOS ROM. This entry is necessary. If it is absent, the loader raises `MachineLoadError`.
 - The entry whose `pages` includes `2`: an optional logo ROM at 0x8000-0xBFFF.
 
+The ROM files of the main BIOS, the SUB ROM and the DISK ROM must exist, or the loader raises `MachineLoadError` ("ROM file not found"). When the logo ROM file is absent, the loader prints a warning and builds the machine without it.
+
 The `sha1` of a `rom:` block only records the expected dump. The loader does not compare it with the file that it reads, whether the value is `null` or a hash. The core checks a different SHA1. The host calculates it from the bytes that it read and writes it into the MachineConfig document (see [load_machine_config() and build_machine()](#load_machine_config-and-build_machine)).
 
 `content` can also hold at most one `{ram: {size_kb, pages}}` entry. This is flat RAM in slot 0 next to the ROMs. An example is the 16 KB SRAM of the Sony HB-10 at page 3, a volatile work RAM with no battery backup:
@@ -539,13 +579,13 @@ The `sha1` of a `rom:` block only records the expected dump. The loader does not
 - ram: { size_kb: 16, pages: [3] }
 ```
 
-`size_kb` must be `16` and `pages` must name exactly one page, or the loader raises `MachineLoadError`. The loader rejects a second `ram` entry in the same way.
+`size_kb` must be `16` and `pages` must name exactly one page in the range 0-3, or the loader raises `MachineLoadError`. The loader rejects a second `ram` entry, and a page-2 `ram` entry next to a logo ROM, in the same way.
 
 #### Slots 1 and 2: not read from the machine YAML
 
-Every machine YAML declares `1: {type: cartridge}` and `2: {type: cartridge}` under `slots.primary`. But `load_machine_spec` never reads `primary[1]` or `primary[2]`. It reads only `primary[0]` and `primary[3]`. These two entries thus declare intent only.
+Every machine YAML declares `1: {type: cartridge}` and `2: {type: cartridge}` under `slots.primary`. But `load_machine_spec` never reads `primary[1]` or `primary[2]`. It reads only `primary[0]` and `primary[3]`, so these two entries declare intent only.
 
-The contents of slots 1 and 2 come entirely from the parameters of `load_machine_config()`, which writes them into the `cartridges` and `extensions` of the MachineConfig document. For slot 1, these are the cartridge and mapper (the positional CLI argument or `--slot1`, plus `--mapper1`) or the overlay (`--extension1`). For slot 2, these are the cartridge and mapper (`--slot2`/`--mapper2`) or the overlay (`--extension2`). The CLI sets these values. Nothing under `slots.primary.1`/`.2` in the YAML affects them.
+The contents of slots 1 and 2 come entirely from the parameters of `load_machine_config()`, which writes them into the `cartridges` and `extensions` of the MachineConfig document. The CLI sets them: a cartridge and its mapper (`--slot1`, or the positional ROM argument, with `--mapper1`, and `--slot2` with `--mapper2`) or an overlay (`--extension1`, `--extension2`). Nothing under `slots.primary.1`/`.2` in the YAML affects them.
 
 #### Slot 3: MSX1
 
@@ -579,23 +619,24 @@ If `3:` is absent, the loader uses the 32 KB default, not open bus.
 
 `expanded: true` changes slot 3 into four secondary slots (`secondary.0` to `.3`, with the same keys as `slots.primary`). `_parse_slot3_msx2` scans them independently for these items:
 
-- The first sub-slot with `content` whose `rom.pages` includes `0` or `1` → the SUB ROM. This is optional. The loader records its sub-slot index, which is not fixed to 0.
+- The first `rom:` entry in the `content` of the first sub-slot that has one → the SUB ROM. The loader does not read its `pages`. This is optional. The loader records its sub-slot index, which is not fixed to 0.
 - The last sub-slot with `mapper: standard` → a `RamMapper`, with the size from its `size_kb` (default `128`). The size must be a positive multiple of `16`. `_check_ram_mapper_size_kb` checks this, or raises `MachineLoadError`.
 - The last sub-slot with `type: ram` (and no `mapper: standard`) → flat (non-mapper) RAM, with the size from `size_kb` (default `64`). `hb_f1xd` uses this for its real fixed 64 KB.
 - The first sub-slot with an `fdc:` block → see [Floppy disk (FDC)](#floppy-disk-fdc).
 
-A `mapper: standard` sub-slot and a `type: ram` sub-slot are mutually exclusive across the whole `secondary` mapping. The reason is that `Memory` cannot hold both a RAM mapper and flat RAM. If both are present, the loader raises `MachineLoadError`. The loader also rejects RAM (flat RAM or a RAM mapper) in the same sub-slot index as the SUB ROM or the FDC. The reason is that the write path of `Memory` does not stop a stray write to either of them from going into the RAM. The loader checks every sub-slot index against `0`-`3` (`_check_subslot_index`), whatever its role is.
+A `mapper: standard` sub-slot and a `type: ram` sub-slot are mutually exclusive across the whole `secondary` mapping. The reason is that `Memory` cannot hold both a RAM mapper and flat RAM. If both are present, the loader raises `MachineLoadError`. The loader also rejects RAM (flat RAM or a RAM mapper) in the same sub-slot index as the SUB ROM or the FDC. With the SUB ROM, the write path of `Memory` does not stop a stray write to the ROM from going into the RAM. With the FDC, the RAM would answer in the other pages of the FDC sub-slot. The loader checks every sub-slot index against `0`-`3` (`_check_subslot_index`), whatever its role is.
 
 An MSX2 slot 3 without `expanded: true` but with `mapper: standard` also gives a `RamMapper`, with the size from its `size_kb`. The loader records no sub-slot for it (`ram_mapper_subslot` stays unset), so `Memory` uses its fixed slot-3 layout. No shipped machine uses this form.
 
 `fdc:` block fields (only meaningful in a slot-3 sub-slot):
 
-| Field              | Type         | Default  | Notes                                                                                                                |
-| ------------------ | ------------ | -------- | -------------------------------------------------------------------------------------------------------------------- |
-| `rom`              | `rom:` block | (none)   | Necessary (the DISK ROM)                                                                                             |
-| `controller`       | string       | `wd2793` | `wd2793` or `tc8566af`                                                                                               |
-| `connection_style` | string       | `sony`   | `sony` or `tc8566af`                                                                                                 |
-| `drives`           | int          | `1`      | `1`-`4`. The YAML loader checks only that the value is positive. The core rejects a document with more than 4 drives |
+| Field              | Type         | Default  | Notes                                                                                                                           |
+| ------------------ | ------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `rom`              | `rom:` block | (none)   | Necessary (the DISK ROM)                                                                                                        |
+| `controller`       | string       | `wd2793` | `wd2793` or `tc8566af`                                                                                                          |
+| `connection_style` | string       | `sony`   | `sony` or `tc8566af`                                                                                                            |
+| `drives`           | int          | `1`      | `1`-`4`. The YAML loader checks only that the value is positive. The core rejects a document with more than 4 drives            |
+| `ref`              | string       | (none)   | Documentation only (`fdc_wd2793` or `fdc_tc8566af`). The loader never reads it, and no code reads the `fdc_*.yaml` device files |
 
 `(controller, connection_style)` must be `(wd2793, sony)` or `(tc8566af, tc8566af)`. The loader raises an error for any other pair, even if each value is valid alone (e.g. it rejects `wd2793` + `tc8566af`).
 
@@ -636,22 +677,23 @@ io_device:
   rom: { file: some_kanji_font.rom, size_kb: 256, sha1: null }
 ```
 
-This field has the same shape as the `io_device` of an extension overlay (below). It is a slot-independent global I/O device that the machine itself supplies. The loader validates it against the same `IO_DEVICES` set, which holds only `kanji_rom`. At present, no shipped machine YAML declares one. At present, only two extensions supply a `kanji_rom` device: `hbi_j1` and `msxdos2_512k_kanjirom` (`--extension1`/`--extension2`). Both do it through the `io_device` of the extension overlay (below).
+This field has the same shape as the `io_device` of an extension overlay (below). It is a slot-independent global I/O device that the machine itself supplies. The loader validates it against the same `IO_DEVICES` set, which holds only `kanji_rom`. At present, no shipped machine YAML declares one, and only two extensions supply a `kanji_rom` device: `hbi_j1` and `msxdos2_512k_kanjirom` (`--extension1`/`--extension2`). Both do it through the `io_device` of the extension overlay (below).
 
 ### Extension overlay YAML (`config/extensions/*.yaml`)
 
-| Field             | Type         | Default             | Notes                                                                                                                                                                                                                      |
-| ----------------- | ------------ | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `schema_version`  | int          | (none)              | Must be `1`                                                                                                                                                                                                                |
-| `id`              | string       | (none)              | Documentation only. `load_extension_overlay` never reads it. The loader finds the file by its filename stem alone (`config/extensions/<--extension1/--extension2 value>.yaml`), unlike the `id` of machine and device YAML |
-| `slot`            | int          | `2`                 | Must be `1` or `2`. Documentation only: it records the slot that the author of the YAML targeted. The CLI flag (`--extension1` or `--extension2`) selects the actual slot                                                  |
-| `shape`           | string       | `flat`              | `flat` or `expanded`                                                                                                                                                                                                       |
-| `rom_base`        | string       | `""` (project root) | Base directory for every `rom:` block below                                                                                                                                                                                |
-| `name`, `overlay` | string, bool | (none)              | Documentation only. The loader never reads them                                                                                                                                                                            |
+| Field             | Type         | Default             | Notes                                                                                                                                                                                                                                                                                                                                                                        |
+| ----------------- | ------------ | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schema_version`  | int          | (none)              | Must be `1`                                                                                                                                                                                                                                                                                                                                                                  |
+| `id`              | string       | (none)              | Documentation only. `load_extension_overlay` never reads it. The loader finds the file by its filename stem alone (`config/extensions/<--extension1/--extension2 value>.yaml`), unlike the `id` of machine and device YAML. The CLI and `py_emulator.yaml` accept only the ids in `VALID_EXTENSIONS` (`host/app_config.py`), so a new overlay file also needs an entry there |
+| `slot`            | int          | `2`                 | Must be `1` or `2`. Documentation only: it records the slot that the author of the YAML targeted. The CLI flag (`--extension1` or `--extension2`) selects the actual slot                                                                                                                                                                                                    |
+| `shape`           | string       | `flat`              | `flat` or `expanded`                                                                                                                                                                                                                                                                                                                                                         |
+| `rom_base`        | string       | `""` (project root) | Base directory for every `rom:` block below                                                                                                                                                                                                                                                                                                                                  |
+| `name`, `overlay` | string, bool | (none)              | Documentation only. The loader never reads them                                                                                                                                                                                                                                                                                                                              |
 
 #### Flat shape (`shape: flat`, or omitted)
 
 ```yaml
+schema_version: 1
 device: fmpac
 rom: { file: fmpac.rom, size_kb: 64 }
 sram: { size_kb: 8, save_file: saves/sram/fmpac.sram }
@@ -662,6 +704,7 @@ sram: { size_kb: 8, save_file: saves/sram/fmpac.sram }
 #### Expanded shape (`shape: expanded`)
 
 ```yaml
+schema_version: 1
 shape: expanded
 slot: 2
 rom_base: roms/hbi_j1
@@ -690,7 +733,7 @@ io_device:
 
 An overlay can have at most one `ram_mapper` sub-slot. A second one would register the standard memory-mapper I/O ports (0xFC-0xFF) two times. The loader always raises `MachineLoadError` for an expanded overlay on an MSX1 machine. No MSX1-standard hardware matches a memory-mapper sub-slot, and every current expanded overlay models MSX2-era hardware. A `ram_mapper` sub-slot also conflicts with a machine that already has its own slot-3 RAM mapper (`has_ram_mapper=True`), and with a `ram_mapper` sub-slot in the other overlay. The two mappers would use the same ports. `halnote` also cannot go in both overlays.
 
-The loader validates the optional top-level `io_device` against a _third_ device namespace, `IO_DEVICES = {kanji_rom}`. This namespace has no overlap with the other two. `device: kanji_rom` is not valid in `subslots`, and `device: halnote` (or any other sub-slot device) is not valid in `io_device`. If any two of the machine-level `io_device` and the `io_device` of the two overlays resolve to `kanji_rom`, `build_machine` raises an error. The reason is that ports 0xD8-0xDB cannot serve two Kanji-ROM devices.
+The loader validates the optional top-level `io_device` against a third device namespace, `IO_DEVICES = {kanji_rom}`. This namespace has no overlap with the other two. `device: kanji_rom` is not valid in `subslots`, and `device: halnote` (or any other sub-slot device) is not valid in `io_device`. If any two of the machine-level `io_device` and the `io_device` of the two overlays resolve to `kanji_rom`, `build_machine` raises an error. The reason is that ports 0xD8-0xDB cannot serve two Kanji-ROM devices.
 
 #### `rom:` and `sram:` blocks
 
@@ -700,13 +743,15 @@ Both shapes use the same nested block schemas. `_parse_rom_entry` parses them. T
 | ------------ | ----------- | ----------------- | ----------------------------------------------------------------------------------------------- |
 | `file`       | string      | yes               | Resolved against `rom_base`                                                                     |
 | `size_kb`    | int         | no (default `0`)  | Documentation only. The loader does not check it against the actual file size                   |
-| `pages`      | list of int | no (default `[]`) | Only meaningful for slot 0 and the SUB ROM, where it selects the main, logo, or SUB ROM entry   |
+| `pages`      | list of int | no (default `[]`) | Only meaningful for slot 0, where it selects the main or the logo ROM entry                     |
 | `sha1`       | string      | no                | Documentation only. The loader does not check it against the file (see [Slot 0](#slot-0-fixed)) |
 
-| `sram:` field | Type   | Notes                                                                                                                                           |
-| ------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `size_kb`     | int    | Documentation only. The loader ignores it. The SRAM size of each device is a Python-side constant (`HALNOTE_SRAM_SIZE`, `FMPAC_SRAM_SIZE`, ...) |
-| `save_file`   | string | Path (relative to the project root) of the SRAM save file. Omit it for no persistence                                                           |
+| `sram:` field | Type   | Notes                                                                                                                                             |
+| ------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `size_kb`     | int    | Documentation only. The loader ignores it. The SRAM size of each device is a Python-side constant (`HALNOTE_SRAM_SIZE`, `FMPAC_SRAM_SIZE`, ...)   |
+| `save_file`   | string | Path of the SRAM save file, used as written (a relative path is relative to the working directory, not to `rom_base`). Omit it for no persistence |
+
+---
 
 ## Machine YAML loader
 
@@ -714,15 +759,15 @@ Both shapes use the same nested block schemas. `_parse_rom_entry` parses them. T
 
 `host/machine_config.py` resolves the hardware topology in two passes:
 
-1. **Device registry pass.** `load_device_registry(config_dir)` reads every `*.yaml` file in `config/devices/` into a dict with the device `id` as key. Each file describes one hardware item (VDP type, PSG, PPI, RTC, RAM mapper) alone, with no machine context.
+1. **Device registry pass.** `load_device_registry(config_dir)` reads every `*.yaml` file in `config/devices/` into a dict with the device `id` as key (see [Device YAML](#device-yaml-configdevicesyaml)). Each file describes one hardware item alone, with no machine context.
 
 2. **Machine spec pass.** `load_machine_spec(machine_id, config_dir, device_registry, project_root)` loads `config/machines/<machine_id>.yaml` and validates the necessary fields. It resolves every `builtin_devices` `ref` against the registry and returns a `MachineSpec` dataclass. For an unresolved `ref`, an unknown `schema_version`, or an absent necessary ROM entry, it raises a `MachineLoadError` that gives the file and the field.
 
 ### load_machine_config() and build_machine()
 
-The host and the core share the work of building a machine. `load_machine_config(spec, cartridge1, mapper1, ...)` in `host/machine_config.py` reads every file the machine needs into a `MachineConfig` value (`msx/boundary.py`). It writes the resolved machine, the cartridges with their mappers and the extensions into one canonical JSON document (`msx/machine_config.py`, `msx/machine_config.schema.json`). For an `auto` mapper, it looks up the mapper in the ROM database first. In the document, every ROM is a reference `{name, size, sha1, pages}`. The ROM images travel beside the document, keyed by SHA1. The run inputs also travel beside it: the saved SRAM images, the disk images and the RTC start time.
+The host and the core share the work of building a machine. `load_machine_config(spec, cartridge1, mapper1, ...)` in `host/machine_config.py` reads every file the machine needs into a `MachineConfig` value (`msx/boundary.py`). It writes the resolved machine, the cartridges with their mappers and the extensions into one canonical JSON document (`msx/machine_config.py`, `msx/machine_config.schema.json`). For an `auto` mapper, it looks up the mapper in the ROM database first. The document shape is in [MachineConfig document](#machineconfig-document). The run inputs also travel beside the document: the saved SRAM images, the disk images and the RTC start time.
 
-The parser limits `ram_size_kb` and `flat_ram_size_kb` to 0-64, and `ram_mapper_size_kb` and a sub-slot device `size_kb` to 0 or 16-4096. It also checks the `device_io_ports` device names and that the first port of each range is not above the last.
+The MachineConfig document parser (`parse_machine_config()` in `msx/machine_config.py`) limits `ram_size_kb` and `flat_ram_size_kb` to 0-64, and `ram_mapper_size_kb` and a sub-slot device `size_kb` to 0 or 16-4096. It also checks the `device_io_ports` device names and that the first port of each range is not above the last.
 
 `build_machine(config)` in `msx/machine_loader.py` parses the document strictly and checks the size and SHA1 of every referenced image. It then constructs the `Machine` from those bytes only. It opens no file and consults no database, so the same config always builds the same machine. The `Machine` keeps the SHA-256 of the document, which a save state records (see [MachineConfig document](#machineconfig-document)). The `spec.generation` field selects the concrete types:
 
@@ -731,13 +776,11 @@ The parser limits `ram_size_kb` and `flat_ram_size_kb` to 0-64, and `ram_mapper_
 
 The `builtin_devices` flags select the rest: `V9938` or `VDP` (TMS9918A) from `has_v9938`, and the `RTC` only when `has_rtc` is set.
 
-At load time, the loader skips device YAML entries with `implemented: false` and shows a stderr warning. The rest of the machine continues normally. A device definition can thus go into a commit before its emulation exists, and boots do not fail. Every device in `config/devices/` is currently `implemented: true`.
-
 ---
 
 ## Core boundary and porting guide
 
-The emulator core (`msx/`) is separate from everything that embeds it. You can thus drive the core from a different frontend. You can also port only the core to another language (Zig, C++, Rust) first, and keep the Python host and frontend for comparison. This section describes the boundary from the point of view of such a reuse. The language-neutral contract is `allium/core-frontend.allium`. The requirements are in the `machine-core`, `machine-loader` and `machine-state` specs under `openspec/specs/`. Neither `allium/` nor `openspec/` is published yet.
+The emulator core (`msx/`) is separate from everything that embeds it, so you can drive the core from a different frontend. You can also port only the core to another language (Zig, C++, Rust) first, and keep the Python host and frontend for comparison. This section describes the boundary from the point of view of such a reuse, and states every rule that a port needs. The development repository also keeps the language-neutral contract (`allium/core-frontend.allium`) and the requirement specs (`openspec/specs/`). They are not published yet.
 
 ### Three parties
 
@@ -747,9 +790,11 @@ The emulator core (`msx/`) is separate from everything that embeds it. You can t
 | Host     | `__main__.py`, `host/` | Process-level services: YAML and ROM file loading, the ROM database, SRAM, disk image, save-state and screenshot files, the debugger, the socket RPC    |
 | Frontend | `frontend/`            | Presentation and devices: the SDL2 window, audio output and its low-pass filter, host input devices, frame pacing and frame skipping, hotkeys           |
 
-The core opens no file, never reads the host clock, and imports neither `host/`, `frontend/` nor `sdl2`. `tests/test_core_frontend_boundary.py` enforces this. It imports every `msx` module in an interpreter that cannot import `sdl2`, and it rejects any import of the three names. Everything that the core needs thus enters as a value, and everything it produces leaves as a value.
+The core opens no file, never reads the host clock, and imports neither `host/`, `frontend/` nor `sdl2`. `tests/test_core_frontend_boundary.py` enforces this. It imports every `msx` module in an interpreter that cannot import `sdl2`, and it rejects any import of the three names. Everything that the core needs enters as a value, and everything it produces leaves as a value. The core also computes with integers only: the same test rejects a float literal and a true division (`/`) in `msx/`.
 
-The same test also checks the other direction. Code in `host/`, `frontend/`, `tools/` and `__main__.py` uses the machine only through the core API (below). It must not read a core component (`.cpu`, `.vdp`, `.memory`, `.fdc` and the others) or a private field of the machine. No command is excepted. The test skips only the two bare-Z80 runners in `tools/` (`run_z80_exercisers.py`, `run_singlestep_tests.py`), which drive a `Z80` without a machine. The debugger's trace commands (`te`/`td`, `ce`/`cd`) and the `--vdp-trace`/`--mapper-trace` flags set the trace kinds through the core API, and `host/trace.py` formats the events that `drain_trace()` returns. A port of the core can thus replace the `Machine` and keep the debugger, the RPC server and the frontend.
+The same test also checks the other direction. Code in `host/`, `frontend/`, `tools/` and `__main__.py` uses the machine only through the core API (below). It must not read a core component (`.cpu`, `.vdp`, `.memory`, `.fdc` and the others) or a private field of the machine. No command is excepted. The test finds these reads by the name of the object: it checks the names that host code uses for a machine (`machine`, `_machine`, `m`, `core`), so a machine under another name is not checked. The test skips only the two bare-Z80 runners in `tools/` (`run_z80_exercisers.py`, `run_singlestep_tests.py`), which drive a `Z80` without a machine.
+
+The debugger's trace commands (`te`/`td`, `ce`/`cd`) and the `--vdp-trace`/`--mapper-trace` flags set the trace kinds through the core API, and `host/trace.py` formats the events that `drain_trace()` returns. A port of the core can therefore replace the `Machine` and keep the debugger, the RPC server and the frontend.
 
 The test also checks what host code imports from `msx/`. It may import `msx/boundary.py`, `msx/core_api.py`, `InputFrame` from `msx/input.py`, `create_machine` and `release_machine` from `msx/machine_loader.py`, and the public names of the machine description layer. The description layer is `msx/machine_spec.py` and `msx/machine_config.py`: the machine model, the vocabularies, and the encoder and parser of the MachineConfig document. It imports no device module, so it stays Python when the core is native. The host keeps using its encoder, and a native core parses the same document (`msx/machine_config.schema.json`) with its own parser. The fixed media sizes (`FMPAC_SRAM_SIZE`, `RTC_CMOS_SIZE`, `HALNOTE_SRAM_SIZE`, and one constant for each cartridge SRAM mapper) are boundary constants, because the host creates a save file before the core exists.
 
@@ -777,45 +822,46 @@ All of them are in `msx/boundary.py` and `msx/input.py`:
 
 `create_machine(config)` in `msx/machine_loader.py` builds a `Machine`. `msx/core_api.py` defines `CoreApi`, a `typing.Protocol` that lists every operation that code outside `msx/` uses. `Machine` implements it, and mypy checks this. The host and the frontend hold the machine as a `CoreApi`. The methods below are the boundary. Everything else on `Machine` is internal or belongs to the debugger's diagnostics.
 
-| Group          | Operation                                                                                                                 | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Construction   | `create_machine(config) -> BuildResult`                                                                                   | Returns `status`, `machine` and `error_text`. A malformed document, a missing or mismatched ROM image, conflicting image records, a device size that the device does not accept (a disk image, a RAM mapper), or an RTC start time outside year 0-9999 or not a real date and time give `STATUS_BAD_CONFIG` (4), no machine and the message. Nothing outside the new machine changes. `build_machine(config)` is a wrapper for tests and Python embedding that raises `MachineLoadError` (`msx/machine_spec.py`) with the same message. Host code calls `create_machine`. Neither takes a logger or tracer: the debug log and the VDP and mapper trace go through the trace members below                                                                                  |
-| Frame stepping | `step_frame(frame_input, render_video) -> FrameOutput`                                                                    | Runs one frame, or the rest of a stopped one. At a break it returns early with `stop_reason` set and `frame_complete` 0. A frame breakpoint stops after the frame completes, so it returns `frame_complete` 1 with the video and the audio                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-|                | `apply_input(frame_input) -> int`                                                                                         | Replaces the input lines and mouse buttons at once, without running a frame. RPC key injection uses it. Always returns `STATUS_OK`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-|                | `samples_per_frame()`, `video_standard`, `keyboard_layout`                                                                | 735 or 882. The video standard and the keyboard layout are plain integers. The host converts them with the `VideoStandard` and `KeyboardLayout` enums of `msx/boundary.py` (`VideoStandard(core.video_standard).target_fps` is 60 or 50)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| Control        | `reset() -> int`                                                                                                          | Power-on reset. RAM, VRAM and mounted media stay as they are. Always returns `STATUS_OK`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-|                | `save_state() -> bytes`                                                                                                   | The snapshot (`msx/state.py`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-|                | `load_state(data) -> int`                                                                                                 | Returns `STATUS_OK` (0), or `STATUS_STATE_REJECTED` (1) and changes nothing when the snapshot does not fit                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-|                | `write_memory(addr, data) -> int`                                                                                         | Writes as the CPU would, wrapping at 0xFFFF. The RPC server uses it only while paused. Always returns `STATUS_OK`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| Media          | `dirty_media()`                                                                                                           | The ids written since they were last persisted                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-|                | `read_media(media_id) -> bytes`                                                                                           | The current bytes of a medium. `b""` for an id the machine does not have, any integer included (a medium is never empty)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-|                | `mark_persisted(media_id) -> int`                                                                                         | Call it after the host has written the bytes. Returns `STATUS_OK` (0), or `STATUS_NO_MEDIUM` (5) for an id the machine does not have                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-|                | `mount_disk(drive, data, write_protected) -> int`                                                                         | Returns `STATUS_OK` (0), `STATUS_NO_DRIVE` (2) for a drive the machine lacks, `STATUS_BAD_IMAGE` (3) for an image whose size is not a positive multiple of 512, or `STATUS_BAD_ARGUMENT` (6) for a `write_protected` other than 0 and 1. A failure changes nothing. The host writes a dirty outgoing image back before the call                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-|                | `eject_disk(drive) -> int`                                                                                                | Empties the drive. Returns `STATUS_OK` (0), or `STATUS_NO_DRIVE` (2) for a drive the machine lacks                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-|                | `last_error_text() -> bytes`                                                                                              | The UTF-8 message of the last failed call of a member that returns a status, or of `read_media`, `read_memory`, `read_vram` or `slot_info` when they return an empty or -1 value. A member that checks its arguments clears it on success. A member that cannot fail leaves it as it is. No core API member raises for an invalid argument. `host/state_files.load_state` and `host/media.swap_disk` raise it as `ValueError("<file>: <message>")`                                                                                                                                                                                                                                                                                                                         |
-|                | `disk_mounted(drive)`                                                                                                     | Whether the drive exists and holds an image                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| Devices        | `attach_mouse(port) -> int`                                                                                               | Connects an MSX mouse to joystick port 1 (`0`) or 2 (`1`). The core makes the mouse device. Another port returns `STATUS_BAD_ARGUMENT` (6). The host calls it at most once, before the first `step_frame` and the first `load_state`: a state saved with a mouse loads only on a machine with one. There is no detach                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-|                | `attach_printer() -> int`                                                                                                 | Connects a printer to the printer port, at any time. A machine with no port returns `STATUS_NO_PRINTER_PORT` (7). The saved state does not carry the attachment. There is no detach                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-|                | `drain_printer() -> bytes`                                                                                                | The bytes the guest strobed, in order, and empties the buffer of `PRINTER_BUFFER_SIZE` (4096) bytes. A byte strobed into a full buffer is dropped, and the status port still reads ready, so the guest sees the same values however often the host drains. The run loops drain after each `step_frame`, and one frame cannot strobe 4096 bytes. A reset or a state load keeps the buffer                                                                                                                                                                                                                                                                                                                                                                                   |
-|                | `mount_tape(edges) -> int`                                                                                                | Copies an edge list (see [Cassette tape](#cassette-tape)) and starts at position 0. A list that is empty, not a multiple of 4 bytes or holds an interval of 0 returns `STATUS_BAD_IMAGE` (3) and keeps the mounted tape. A machine with no cassette port returns `STATUS_NO_TAPE_PORT` (8) from this member, `eject_tape` and `seek_tape`                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-|                | `eject_tape() -> int`                                                                                                     | Empties the deck. Returns `STATUS_OK` also when it is empty                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-|                | `seek_tape(position) -> int`                                                                                              | Sets the position in T-states, 0 to the tape length. Another value returns `STATUS_BAD_ARGUMENT` (6), and no tape returns `STATUS_NO_MEDIUM` (5). Rewind is `seek_tape(0)`. None of the tape members changes the motor, which only the guest drives                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| Inspection     | `cpu_registers() -> CpuRegisters`                                                                                         | The register file                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-|                | `read_memory(addr, length) -> bytes`                                                                                      | Reads as the CPU would in the current slot selection, wrapping at 0xFFFF. It triggers no watchpoint. A memory-mapped device register reads with its side effects. A length outside 0-0x10000 gives `b""` and sets `last_error_text()`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-|                | `vram_size()`, `read_vram(addr, length) -> bytes`                                                                         | 0x4000 or 0x20000. The read wraps at the VRAM size by the low address bits, so a negative address wraps to the end. A length outside 0 to the VRAM size gives `b""` and sets `last_error_text()`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-|                | `vdp_info() -> VdpInfo`                                                                                                   | It clears no status flag                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-|                | `frame_number()`, `cycle_count`, `drive_count()`, `main_ram_range()`                                                      | `cycle_count` is a property: the T-state count since power-on. `drive_count()` is 0 without a floppy interface                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-|                | `slot_layout() -> SlotLayout`                                                                                             | The port 0xA8 value, the expanded primary slots as a bit mask, and the 4 secondary slot registers (0 for a slot that is not expanded). The debugger's `sl` and `st` use it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-|                | `slot_info(primary, secondary, page) -> SlotInfo`                                                                         | One slot as integers, for `sl` and `st`: the content kind (`SLOT_CONTENT_*`), the cartridge's `MapperId`, the size in KB, the bank kind (`BANK_*`), two windows (a `WINDOW_*` kind and a value each) and the Halnote sub-banks with their ROM offsets. `host/debugger/slots.py` builds the text, so no display format crosses the boundary. `secondary` and `page` are -1 for none. A value outside 0-3 returns a content, mapper and size of -1                                                                                                                                                                                                                                                                                                                           |
-|                | `render_preview() -> RgbFrame`                                                                                            | The current frame, for screenshots and save-state thumbnails                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-|                | `tape_info() -> TapeInfo`                                                                                                 | The deck: `mounted` and `motor` (0 or 1), the `position` and the `length` in T-states. All 0 on a machine with no cassette port. The frontend reads it once per frame for tape-fast                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| Debug control  | `set_breakpoints()`, `set_watchpoints()` and the other break setters, `breakpoints()`, `watchpoints()`, `break_halt_di()` | The break settings and their read-back. A watchpoint is an `(addr, kind)` pair, where the kind is `WATCH_READ`, `WATCH_WRITE` or both. `host/watch.py` converts it to and from the `r`, `w` and `rw` of the debugger, the RPC and the CLI. Each setter returns `STATUS_OK`, or `STATUS_BAD_ARGUMENT` (6) and keeps its setting for more than `MAX_BREAKPOINTS` or `MAX_WATCHPOINTS` (4) entries, an address or SP value outside 0x0000-0xFFFF, an invalid kind, a frame below -1, or an SP range whose low end is above its high end. -1 clears the run-to address and the frame breakpoint, and `set_sp_range(-1, -1)` clears the SP range. `set_break_halt_di()` takes 0 or 1, and returns `STATUS_BAD_ARGUMENT` and keeps its setting for any other value               |
-|                | `set_sprites_hidden(hidden) -> int`, `sprites_hidden()`                                                                   | The sprite display flag of the debugger's `ds`. While it is set, the renderer skips its sprite pass. No reset clears it, and the save state does not carry it. The setter takes 0 or 1, and returns `STATUS_BAD_ARGUMENT` and keeps the flag for any other value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-|                | `set_trace_kinds(kinds) -> int`, `trace_kinds()`, `trace_sources()`                                                       | The trace kinds that are on, as the bit flags `TRACE_VDP`, `TRACE_MAPPER` and `TRACE_DEBUG` (the `--debug` log), and the kinds this machine can produce (`TRACE_MAPPER` needs a bank-switching ROM mapper in slot 1 or 2). Another bit returns `STATUS_BAD_ARGUMENT` (6). No reset clears the kinds, and the save state does not carry them                                                                                                                                                                                                                                                                                                                                                                                                                                |
-|                | `drain_trace() -> tuple[TraceEvent, ...]`                                                                                 | The recorded events in order: each port 0x99 and 0x9B byte while `TRACE_VDP` is on, each bank change of the slot 1/2 mapper while `TRACE_MAPPER` is on, and while `TRACE_DEBUG` is on each I/O port access, each stored write to VDP R#0 or R#1, each undefined opcode and each hang (a PC loop of 1000 repeats, or a HALT with interrupts off at the end of a frame) after the last 64 instructions and each cassette motor change (`TRACE_EVENT_TAPE_MOTOR`: the motor, the position in two 32-bit halves, and whether a tape is mounted), with the cycle count, the frame number and the PC. It empties the buffer. The buffer holds `TRACE_CAPACITY` (65536) events, and a drain after a full buffer ends with one `TRACE_EVENT_LOST` record that gives the lost count |
-|                | `step() -> int`                                                                                                           | Runs one instruction of the current frame and returns its T-states. The cycle count, the frame position and the VDP advance as in `step_frame`. It tests no breakpoint or break request                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-|                | `request_break() -> int`                                                                                                  | Stops before the next frame segment. Safe from a signal handler (Ctrl-C). Always returns `STATUS_OK`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-|                | `last_stop() -> StopInfo`                                                                                                 | The most recent stop: reason, PC, and for a watchpoint the address, value and access kind                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Group | Operation | Notes |
+| --- | --- | --- |
+| Construction | `create_machine(config) -> BuildResult` | Returns `status`, `machine` and `error_text`. A malformed document, a missing or mismatched ROM image, conflicting image records, a device size that the device does not accept (a disk image, a RAM mapper), or an RTC start time outside year 0-9999 or not a real date and time give `STATUS_BAD_CONFIG` (4), no machine and the message. Nothing outside the new machine changes. `build_machine(config)` is a wrapper for tests and Python embedding that raises `MachineLoadError` (`msx/machine_spec.py`) with the same message. Host code calls `create_machine`. Neither takes a logger or tracer: the debug log and the VDP and mapper trace go through the trace members below |
+|  | `release_machine(machine)` | The host's last use of a machine, the pair of `create_machine` (`msx_core_destroy` in the C header). The Python core has nothing to free |
+| Frame stepping | `step_frame(frame_input, render_video) -> FrameOutput` | Runs one frame, or the rest of a stopped one. At a break it returns early with `stop_reason` set and `frame_complete` 0. A frame breakpoint stops after the frame completes, so it returns `frame_complete` 1 with the video and the audio |
+|  | `apply_input(frame_input) -> int` | Replaces the input lines and mouse buttons at once, without running a frame. RPC key injection uses it. Always returns `STATUS_OK` |
+|  | `samples_per_frame()`, `video_standard`, `keyboard_layout` | 735 or 882. The video standard and the keyboard layout are plain integers. The host converts them with the `VideoStandard` and `KeyboardLayout` enums of `msx/boundary.py` (`VideoStandard(core.video_standard).target_fps` is 60 or 50) |
+| Control | `reset() -> int` | Power-on reset. RAM, VRAM and mounted media stay as they are. Always returns `STATUS_OK` |
+|  | `save_state() -> bytes` | The snapshot (`msx/state.py`) |
+|  | `load_state(data) -> int` | Returns `STATUS_OK` (0), or `STATUS_STATE_REJECTED` (1) and changes nothing when the snapshot does not fit |
+|  | `write_memory(addr, data) -> int` | Writes as the CPU would, wrapping at 0xFFFF. The RPC server uses it only while paused. Always returns `STATUS_OK` |
+| Media | `dirty_media()` | The ids written since they were last persisted |
+|  | `read_media(media_id) -> bytes` | The current bytes of a medium. `b""` for an id the machine does not have, any integer included (a medium is never empty) |
+|  | `mark_persisted(media_id) -> int` | Call it after the host has written the bytes. Returns `STATUS_OK` (0), or `STATUS_NO_MEDIUM` (5) for an id the machine does not have |
+|  | `mount_disk(drive, data, write_protected) -> int` | Returns `STATUS_OK` (0), `STATUS_NO_DRIVE` (2) for a drive the machine lacks, `STATUS_BAD_IMAGE` (3) for an image whose size is not a positive multiple of 512, or `STATUS_BAD_ARGUMENT` (6) for a `write_protected` other than 0 and 1. A failure changes nothing. See **Media** in [Guarantees](#guarantees) for the write-back before the call |
+|  | `eject_disk(drive) -> int` | Empties the drive. Returns `STATUS_OK` (0), or `STATUS_NO_DRIVE` (2) for a drive the machine lacks |
+|  | `last_error_text() -> bytes` | The UTF-8 message of the last failed call of a member that returns a status, or of `read_media`, `read_memory`, `read_vram` or `slot_info` when they return an empty or -1 value. A member that checks its arguments clears it on success. A member that cannot fail leaves it as it is. No core API member raises for an invalid argument. `host/state_files.load_state` and `host/media.swap_disk` raise it as `ValueError("<file>: <message>")` |
+|  | `disk_mounted(drive)` | Whether the drive exists and holds an image |
+| Devices | `attach_mouse(port) -> int` | Connects an MSX mouse to joystick port 1 (`0`) or 2 (`1`). The core makes the mouse device. Another port returns `STATUS_BAD_ARGUMENT` (6). The host calls it at most once, before the first `step_frame` and the first `load_state`: a state saved with a mouse loads only on a machine with one. A second call replaces the mouse with a new one and returns `STATUS_OK`. There is no detach |
+|  | `attach_printer() -> int` | Connects a printer to the printer port, at any time. A machine with no port returns `STATUS_NO_PRINTER_PORT` (7). The saved state does not carry the attachment. There is no detach |
+|  | `drain_printer() -> bytes` | The bytes the guest strobed, in order, and empties the buffer of `PRINTER_BUFFER_SIZE` (4096) bytes. A byte strobed into a full buffer is dropped, and the status port still reads ready, so the guest sees the same values however often the host drains. The run loops drain after each `step_frame`, and one frame cannot strobe 4096 bytes. A reset or a state load keeps the buffer |
+|  | `mount_tape(edges) -> int` | Copies an edge list (see [Cassette tape](#cassette-tape)) and starts at position 0. A list that is empty, not a multiple of 4 bytes or holds an interval of 0 returns `STATUS_BAD_IMAGE` (3) and keeps the mounted tape. A machine with no cassette port returns `STATUS_NO_TAPE_PORT` (8) from this member, `eject_tape` and `seek_tape` |
+|  | `eject_tape() -> int` | Empties the deck. Returns `STATUS_OK` also when it is empty |
+|  | `seek_tape(position) -> int` | Sets the position in T-states, 0 to the tape length. Another value returns `STATUS_BAD_ARGUMENT` (6), and no tape returns `STATUS_NO_MEDIUM` (5). Rewind is `seek_tape(0)`. None of the tape members changes the motor, which only the guest drives |
+| Inspection | `cpu_registers() -> CpuRegisters` | The register file |
+|  | `read_memory(addr, length) -> bytes` | Reads as the CPU would in the current slot selection, wrapping at 0xFFFF. It triggers no watchpoint. A memory-mapped device register reads with its side effects. A length outside 0-0x10000 gives `b""` and sets `last_error_text()` |
+|  | `vram_size()`, `read_vram(addr, length) -> bytes` | 0x4000 or 0x20000. The read wraps at the VRAM size by the low address bits, so a negative address wraps to the end. A length outside 0 to the VRAM size gives `b""` and sets `last_error_text()` |
+|  | `vdp_info() -> VdpInfo` | It clears no status flag |
+|  | `frame_number()`, `cycle_count`, `drive_count()`, `main_ram_range()` | `cycle_count` is a property: the T-state count since power-on. `drive_count()` is 0 without a floppy interface |
+|  | `slot_layout() -> SlotLayout` | The port 0xA8 value, the expanded primary slots as a bit mask, and the 4 secondary slot registers (0 for a slot that is not expanded). The debugger's `sl` and `st` use it |
+|  | `slot_info(primary, secondary, page) -> SlotInfo` | One slot as integers, for `sl` and `st`: the content kind (`SLOT_CONTENT_*`), the cartridge's `MapperId`, the size in KB, the bank kind (`BANK_*`), two windows (a `WINDOW_*` kind and a value each) and the Halnote sub-banks with their ROM offsets. `host/debugger/slots.py` builds the text, so no display format crosses the boundary. `secondary` and `page` are -1 for none. A value outside 0-3 returns a content, mapper and size of -1 |
+|  | `render_preview() -> RgbFrame` | The current frame, for screenshots and save-state thumbnails |
+|  | `tape_info() -> TapeInfo` | The deck: `mounted` and `motor` (0 or 1), the `position` and the `length` in T-states. All 0 on a machine with no cassette port. The frontend reads it once per frame for tape-fast |
+| Debug control | `set_breakpoints()`, `set_watchpoints()` and the other break setters, `breakpoints()`, `watchpoints()`, `break_halt_di()` | The break settings and their read-back. A watchpoint is an `(addr, kind)` pair, where the kind is `WATCH_READ`, `WATCH_WRITE` or both. `host/watch.py` converts it to and from the `r`, `w` and `rw` of the debugger, the RPC and the CLI. Each setter returns `STATUS_OK`, or `STATUS_BAD_ARGUMENT` (6) and keeps its setting for more than `MAX_BREAKPOINTS` or `MAX_WATCHPOINTS` (4) entries, an address or SP value outside 0x0000-0xFFFF, an invalid kind, a frame below -1, or an SP range whose low end is above its high end. -1 clears the run-to address and the frame breakpoint, and `set_sp_range(-1, -1)` clears the SP range. `set_step_out(sp)` has no clear value (-1 is outside 0x0000-0xFFFF): it breaks once and then clears itself. The frame breakpoint is at most 2^63 − 1. `set_break_halt_di()` takes 0 or 1, and returns `STATUS_BAD_ARGUMENT` and keeps its setting for any other value |
+|  | `set_sprites_hidden(hidden) -> int`, `sprites_hidden()` | The sprite display flag of the debugger's `ds`. While it is set, the renderer skips its sprite pass. On the TMS9918A it also leaves the S#0 sprite flags of the frame clear, so it changes emulated state there. No reset clears it, and the save state does not carry it. The setter takes 0 or 1, and returns `STATUS_BAD_ARGUMENT` and keeps the flag for any other value |
+|  | `set_trace_kinds(kinds) -> int`, `trace_kinds()`, `trace_sources()` | The trace kinds that are on, as the bit flags `TRACE_VDP`, `TRACE_MAPPER` and `TRACE_DEBUG` (the `--debug` log), and the kinds this machine can produce (`TRACE_MAPPER` needs a bank-switching ROM mapper in slot 1 or 2). Another bit returns `STATUS_BAD_ARGUMENT` (6). No reset clears the kinds, and the save state does not carry them |
+|  | `drain_trace() -> tuple[TraceEvent, ...]` | The recorded events in order: each port 0x99 and 0x9B byte while `TRACE_VDP` is on, each bank change of the slot 1/2 mapper while `TRACE_MAPPER` is on, and while `TRACE_DEBUG` is on each I/O port access, each stored write to VDP R#0 or R#1, each undefined opcode and each hang (a PC loop of 1000 repeats, or a HALT with interrupts off at the end of a frame) after the last 64 instructions and each cassette motor change (`TRACE_EVENT_TAPE_MOTOR`: the motor, the position in two 32-bit halves, and whether a tape is mounted), with the cycle count, the frame number and the PC. It empties the buffer. The buffer holds `TRACE_CAPACITY` (65536) events, and a drain after a full buffer ends with one `TRACE_EVENT_LOST` record that gives the lost count |
+|  | `step() -> int` | Runs one instruction of the current frame and returns its T-states. The cycle count, the frame position and the VDP advance as in `step_frame`. It tests no breakpoint or break request |
+|  | `request_break() -> int` | Stops before the next frame segment. Safe from a signal handler (Ctrl-C). Always returns `STATUS_OK` |
+|  | `last_stop() -> StopInfo` | The most recent stop: reason, PC, and for a watchpoint the address, value and access kind |
 
 Apart from that device-register case, no inspection query changes emulated state. `tests/test_core_api.py` checks this: the save-state bytes are the same before and after every query.
 
@@ -828,7 +874,17 @@ The internal frame loop `run_frame()` does not cross the boundary, and a port do
 The machine definition reaches the core in two layers:
 
 1. **Authored YAML** (`config/machines`, `config/devices`, `config/extensions`). It keeps its comments about the hardware, and only the host reads it (see [Machine and extension YAML schema](#machine-and-extension-yaml-schema)).
-2. **The MachineConfig document**, which `load_machine_config()` makes from the YAML and the command-line choices. It is RFC 8785 (JCS) canonical JSON: UTF-8, sorted keys, no whitespace, integers only. `format_version` is `8`. The encoder writes only 8. The parser also reads formats 1 to 7. Format 1 has no `printer_port`, and the form is then `none`. Formats 1 and 2 have no `cassette_port`, and the machine then has no cassette port. Formats 1 to 3 have no `ram_mapper_subslot`, and the RAM mapper then answers in every slot-3 sub-slot that no other role uses. Formats 1 to 4 have no `mapper_io`, and the form is then `plain`. Formats 1 to 5 have no `psg_read_back`, and the form is then `ym2149`. Formats 1 to 6 have no `rtc_read_back`, and the form is then `plain`. Formats 1 to 7 have no `psg_pin67_read`, and the form is then `plain`. A key that a later format adds has a default for older documents, and it raises the ABI minor version: a core of the same major version keeps reading every older format. It holds the resolved machine, the cartridges per slot with their mapper (never `auto`), and the extension overlays. `msx/machine_config.py` encodes and parses it. `msx/machine_config.schema.json` (JSON Schema draft 2020-12) describes it. The tests read the schema, and the core never does. `tests/vectors/canonical_json.json` lists inputs with their canonical form and its SHA-256, inputs the reader refuses, and base64 blobs, so another implementation of the core can check its own writer and reader.
+2. **The MachineConfig document**, which `load_machine_config()` makes from the YAML and the command-line choices. It is RFC 8785 (JCS) canonical JSON: UTF-8, sorted keys, no whitespace, integers only. `format_version` is `8`. The encoder writes only 8. The parser also reads formats 1 to 7 (see the table below). A key that a later format adds has a default for older documents, and it raises the ABI minor version: a core of the same major version keeps reading every older format. It holds the resolved machine, the cartridges per slot with their mapper (never `auto`), and the extension overlays. `msx/machine_config.py` encodes and parses it. `msx/machine_config.schema.json` (JSON Schema draft 2020-12) describes it. The tests read the schema, and the core never does. `tests/vectors/canonical_json.json` lists inputs with their canonical form and its SHA-256, inputs the reader refuses, and base64 blobs, so another implementation of the core can check its own writer and reader.
+
+| Key                  | Added in format | Value in an older document                                              |
+| -------------------- | --------------- | ----------------------------------------------------------------------- |
+| `printer_port`       | 2               | `none` (no printer port)                                                |
+| `cassette_port`      | 3               | no cassette port                                                        |
+| `ram_mapper_subslot` | 4               | none: the RAM mapper answers in every slot-3 sub-slot that no role uses |
+| `mapper_io`          | 5               | `plain`                                                                 |
+| `psg_read_back`      | 6               | `ym2149`                                                                |
+| `rtc_read_back`      | 7               | `plain`                                                                 |
+| `psg_pin67_read`     | 8               | `plain`                                                                 |
 
 Every ROM in the document is a reference `{name, size, sha1, pages}`. `name` is a bare file name, used only as a label. `sha1` is the SHA1 of the bytes that the host read. The images travel in `MachineConfig.roms` by that SHA1. The parser is strict. It rejects:
 
@@ -838,7 +894,7 @@ Every ROM in the document is a reference `{name, size, sha1, pages}`. `name` is 
 - a device that needs a ROM and has none, and a `ram_mapper` without `size_kb`
 - a ROM image that is absent or whose size or SHA1 differs from its reference
 
-The SRAM and CMOS images, the disks, the RTC start time and every host path are run inputs. They are outside the document, so they do not change its identity. The identity of a config is the SHA-256 of the canonical form that the core encodes again after it parses the document. A document that differs only in whitespace or key order thus has the same identity. The `Machine` keeps this value as `machine_config_sha256`.
+The SRAM and CMOS images, the disks, the RTC start time and every host path are run inputs. They are outside the document, so they do not change its identity. The identity of a config is the SHA-256 of the canonical form that the core encodes again after it parses the document. A document that differs only in whitespace or key order has the same identity. The `Machine` keeps this value as `machine_config_sha256`.
 
 A port that has no YAML loader can write the document directly. It can also take one from the Python host: encode it with `load_machine_config()` and save `config.config.document` and `config.config.roms`.
 
@@ -847,30 +903,31 @@ A port that has no YAML loader can write the document directly. It can also take
 `save_state()` returns the whole machine state as canonical JSON (format version 25). The layout is `msx/snapshot.schema.json`: one object per component (`cpu`, `memory`, `slots`, `vdp`, `psg`, `ppi`, `scc`, `fdc`, `rtc`, `mouse`, `printer`, `mapper_latch`, `tape`), every key always present, and `null` for a part that the machine does not have. Byte arrays are padded RFC 4648 base64 strings, and every integer is within ±(2^53 − 1).
 
 - `load_state()` accepts any whitespace and key order. It rejects floats, NaN or Infinity, duplicate keys, and another format version.
-- It checks the identity of the machine first: the machine type, the mapper kinds, the slot wiring, the FDC, the mounted disks (by size and SHA1, so the same content from another file is the same disk), and the mounted tape (by the size and SHA1 of its edge list). Then it compares `machine_config_sha256` with the hash of the running machine, which also covers the cartridge ROM bytes. A snapshot thus loads only into a core built from the same MachineConfig document.
+- It checks the identity of the machine first: the machine type, the mapper kinds, the slot wiring, the FDC, the mounted disks (by size and SHA1, so the same content from another file is the same disk), and the mounted tape (by the size and SHA1 of its edge list). Then it compares `machine_config_sha256` with the hash of the running machine, which also covers the cartridge ROM bytes, so a snapshot loads only into a core built from the same MachineConfig document.
 - A snapshot that fails any check changes nothing.
 - `save_state()`, then `load_state()`, then `save_state()` again gives the same bytes.
 
-The snapshot does not hold two kinds of state. One is the address and read counter of the Kanji font ROM, by design (see the `machine-state` spec). The other is anything outside the core, such as the state of the audio filter.
+The snapshot does not hold two kinds of state. One is the address and read counter of the Kanji font ROM, by design: after a load they are 0, and software selects an address again before its next read, as on every MSX with a Kanji ROM. The other is anything outside the core, such as the state of the audio filter.
 
 ### Frame stepping
 
-`Machine.step_frame(frame_input, render_video)` is the per-frame call of the core. It applies `frame_input` to the input lines that the PPI and PSG read (`InputLines`). The input thus stays the same for the whole frame, and the mouse gets the motion of the frame once. It then runs the frame and returns the `FrameOutput`. `render_video` decides only whether the core produces video. A skipped frame still runs the sprite pass. The VDP status, the audio and the next snapshot are thus the same either way. A call that stops at a break inside the frame returns `stop_reason` and `frame_complete` 0, with no video and no audio. The next call continues that frame. A frame breakpoint stops after the frame completes, so that call also returns the video and the audio. It applies its input lines and buttons again, but feeds no mouse motion, because the frame already has it.
+`Machine.step_frame(frame_input, render_video)` is the per-frame call of the core. It applies `frame_input` to the input lines that the PPI and PSG read (`InputLines`), so the input stays the same for the whole frame, and the mouse gets the motion of the frame once. It then runs the frame and returns the `FrameOutput`. `render_video` decides only whether the core produces video. A skipped frame still runs the sprite pass, so the VDP status, the audio and the next snapshot are the same either way. For a stop at a break, see `step_frame` in [Core API](#core-api). A call that continues a frame stopped inside it applies its input lines and buttons again, but feeds no mouse motion, because the frame already has it. A call after a frame breakpoint starts a new frame, and it feeds the motion as usual.
 
-`InputState` in `host/input_state.py` builds the input outside the core. The keyboard, the gamepads, the mouse and the RPC input methods write to it. It keeps the keyboard-joystick and gamepad sources of each port apart until it merges them. Each frame, the frontend passes `take_frame()` to `step_frame`, which also zeroes the mouse motion of the builder. RPC injection calls `Machine.apply_input`, which sets the lines and the mouse buttons at once without running a frame. A paused machine thus sees the input at its next instruction. Headless runs (`--count-frame`, `--benchmark`) pass an empty `InputFrame()`.
+`InputState` in `host/input_state.py` builds the input outside the core. The keyboard, the gamepads, the mouse and the RPC input methods write to it. It keeps the keyboard-joystick and gamepad sources of each port apart until it merges them. Each frame, the frontend passes `take_frame()` to `step_frame`, which also zeroes the mouse motion of the builder. RPC injection calls `apply_input` (see [Core API](#core-api)), so a paused machine sees the input at its next instruction. Headless runs (`--count-frame`, `--benchmark`) pass an empty `InputFrame()`.
 
 ### Guarantees
 
-- **Determinism.** Build two cores from the same MachineConfig and give them the same sequence of `InputFrame` values. They then produce the same video, audio and snapshot bytes. This is true whatever drives them and whatever `render_video` values they get. The RTC advances from the emulated cycle count, never from the host clock.
+- **Determinism.** Build two cores from the same MachineConfig and give them the same sequence of `InputFrame` values. They then produce the same video, audio and snapshot bytes. This is true whatever drives them and whatever `render_video` values they get. The RTC advances from the emulated cycle count, never from the host clock. The debug setting `set_sprites_hidden` is outside this guarantee on the TMS9918A (see [Core API](#core-api)).
 - **One frame per step.** In normal run mode, one `step_frame` call advances exactly one video frame and returns one frame of audio. A frame is 59,736 T-states on NTSC and 71,364 on PAL, to within one instruction. A debugger break can end a frame early. That mode is outside the contract.
 - **RGB inside the core.** The core converts every pixel to RGB with integer tables only. The frontend never needs the palette or the VDP registers.
 - **Pre-filter audio.** The audio is the clamped sum of every present sound source (PSG, SCC, Majutsushi DAC, key click, OPLL) before any filter. Filtering, resampling and buffering are the frontend's.
+- **Samples per frame.** A frame has `samples_per_frame()` samples: 44,100 // the nominal frame rate (60 or 50). The emulated field rate is ~59.92 Hz on NTSC, so a port that derives the sample count from real or emulated time does not give the same bytes.
 - **Output lifetime.** `FrameOutput.video_pixels` and `.audio` stay valid only until the next `step_frame`, `reset` or `load_state`. In Python they are fresh immutable `bytes`, so the SDL2 frontend keeps the last frame without a copy. A native core may reuse its buffers, and a frontend for it copies a frame that it keeps longer.
 - **Media.** A medium is dirty from the first write by the emulated machine until `mark_persisted`. A write of the value already stored does not count, and a write-protected medium is never dirty. The core decides the set of SRAM ids at build time, and the set does not change. To swap a disk, write the dirty outgoing image back first and then call `mount_disk`. `host/media.py`'s `swap_disk` does this, so a failed write-back leaves the drive as it was.
 
 ### Embedding example
 
-This example uses the Python host for loading, and runs the core headless. It is the minimum for another frontend: replace the loop body with your own presentation, audio output and input.
+This example uses the Python host for loading, and runs the core headless. It is the minimum for another frontend: replace the loop body with your own presentation, audio output and input. Run it from the repository root, with the root on `sys.path` (for example `PYTHONPATH=.`), and with the C-BIOS MSX2 ROM files in `roms/cbios/`.
 
 ```python
 from pathlib import Path
@@ -879,8 +936,9 @@ from host.machine_config import (
     load_device_registry, load_machine_config, load_machine_spec, sram_paths,
 )
 from host.media import DiskFiles, persist_dirty_media
+from msx.boundary import STATUS_OK
 from msx.input import InputFrame
-from msx.machine_loader import create_machine
+from msx.machine_loader import create_machine, release_machine
 
 root = Path(".")                                   # the repository root
 registry = load_device_registry(root / "config")
@@ -893,27 +951,37 @@ machine = result.machine
 
 for _ in range(120):
     out = machine.step_frame(InputFrame(), render_video=True)
-    # out.video_pixels: out.video_width * 212 * 3 bytes of RGB24
+    # out.video_pixels: out.video_width * out.video_height * 3 bytes of RGB24
     # out.audio: samples_per_frame() signed 16-bit LE mono samples
 
 snapshot = machine.save_state()                    # bytes; store them anywhere
-if machine.load_state(snapshot) != 0:             # 0 is STATUS_OK
+if machine.load_state(snapshot) != STATUS_OK:
     print(machine.last_error_text().decode("utf-8"))
 assert machine.save_state() == snapshot
 
 disk_files = DiskFiles(config.disk_files)          # host: the file of each drive's disk
 persist_dirty_media(machine, sram_paths(config), disk_files)  # write SRAM/CMOS/disk changes back
+release_machine(machine)
 ```
 
-The SDL2 frontend (`frontend/sdl2_frontend.py`) follows the same pattern. Each frame, it passes the frame of its input builder to `step_frame`. It uploads `out.video_pixels` when the core rendered the frame (`out.video_width` is not 0). It passes `out.audio` through `BiquadLowPass` (`frontend/audio_filter.py`) and queues it to SDL. On exit, `__main__.py` calls `persist_dirty_media`. A frontend that has no host side of its own can keep `config.config.document` and `config.config.roms` from one run, and build the `MachineConfig` from them directly.
+The SDL2 frontend (`frontend/sdl2_frontend.py`) follows the same pattern. Each frame, it passes the frame of its input builder to `step_frame`. It uploads `out.video_pixels` when the core rendered the frame (`out.video_width` is not 0). It passes `out.audio` through `BiquadLowPass` (`frontend/audio_filter.py`) and queues it to SDL. On exit, `__main__.py` calls `persist_dirty_media`. A frontend with no host side of its own can keep the document and the ROM images of one run (see [MachineConfig document](#machineconfig-document)).
 
 ### Porting the core
 
-`include/msx_core.h` is the C form of the core API that a native core implements: one `msx_core_<member>` function for each `CoreApi` member, a struct for each boundary record, and every constant with its `msx/boundary.py` value. `tests/test_core_c_header.py` keeps the names and the constants equal to the Python code. The video and audio of a frame output stay valid until the next `step_frame`, `reset` or `load_state`. Other bytes that the core returns stay valid until the next call on the same core. Input is read only during the call, and one core is used from one thread at a time. Each C type is wide enough for every value the core masks, clamps or rejects: the mouse motion is `int32_t` and the frame breakpoint `int64_t`. `msx_core_create` writes its message into a buffer that the caller passes, so the core keeps no global state. The host takes the audio rate and the frame height from `msx/boundary.py` (`AUDIO_SAMPLE_RATE`, `OUTPUT_HEIGHT`). It keeps the MSX key names (`host/key_names.py`) and the cartridge SRAM sizes (`host/machine_config.py`) itself, because no core module uses them.
+`include/msx_core.h` is the C form of the core API that a native core implements: one `msx_core_<member>` function for each `CoreApi` member, a struct for each boundary record, and every constant with its `msx/boundary.py` value. `tests/test_core_c_header.py` keeps the names and the constants equal to the Python code. For the video and audio of a frame output, see **Output lifetime** in [Guarantees](#guarantees). Other bytes that the core returns stay valid until the next call on the same core. Input is read only during the call, and one core is used from one thread at a time. Each C type is wide enough for every value the core masks, clamps or rejects: the mouse motion is `int32_t` and the frame breakpoint `int64_t`. `msx_core_create` writes its message into a buffer that the caller passes, so the core keeps no global state. The host takes the audio rate, the frame height and the media sizes, the cartridge SRAM sizes included, from `msx/boundary.py` (`AUDIO_SAMPLE_RATE`, `OUTPUT_HEIGHT`, ...). It keeps the MSX key names (`host/key_names.py`) itself, because no core module uses them.
 
-The header is ABI version 1.7. `MSX_CORE_ABI_VERSION_MAJOR` and `MSX_CORE_ABI_VERSION_MINOR` hold the two parts, and `msx_core_abi_version()` returns `(major << 16) | minor`. An added function or constant raises the minor version. A changed or removed declaration or macro value raises the major version and resets the minor version to 0. The major version stays 1 until a native core implements the header, so until then such a change only updates the baseline. A change to the comments only does not change the version. A host rejects a core with another major version or a lower minor version than the host was built with. The header's `MSX_CORE_ABI_COMPATIBLE(v)` makes this check for a C or Zig host. It is evaluated in the host, so it is not part of the baseline. No host loads a native core yet, so no host calls it, and a Python binding will need the same check. A host keeps working when the core returns a constant value that the host does not know. `tests/msx_core_abi_baseline.txt` records each declaration and macro value with the version. `tests/test_core_c_header.py` fails until the baseline matches the header, and its message names the kind of change.
+The header is ABI version 1.7. `MSX_CORE_ABI_VERSION_MAJOR` and `MSX_CORE_ABI_VERSION_MINOR` hold the two parts, and `msx_core_abi_version()` returns `(major << 16) | minor`. These rules change the version:
 
-These are the differences between the Python code and the language-neutral contract in `allium/core-frontend.allium` (its _Status_ comment lists them):
+- An added function or constant raises the minor version.
+- A changed or removed declaration or macro value raises the major version and resets the minor version to 0.
+- The major version stays 1 until a native core implements the header, so until then such a change only updates the baseline.
+- A change to the comments only does not change the version.
+
+A host rejects a core with another major version or a lower minor version than the host was built with. The header's `MSX_CORE_ABI_COMPATIBLE(v)` makes this check for a C or Zig host. It is evaluated in the host, so it is not part of the baseline. No host loads a native core yet, so no host calls it, and a Python binding will need the same check. A host keeps working when the core returns a constant value that the host does not know.
+
+`tests/msx_core_abi_baseline.txt` records each declaration and macro value with the version. `tests/test_core_c_header.py` fails until the baseline matches the header, and its message names the kind of change.
+
+These are the differences between the Python code and the language-neutral contract:
 
 - `save_state` and `load_state` are `Machine` methods over `msx/state.py`.
 - The inspection records use the Python register names (`AF`, `AF_`) and hold the palette as a tuple.
@@ -925,7 +993,7 @@ A port must also decide one point:
 
 - **Debug control.** The break settings, `request_break()` and the stop result are in the contract (DebugControl). A port that supports the debugger keeps the position of a stopped frame and continues it on the next `step_frame`, and skips the breakpoint test for the first instruction after a stop. A port can leave the break settings out at first: with none armed, `step_frame` never stops.
 
-Some Python patterns have no direct equivalent in a statically typed language: bus hooks, register properties, the PSG envelope underflow, the renderer lookup tables and the frame-timer spin loop. See [Portability](#portability).
+The Python patterns that have no direct equivalent in a statically typed language are collected in [Portability](#portability). Only the frame-timer spin loop there is frontend code.
 
 A suggested order for a port:
 
@@ -935,21 +1003,31 @@ A suggested order for a port:
 4. **The other sound sources and the cartridges**: the SCC, the DAC and key click, the OPLL with shipped tables, the SRAM mappers.
 5. **The FDC** (WD2793 and TC8566AF) and the media API.
 
-At each step, compare the bytes with the Python core. The same config and the same `InputFrame` sequence must give the same `video_pixels`, audio and snapshot bytes. `tests/vectors/golden_state.json` describes such runs: C-BIOS boot on three machines, two homebrew cartridge games, and a BASIC game loaded from a tape and from a disk, with their input scripts and fixed checkpoint frames. At each checkpoint it records the SHA-256 of the audio and of the video, and it can also record the SHA-256 of each snapshot section. The snapshot layout still changes, so the section hashes are recorded before the port starts, after a review of the core and of the cases. `tools/golden_state.py` checks the Python core against the file, and a port can read the same file. The ROMs and where to put them are listed in [`tools/README_tools.md`](../tools/README_tools.md#golden_statepy).
+At each step, compare the bytes with the Python core. The same config and the same `InputFrame` sequence must give the same `video_pixels`, audio and snapshot bytes.
+
+`tests/vectors/golden_state.json` describes such runs. Each case has an input script and fixed checkpoint frames. The cases are:
+
+- C-BIOS boot on three machines
+- two homebrew cartridge games
+- a BASIC game loaded from a tape and from a disk
+
+At each checkpoint it records the SHA-256 of the audio and of the video, and it can also record the SHA-256 of each snapshot section. The snapshot layout still changes, so the section hashes are recorded only before the port starts, after a review of the core and of the cases. `tools/golden_state.py` checks the Python core against the file, and a port can read the same file. The ROMs and where to put them are listed in [`tools/README_tools.md`](../tools/README_tools.md#golden_statepy).
+
+---
 
 ## Portability
 
-The implementation is pure Python 3.10+. It has no C extensions or native bindings, except in the SDL2 frontend. Several design decisions keep the core logic simple to port to a statically typed systems language (Rust, C++). A `PORT-NOTE` comment in the related source file documents each decision. This section gives a summary of them.
+The implementation is pure Python 3.10+. It has no C extensions or native bindings, except in the SDL2 frontend. Several design decisions keep the core logic simple to port to a statically typed systems language (Rust, C++). A `PORT-NOTE` comment in the related source file documents each decision. This section summarizes the main ones.
 
 ### Intentionally portable patterns
 
 These patterns have a direct equivalent in a statically typed language:
 
-- **Opcode dispatch** (`msx/cpu/z80.py`, `msx/cpu/opcodes_main.py`): `_DISPATCH` is a flat 256-element list of callables, built once at import. Each entry is a plain function. A Rust port maps this to an array of function pointers or a `match` on the opcode byte.
+- **Opcode dispatch** (`msx/cpu/z80.py`, `msx/cpu/opcodes_main.py`): `_DISPATCH` is a flat 256-element list of callables, built once at import. An entry is a plain function, or a closure that a factory makes (`_make_ld_r_r`, `_make_alu_r`, `_make_jp_cc`, ...) to hold its register, condition or T-state count. A port writes each closure as a function with these values as constants or arguments. A Rust port maps this to an array of function pointers or a `match` on the opcode byte.
 - **Register file** (`msx/cpu/registers.py`): the primary registers are Python `int` fields with explicit `& 0xFF` / `& 0xFFFF` masks at every write site. They do not rely on arbitrary-precision values. The shadow registers are discrete named fields (`A_`, `BC_`, etc.) with no reflection.
 - **VRAM and RAM**: `bytearray` objects of fixed size (`_VRAM_SIZE = 131072` for the V9938, `0x4000` bytes for the TMS9918A, one array of all 16 KB segments for the RAM mapper). All access is direct slice-and-index access. There is no list-of-ints or dictionary-backed storage.
 - **I/O bus dispatch** (`msx/io.py`): a linear scan over a `list[tuple[int, int, Callable]]`, with no dictionary lookup or reflection. The number of registered handlers is small and fixed per machine configuration.
-- **Component structs**: the chips and the machine are `@dataclass` types, with all fields explicitly declared and typed. The FDC interface classes (`msx/fdc/interface.py`), the disk drive and image, and the audio mixer are plain classes with their fields set in `__init__`. There is no `__getattr__`/`__setattr__` magic anywhere in `msx/`. The two structs on the hottest path, `Z80` and `Registers`, also use `@dataclass(slots=True)` to remove the per-instance `__dict__`. `Memory` and a few small V9938 value types also use it: the `_RegChange`/`_PaletteChange` log entries, `_RenderStatus` and `_SatSegment`. The other components use a plain `@dataclass`, because the field-layout guarantee is less important off the hot path.
+- **Component structs**: the chips and the machine are `@dataclass` types, with all fields explicitly declared and typed. The disk drive and image and the audio mixer are plain classes with their fields set in `__init__`. The FDC interface classes (`msx/fdc/interface.py`) derive from an abstract generic base (`FloppyDiskBase`), with a `Protocol` and `TypedDict` snapshots: a port writes them as an interface (trait) and plain structs. There is no `__getattr__`/`__setattr__` magic anywhere in `msx/`. The two structs on the hottest path, `Z80` and `Registers`, also use `@dataclass(slots=True)` to remove the per-instance `__dict__`. `Memory` and a few small V9938 value types also use it: the `_RegChange`/`_PaletteChange` log entries, `_RenderStatus` and `_SatSegment`. The other components use a plain `@dataclass`, because the field-layout guarantee is less important off the hot path.
 - **Emulated time** (`msx/clock.py`): the machine owns one `CoreClock` record with the cycle count, the frame count and the instruction address. `create_machine` gives the same record to the CPU, the VDP, the PSG, the PPI, the RTC, the FDC, the cassette port, the Majutsushi DAC and the trace buffer. Each value has one writer. No component reads the time through a closure or a reference to the `Machine`. A C or Zig port holds the record as a struct that the components point to.
 - **Timing constants**: `CYCLES_PER_LINE`, `NTSC_LINES_PER_FRAME` / `PAL_LINES_PER_FRAME` (`msx/vdp/_geometry.py`), `_HBLANK_START`, `_TR_REASSERT_CYCLES`, etc. are module-level integer constants. The per-frame budget comes from `lines_per_frame(standard)` and `cycles_per_frame(standard)` in the same module. A port writes these as a `match` / `const fn`.
 
@@ -961,29 +1039,49 @@ The patterns below use Python language features that have no direct equivalent i
 
 `Z80` stores `read_byte` / `write_byte` / `read_port` / `write_port` as `Callable` fields. `Machine.__post_init__` connects them by assigning bound methods at runtime. When a program enables watchpoints later, `Machine.set_watchpoints` swaps `cpu.read_byte` / `cpu.write_byte` again. It changes them between the plain memory handler and a variant that traps watchpoints (`Machine._read_with_watch` / `_write_with_watch`).
 
-Python allows this because a `Callable` field is only a slot that holds any object with `__call__`. Rust and C++ have no runtime method swap on a struct field. A port expresses the bus as a `trait MemoryBus` (or an `enum { Normal, Watchpoint }`). A flag selects the concrete implementation once, so the dispatch on each access has no branch.
+Python allows this because a `Callable` field is only a slot that holds any object with `__call__`. Rust and C++ have no runtime method swap on a struct field. A port expresses the bus as a `trait MemoryBus` (or an `enum { Normal, Watchpoint }`), and `set_watchpoints` selects the implementation. Each access then costs an indirect call (trait object) or a `match` on the enum.
 
 #### Register 8-bit halves as computed properties
 
-`Registers` stores `BC`, `DE`, `HL` as 16-bit `int` fields. It gives access to `B`/`C`, `D`/`E`, `H`/`L` through `@property` getter/setter pairs (`Registers.B`/`C` and the related properties). Each pair shifts and masks the 16-bit value. Each opcode that reads or writes a single 8-bit half thus goes through the descriptor protocol. This adds a call frame on the hot instruction path.
+`Registers` stores `BC`, `DE`, `HL` as 16-bit `int` fields. It gives access to `B`/`C`, `D`/`E`, `H`/`L` through `@property` getter/setter pairs (`Registers.B`/`C` and the related properties). Each pair shifts and masks the 16-bit value. Each opcode that reads or writes a single 8-bit half goes through the descriptor protocol. This adds a call frame on the hot instruction path.
 
 A Rust/C++ port stores the 8-bit halves as plain `u8` fields (or as explicit inline getter/setter methods) and calculates the 16-bit pairs when necessary. This removes the property-call overhead.
 
 #### Arbitrary-precision integers in the PSG envelope
 
-Python integers have arbitrary precision: `-1 & 0x20 == 0x20`. The PSG envelope generator uses this when `_env_step` becomes negative. Bit 5 of a negative Python int still works as an underflow flag (`PSG._env_step`).
+Python integers have arbitrary precision. The PSG envelope generator decrements `_env_step` (`PSG._env_step`) and tests `_env_step < 0` to find the end of a period. In that branch the step is always -1, and `-1 & 0x20 == 0x20`.
 
-Rust/C++ unsigned types wrap on underflow and do not extend the sign. The same expression thus gives 0, not `0x20`. A port must use a signed type (`i32`) or an explicit `wrapping_sub` / bitfield overlay to keep the flag.
+With an unsigned type, `_env_step < 0` is never true, so the end of the period is never found. A Rust debug build also panics on the underflow. A port must use a signed type (`i32`) for `_env_step`, or test the step before the decrement.
+
+#### Floor division and floor modulo
+
+Python `//` and `%` round toward negative infinity. C, C++, Rust and Zig `/` and `%` truncate toward zero, so the results differ for a negative operand. The OPLL output divides a sum that can be negative (`msx/opll.py`), and the RTC uses `%` and `//` on a month of -1 and on a start year before 1980 (`msx/rtc.py`). A port uses a floor division and `rem_euclid` (Rust), `@divFloor` and `@mod` (Zig), or a helper in C++. A truncating division changes the OPLL output by 1 LSB.
+
+#### Arithmetic right shift of negative values
+
+Python `>>` of a negative int is an arithmetic (flooring) shift: `-1920 >> 4 == -120`. The SCC level (`msx/scc.py`) and the DAC sample encoding (`msx/dac.py`) depend on this. A port shifts a signed type (`i32`, `int32_t`), whose `>>` is arithmetic on every target compiler, and encodes a sample as an `i16` in little-endian order.
+
+#### Width of the cycle count
+
+A Python int has no fixed width. `CoreClock.cycle` (`msx/clock.py`) counts the T-states since power-on, and a `u32` wraps after about 20 minutes of emulated time. The DAC product `i * cycles` (`msx/dac.py`) can also exceed 32 bits. A port uses `u64`/`uint64_t` for both. The per-frame totals fit in 32 bits.
+
+#### Mapper mixins with multiple inheritance
+
+`Ascii8Mapper` and `Ascii16Mapper` (`msx/mapper.py`) combine a windowed-mapper mixin and `BankTracingMapper` through multiple inheritance, and their SRAM subclasses call `super()._sync_window()`. Every call resolves statically, so no runtime polymorphism is needed. A port writes the mixin as a data struct with free functions that each mapper calls, or as a trait with default methods.
+
+#### Page dispatch of `Memory` through closures
+
+`Memory` (`msx/memory.py`) keeps `_page_read` and `_page_write`, lists of bound methods and closures that it rebuilds when the slot selection changes, and indexes them on every memory access. A port does not translate this into a table of boxed closures. It stores a small enum tag per page and dispatches with a `match` or `switch`.
 
 #### `bytes.translate()` LUT cache in the renderer
 
-The V9938 G4/G6 and G5 per-scanline pixel expanders memoize `bytes.translate()` tables in `_G46_LUT_CACHE` / `_G5_LUT_CACHE`. These are dicts with `(tp: bool, border: int)` as key. `bytes.translate()` is a CPython built-in that applies a full 256-byte lookup table in C. It is thus faster in Python than a per-byte loop. The dict cache prevents the allocation of identical tables on every scanline.
+The V9938 G4/G6 and G5 per-scanline pixel expanders memoize `bytes.translate()` tables in `_G46_LUT_CACHE` / `_G5_LUT_CACHE`. These are dicts with `(tp: bool, border: int)` as key. `bytes.translate()` is a CPython built-in that applies a full 256-byte lookup table in C, so it is faster in Python than a per-byte loop. The dict cache prevents the allocation of identical tables on every scanline.
 
-`bytes.translate()` and a per-call dict hash are not natural constructs in a systems language. A Rust/C++ port keeps fixed `[u8; 256]` arrays, precomputed at init, and indexes them directly. Only 32 combinations exist across all `(tp, border)` pairs.
+A systems language has no `bytes.translate()`, and it does not need a dict to cache tables. A Rust/C++ port keeps fixed `[u8; 256]` arrays, precomputed at init, and indexes them directly. Only 32 combinations exist across all `(tp, border)` pairs.
 
 #### Spin loop in the frame timer
 
-`FrameTimer.tick()` uses `time.perf_counter()` in a busy-wait loop for the final 2 ms before the frame deadline. Python has no way to tell the scheduler that this loop is a spin.
+The frame timer is frontend code (`frontend/frame_timer.py`), not core code. A port of the core alone keeps the Python frontend and needs no change here. `FrameTimer.tick()` uses `time.perf_counter()` in a busy-wait loop for the final 2 ms before the frame deadline. Python has no way to tell the scheduler that this loop is a spin.
 
 A Rust port adds `std::hint::spin_loop()` in the same loop. This gives the CPU pipeline a hint without a sleep. On some hardware it decreases power consumption. It does not change the timing.
 
