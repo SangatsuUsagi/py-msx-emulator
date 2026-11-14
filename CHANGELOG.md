@@ -2,6 +2,12 @@
 
 [日本語版はこちら](CHANGELOG_ja.md)
 
+- **v2.11.2** (2026-11-14): `tools/wav2cas.py` reads a noisy recording of a real tape.
+  - The header search no longer stops at the irregular cycles where a tone starts, and silence before a header no longer hides the start bit. Before, a recorded tape could give no block at all.
+  - A cycle that noise splits in two is read as one cycle.
+  - Checked with a WAV recording of The Earth Fighter Rayieza tape: all blocks decode, and the game loads in the emulator.
+  - Docs: the tools README lists the tapes that `wav2cas.py` reads and its limits, and puts each prerequisite before its example. The README lists the owned Mahjong Friend cartridge and The Earth Fighter Rayieza tape.
+  - No change to the save-state format, the MachineConfig format or the C ABI.
 - **v2.11.1** (2026-11-13): The debugger `sl` and `st` commands show what slot 0 really holds, and `dm` names itself in its messages.
   - `sl` shows each page of slot 0 as what a read of it returns. On the `hb_10`, the page 3 RAM shows `RAM`, and page 2, past the end of the main ROM, shows `empty`. Before, both showed the main ROM.
   - `st` adds a `P<n>` line under a non-expanded slot for a page whose content differs from the slot's own, for example `P3  RAM  16KB` under slot 0 on the `hb_10`.

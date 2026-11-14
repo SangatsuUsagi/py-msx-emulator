@@ -2,7 +2,7 @@
 
 A functionally accurate MSX1/MSX2 emulator, written in pure Python 3.10+ and driven by machine-readable component specifications.
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-4972%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-4976%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -18,7 +18,7 @@ To try the emulator, start with [Installation](#installation) and [Usage](#usage
 
 ### Verified hardware and software
 
-The author verified this emulator only against the hardware and software below, which the author owns. The author tested it only with ROM and disk dumps from these physical items. There is no guarantee that other MSX1 or MSX2 titles work. Bug reports for other titles are welcome, but support is best-effort.
+The author verified this emulator only against the hardware and software below, which the author owns. The author tested it only with ROM, disk, and tape dumps from these physical items. There is no guarantee that other MSX1 or MSX2 titles work. Bug reports for other titles are welcome, but support is best-effort.
 
 **Hardware:**
 
@@ -34,6 +34,9 @@ The author verified this emulator only against the hardware and software below, 
   - [Nemesis 2 (グラディウス2) by KONAMI](https://generation-msx.nl/software/konami/nemesis-2/932)
   - [Penguin Adventure (夢大陸アドベンチャー) by KONAMI](https://generation-msx.nl/software/konami/penguin-adventure/873)
   - [Game Master 2 (コナミの新10倍カートリッジ) by KONAMI](https://generation-msx.nl/software/konami/game-master-2/937)
+  - [Mahjong Friend (雀フレンド) by TAITO](https://generation-msx.nl/software/taito/mahjong-friend/504)
+- **MSX1 (cassette tape):**
+  - [The Earth Fighter Rayieza (地球戦士ライーザ) by ENIX](https://generation-msx.nl/software/enix/the-earth-fighter-rayieza/788)
 - **MSX2:**
   - [Dragon Slayer IV - Drasle Family (ドラゴンスレイヤーIVドラスレファミリー) by Falcom](https://generation-msx.nl/software/falcom/dragon-slayer-iv-drasle-family/979)
   - [Romancia - Dragon Slayer Jr. (ロマンシア) by Falcom](https://generation-msx.nl/software/falcom/romancia-dragon-slayer-jr/881)
@@ -829,7 +832,7 @@ To use a custom machine definition, add a new YAML file to `config/machines/` an
 
 ## Running tests
 
-The test suite has 4972 tests and covers all major components. It includes unit tests for individual opcodes and hardware registers, and integration tests that connect multiple components. It also includes scenario-level tests, with conditions that come directly from the component specs.
+The test suite has 4976 tests and covers all major components. It includes unit tests for individual opcodes and hardware registers, and integration tests that connect multiple components. It also includes scenario-level tests, with conditions that come directly from the component specs.
 
 ```bash
 # Install the development dependencies (pytest, ruff, mypy)
@@ -925,7 +928,7 @@ py-msx-emulator/
 ├── allium/                # Allium behaviour specs, verifying spec/implementation alignment (not published yet)
 ├── openspec/
 │   └── specs/             # Component specifications (not published yet)
-├── tests/                 # Test suite (4972 tests)
+├── tests/                 # Test suite (4976 tests)
 ├── py_emulator.example.yaml # Annotated example of the optional config file
 ├── QUICK_START.md         # Requirements, installation, BIOS setup
 ├── CHANGELOG.md           # Version history

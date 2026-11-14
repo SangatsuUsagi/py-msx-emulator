@@ -2,7 +2,7 @@
 
 純粋な Python 3.10+ で書いた、機能の面で実機に忠実な MSX1/MSX2 エミュレータです。機械可読なコンポーネント仕様に基づいて実装しています。
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-4972%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-4976%20passing-brightgreen)
 
 [English README is here](README.md)
 
@@ -18,7 +18,7 @@
 
 ### 検証済みハードウェアとソフトウェア
 
-作者が検証したのは、自分で所有する以下のハードウェアとソフトウェアだけです。テストにも、それらからダンプした ROM とディスクだけを使っています。ほかの MSX1/MSX2 タイトルが動く保証はありません。ほかのタイトルのバグ報告は歓迎しますが、対応はベストエフォートになります。
+作者が検証したのは、自分で所有する以下のハードウェアとソフトウェアだけです。テストにも、それらからダンプした ROM、ディスク、テープだけを使っています。ほかの MSX1/MSX2 タイトルが動く保証はありません。ほかのタイトルのバグ報告は歓迎しますが、対応はベストエフォートになります。
 
 **ハードウェア：**
 
@@ -34,6 +34,9 @@
   - [グラディウス2（Nemesis 2）、KONAMI](https://generation-msx.nl/software/konami/nemesis-2/932)
   - [夢大陸アドベンチャー（Penguin Adventure）、KONAMI](https://generation-msx.nl/software/konami/penguin-adventure/873)
   - [コナミの新10倍カートリッジ（Game Master 2）、KONAMI](https://generation-msx.nl/software/konami/game-master-2/937)
+  - [雀フレンド（Mahjong Friend）、TAITO](https://generation-msx.nl/software/taito/mahjong-friend/504)
+- **MSX1（カセットテープ）：**
+  - [地球戦士ライーザ（The Earth Fighter Rayieza）、ENIX](https://generation-msx.nl/software/enix/the-earth-fighter-rayieza/788)
 - **MSX2：**
   - [ドラゴンスレイヤーIVドラスレファミリー（Dragon Slayer IV - Drasle Family）、Falcom](https://generation-msx.nl/software/falcom/dragon-slayer-iv-drasle-family/979)
   - [ロマンシア（Romancia - Dragon Slayer Jr.）、Falcom](https://generation-msx.nl/software/falcom/romancia-dragon-slayer-jr/881)
@@ -834,7 +837,7 @@ builtin_devices:
 
 ## テストの実行
 
-テストスイートは 4972 個のテストで、主なコンポーネントをすべて扱います。個々のオペコードやハードウェアレジスタのユニットテスト、複数のコンポーネントをつないだ統合テスト、仕様のシナリオをそのまま条件にしたテストがあります。
+テストスイートは 4976 個のテストで、主なコンポーネントをすべて扱います。個々のオペコードやハードウェアレジスタのユニットテスト、複数のコンポーネントをつないだ統合テスト、仕様のシナリオをそのまま条件にしたテストがあります。
 
 ```bash
 # 開発用依存関係（pytest、ruff、mypy）をインストール
@@ -930,7 +933,7 @@ py-msx-emulator/
 ├── allium/                # Allium の振る舞い仕様。仕様と実装のずれを確かめる（未公開）
 ├── openspec/
 │   └── specs/             # コンポーネントの仕様（未公開）
-├── tests/                 # テストスイート（4972 テスト）
+├── tests/                 # テストスイート（4976 テスト）
 ├── py_emulator.example.yaml # 設定ファイルの記述例（注釈付き）
 ├── QUICK_START_ja.md      # 必要なもの、インストール、BIOS の準備
 ├── CHANGELOG_ja.md        # 更新履歴

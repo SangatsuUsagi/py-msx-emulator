@@ -16,7 +16,7 @@ Standalone command-line utilities for use with the emulator: disk image manageme
 | [`rpc_client.py`](#rpc_clientpy)                                     | Thin CLI client for the socket RPC server of the emulator, for manual testing               |
 | [`mcp_server.py`](#mcp_serverpy)                                     | MCP server that wraps the socket RPC API, so Claude Code can drive a running emulator       |
 
-All scripts are plain Python 3.10+. They need no dependencies other than the dependencies of the project (`requirements.txt` / `requirements-dev.txt`). The exception is `mcp_server.py`, which also needs the optional `mcp` extra (see [`mcp_server.py`](#mcp_serverpy)). Run the scripts with the project venv, e.g. `venvs/py-msx-emulator/bin/python tools/dskftp.py`.
+All scripts are plain Python 3.10+. They need no dependencies other than the dependencies of the project (`requirements.txt` / `requirements-dev.txt`). The exception is `mcp_server.py`, which also needs the optional `mcp` extra (see [`mcp_server.py`](#mcp_serverpy)). Run the scripts with the project venv, e.g. `venvs/py-msx-emulator/bin/python tools/dskftp.py`. Where an example below shows `python`, use the interpreter of the venv. `dskdd.py` uses only the standard library, so its examples run the system `python3` with `sudo`.
 
 ---
 
@@ -62,13 +62,7 @@ python tools/dskblank.py blank.dsk --force       # overwrite an existing file
 
 ## `dskdd.py`
 
-Copies raw sectors between a `.dsk` image and a USB-connected 3-mode floppy drive. **Linux only.** It reads and writes the disk with plain block-device I/O, as `dd` does:
-
-```bash
-sudo python3 tools/dskdd.py read /dev/sdb msxdisk.dsk            # disk -> image
-sudo python3 tools/dskdd.py read /dev/sdb msxdisk.dsk --retries 5
-sudo python3 tools/dskdd.py write msxdisk.dsk /dev/sdb --verify  # image -> disk
-```
+Copies raw sectors between a `.dsk` image and a USB-connected 3-mode floppy drive. **Linux only.** It reads and writes the disk with plain block-device I/O, as `dd` does.
 
 On Linux, a USB FDD appears as `/dev/sdX` (a block device), not as `/dev/fd0`. Before you run this script, do these steps:
 
@@ -83,6 +77,12 @@ Both directions refuse to run unless all of these conditions are true:
 - The device is small enough to be a floppy (≤4 MB, `--force` overrides this check).
 
 `write` also makes the operator type the device path again, because a write to the wrong device destroys all data on it. `read` does not overwrite an existing image unless you give `--overwrite`.
+
+```bash
+sudo python3 tools/dskdd.py read /dev/sdb msxdisk.dsk            # disk -> image
+sudo python3 tools/dskdd.py read /dev/sdb msxdisk.dsk --retries 5
+sudo python3 tools/dskdd.py write msxdisk.dsk /dev/sdb --verify  # image -> disk
+```
 
 | Subcommand               | Options                                                                                     |
 | ------------------------ | ------------------------------------------------------------------------------------------- |
@@ -119,14 +119,22 @@ The script changes the line ends to CRLF. The output is 48 kHz, 16-bit mono. A W
 
 ## `wav2cas.py`
 
-Converts a WAV file of an MSX tape to a `.cas` file, for the emulator's `--tape` option. It reads the standard 1200-baud format, the format that `SAVE"CAS:"` writes and that `bas2wav.py` makes.
+Converts a WAV recording of an MSX tape to a `.cas` file, for the emulator's `--tape` option. It reads the standard 1200-baud format of the MSX BIOS: the files that `CSAVE`, `SAVE"CAS:"` and `BSAVE"CAS:"` write, and the WAV that `bas2wav.py` makes.
+
+Use a machine with MSX BASIC, such as `hb_10`. The default C-BIOS machines have no BASIC, so you cannot type `CLOAD` or the other commands below.
 
 ```bash
 python tools/wav2cas.py tape.wav tape.cas
-python . --tape tape.cas    # then type RUN"CAS:" (or LOAD"CAS:") on the MSX
+python . --machine hb_10 --tape tape.cas    # then type CLOAD, RUN"CAS:" or BLOAD"CAS:",R on the MSX
 ```
 
-The script prints the length and the first bytes of each block that it finds. It reads 8-bit and 16-bit WAV files. It averages stereo to mono. It reads the normal and the inverted signal without an option. If the script finds no block, it writes no file and exits with status `1`.
+The script prints the length and the first bytes of each block that it finds. It reads 8-bit and 16-bit WAV files. It averages stereo to mono. It reads the normal and the inverted signal without an option. It also reads a recording with noise at the start of each tone, or with noise that splits a cycle in two. For the best result, record at a level that does not clip. If the script finds no block, it writes no file and exits with status `1`.
+
+Known limitations:
+
+- A tape at 2400 baud (`CSAVE"NAME",2`) is not tested.
+- The script does not read a tape that uses its own loader or a fast non-standard format.
+- The tape format has no checksum, so the script cannot detect a bit that it reads incorrectly.
 
 ## `run_z80_exercisers.py`
 
@@ -160,13 +168,6 @@ Runs fixed cases of the whole core and compares hashes of the result with `tests
 
 The file in the repository holds the cases and their checkpoint frames, with no hashes yet. The save-state layout still changes (cassette, disk and other devices), so the hashes are recorded before the port of the core starts, after a review of the core and of the cases. The check reports a case with no recorded hashes and does not fail on it. The exit status is 1 if a case differs, else 0.
 
-```bash
-venvs/py-msx-emulator/bin/python tools/golden_state.py           # check
-venvs/py-msx-emulator/bin/python tools/golden_state.py --write   # record
-```
-
-To check that a change keeps the behavior, record a copy of the file before the change and check against it after the change with `--vectors <copy>`. After the hashes are in the repository, run `--write` after an intended change of behavior and commit the new file. `tests/test_golden_state.py` runs the same check in the test suite.
-
 The ROMs are not in this repository. A case whose ROM is absent, or has another SHA-256, is skipped, with the path in the reason. Put these files in place:
 
 | Path                           | Source                                                                                                                                        | SHA-256                                                            |
@@ -188,6 +189,21 @@ make
 
 Then copy `build/uno.rom` to `roms/homebrew/uno-msx2.rom`, and check that its SHA-256 is the value in the table.
 
+```bash
+venvs/py-msx-emulator/bin/python tools/golden_state.py           # check
+venvs/py-msx-emulator/bin/python tools/golden_state.py --write   # record
+```
+
+To check that a change keeps the behavior, record the hashes in a copy of the file before the change, and check against the copy after the change:
+
+```bash
+cp tests/vectors/golden_state.json /tmp/golden_state.json
+venvs/py-msx-emulator/bin/python tools/golden_state.py --write --vectors /tmp/golden_state.json  # before the change
+venvs/py-msx-emulator/bin/python tools/golden_state.py --vectors /tmp/golden_state.json          # after the change
+```
+
+After the hashes are in the repository, run `--write` after an intended change of behavior and commit the new file. `tests/test_golden_state.py` runs the same check in the test suite.
+
 The hashes record what this core does, not what a real MSX does. They catch a change in behavior, and a port of the core can compare itself with the Python core by running the same cases.
 
 ## Remote control (Socket RPC & MCP)
@@ -200,6 +216,12 @@ The emulator can expose a small local control surface for external tools, such a
 ```
 MCP client  ──stdio/MCP──▶  tools/mcp_server.py  ──Unix socket──▶  emulator (--rpc)
 ```
+
+### Security notes
+
+- The socket is a Unix domain socket, so only local processes can reach it. It has no authentication of its own. The permissions of the socket file control access. The server creates the socket again at each start, so a `chmod` on the file does not last. On a shared host, use `--rpc-socket` to put the socket in a directory that only you can open.
+- `memory.write` and `cpu.step` change the machine state, so they work **only while the emulator is paused**.
+- RPC is off unless you give `--rpc` or set `rpc.enabled` in `py_emulator.yaml`. A normal run opens no socket.
 
 ### Enabling the RPC server
 
@@ -225,12 +247,6 @@ The RPC methods control the debugger, breakpoints and watchpoints, memory, VRAM 
 
 For manual testing without the MCP layer, see [`rpc_client.py`](#rpc_clientpy) below. To let an MCP client drive the emulator, see [`mcp_server.py`](#mcp_serverpy) below.
 
-### Security notes
-
-- The socket is a Unix domain socket, so only local processes can reach it. It has no authentication of its own. The permissions of the socket file control access. The server creates the socket again at each start, so a `chmod` on the file does not last. On a shared host, use `--rpc-socket` to put the socket in a directory that only you can open.
-- `memory.write` and `cpu.step` change the machine state, so they work **only while the emulator is paused**.
-- RPC is off unless you give `--rpc` or set `rpc.enabled` in `py_emulator.yaml`. A normal run opens no socket.
-
 ## `rpc_client.py`
 
 A thin CLI client for the Unix-socket JSON-RPC server of the emulator, for manual testing without the MCP layer. It sends one method call and prints the response. The emulator must run with `--rpc`. See [`../docs/socket-rpc-mcp.md`](../docs/socket-rpc-mcp.md) for the full method reference.
@@ -255,6 +271,8 @@ The MCP server needs the optional `mcp` dependency:
 pip install -e '.[mcp]'      # or: pip install 'mcp[cli]>=1.0,<2.0'
 ```
 
+Use a `python` that has the `mcp` package. If you installed it in a virtual environment, give the full path of that environment's interpreter in place of `python` in the registration command below.
+
 ```bash
 # Start the emulator with the RPC server enabled:
 python . path/to/game.rom --rpc
@@ -265,6 +283,6 @@ claude mcp add --transport stdio --scope project msx-emulator \
 claude mcp list        # check the registration
 ```
 
-Use a `python` that has the `mcp` package. If you installed it in a virtual environment, give the full path of that environment's interpreter in place of `python`. Claude Code then starts this process automatically for each session. The server reads the socket path from `MSX_RPC_SOCKET` (default `/tmp/py_msx_emu.sock`). If you registered the server as above, you can set this variable in the `env` block of `.mcp.json`.
+After the registration, Claude Code starts this process automatically for each session. The server reads the socket path from `MSX_RPC_SOCKET` (default `/tmp/py_msx_emu.sock`). If you registered the server as above, you can set this variable in the `env` block of `.mcp.json`.
 
 The server waits at most 60 seconds for each response from the emulator, so keep `timeout_seconds` of `cpu_continue_until_pause` below 60. See [Known limitations](../docs/socket-rpc-mcp.md#known-limitations).
