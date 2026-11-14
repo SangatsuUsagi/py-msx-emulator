@@ -2,6 +2,11 @@
 
 [日本語版はこちら](CHANGELOG_ja.md)
 
+- **v2.11.3** (2026-11-14): `tools/golden_state.py` records the audio and video hashes of each golden checkpoint, and two new cases load a game from tape and from disk.
+  - Each checkpoint records the SHA-256 of its audio and its video. The state-section hashes are optional (`--state`), because the save-state layout can still change. The check compares only the hashes that a checkpoint records.
+  - Two new cases load the FREEBALL game of MSX-10Liners (CC0): from tape on `hb_10` and from disk on `hb_f1xd`. A case can give a disk image and a tape image, each with its SHA-256. The tool skips a case when its machine ROM or medium is absent.
+  - Docs: the technical implementation guide is reviewed against the code. It adds the FDC address map, the format versions, more porting notes and an embedding example that releases the machine. The tools README explains the golden cases step by step. A PSG code comment states the real porting hazard of the envelope counter.
+  - No change to the save-state format, the MachineConfig format or the C ABI.
 - **v2.11.2** (2026-11-14): `tools/wav2cas.py` reads a noisy recording of a real tape.
   - The header search no longer stops at the irregular cycles where a tone starts, and silence before a header no longer hides the start bit. Before, a recorded tape could give no block at all.
   - A cycle that noise splits in two is read as one cycle.

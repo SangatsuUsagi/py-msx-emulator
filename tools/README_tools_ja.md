@@ -1,6 +1,6 @@
 # Tools
 
-エミュレータと組み合わせて使うコマンドラインツール群です。ディスクイメージの管理、テープ用 WAV の変換、CPU 命令テストの実行に使うツールと、エージェント向けの RPC/MCP 層があります。どのツールもエミュレータのプロセス内では動かず、それぞれ `python tools/<script>.py` として個別に実行します。
+エミュレータと組み合わせて使うコマンドラインツール群です。ディスクイメージの管理、テープ用 WAV の変換、CPU 命令テストの実行、コア全体のゴールデンテストに使うツールと、エージェント向けの RPC/MCP 層があります。どのツールもエミュレータのプロセス内では動かず、それぞれ `python tools/<script>.py` として個別に実行します。
 
 | スクリプト / セクション                                          | 用途                                                                                        |
 | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
@@ -11,7 +11,7 @@
 | [`wav2cas.py`](#wav2caspy)                                       | MSX のテープの WAV を、エミュレータの `--tape` で使う `.cas` ファイルに変換                 |
 | [`run_z80_exercisers.py`](#run_z80_exerciserspy)                 | Z80 の命令テスト（zexdoc、zexall、z80test）を CPU コア単体で実行                            |
 | [`run_singlestep_tests.py`](#run_singlestep_testspy)             | SingleStepTests/z80 の 1 命令ごとのテストを CPU コア単体で実行                              |
-| [`golden_state.py`](#golden_statepy)                             | コア全体を決まった条件で動かし（ゴールデンケース）、そのハッシュを記録または照合            |
+| [`golden_state.py`](#golden_statepy)                             | コア全体を決まった条件で動かし（ゴールデンケース）、結果のハッシュを記録または照合          |
 | [リモート制御（Socket RPC & MCP）](#リモート制御socket-rpc--mcp) | `rpc_client.py` と `mcp_server.py` が使う、ソケット RPC と MCP の制御層の概要               |
 | [`rpc_client.py`](#rpc_clientpy)                                 | エミュレータのソケット RPC サーバに接続する、手動テスト用の薄い CLI クライアント            |
 | [`mcp_server.py`](#mcp_serverpy)                                 | ソケット RPC API をラップする MCP サーバ。Claude Code から起動中のエミュレータを操作できる  |
@@ -52,7 +52,7 @@ python tools/dskftp.py                 # 後から `open` で接続
 
 ## `dskblank.py`
 
-`--fdd1` / `--fdd2` で使う空の `*.dsk` イメージを作成します。スクリプトはファイルを `0xE5`（フロッピーの標準のフィルバイト）で埋めます。そのため、トラックはフォーマット済みでもファイルシステムはない、ディスクのように見えます。ブートセクタ、BPB、FAT は書き込みません。作成後に、エミュレータ内の MSX BASIC の `CALL FORMAT` か、`dskftp.py format` でフォーマットしてください。
+`--fdd1` / `--fdd2` で使う空の `*.dsk` イメージを作成します。スクリプトはファイルを `0xE5`（フロッピーの標準のフィルバイト）で埋めます。そのため、トラックはフォーマット済みでも、ファイルシステムのないディスクのように見えます。ブートセクタ、BPB、FAT は書き込みません。作成後に、エミュレータ内の MSX BASIC の `CALL FORMAT` か、`dskftp.py format` でフォーマットしてください。
 
 ```bash
 python tools/dskblank.py blank.dsk               # 720 KB（2DD、デフォルト）
@@ -128,7 +128,7 @@ python tools/wav2cas.py tape.wav tape.cas
 python . --machine hb_10 --tape tape.cas    # その後、MSX で CLOAD、RUN"CAS:"、BLOAD"CAS:",R のどれかを入力
 ```
 
-変換中は、見つけた各ブロックの長さと先頭の数バイトを表示します。入力は 8 ビットと 16 ビットの WAV で、ステレオは平均してモノラルにします。反転した信号も、オプションなしでそのまま読めます。音の鳴り始めの乱れや、雑音で 1 周期が 2 つに分かれた箇所があっても問題ありません。ただし、音が割れない（クリップしない）音量で録音したほうが確実です。ブロックが 1 つも見つからないときは、ファイルを書かずに終了コード `1` で終わります。
+変換中は、見つけた各ブロックの長さと先頭の数バイトを表示します。入力に使えるのは 8 ビットと 16 ビットの WAV です。ステレオは平均してモノラルにします。反転した信号も、オプションなしでそのまま読めます。トーンごとの鳴り始めの乱れや、雑音で 1 周期が 2 つに分かれた箇所があっても問題ありません。ただし、音が割れない（クリップしない）音量で録音したほうが確実です。ブロックが 1 つも見つからないときは、ファイルを書かずに終了コード `1` で終わります。
 
 既知の制限：
 
@@ -164,19 +164,30 @@ venvs/pypy-msx-emulator/bin/python tools/run_singlestep_tests.py \
 
 ## `golden_state.py`
 
-コア全体を決まった条件で動かし（ゴールデンケース）、結果のハッシュを `tests/vectors/golden_state.json` と比べます。各ケースでは、機種、スロット 1 のカートリッジ（なくてもよい）、入力の手順、確認点のフレームを指定します。確認点ごとに、次の 3 種類の SHA-256 を記録できます。セーブステートの各セクション（`cpu`、`memory`、`vdp`、`psg` など）、そのフレームまでの音声、そのフレームの映像です。一致しないときは、ケース、フレーム、セクションを示します。
+コア全体を決まった条件で動かし（ゴールデンケース）、結果のハッシュを `tests/vectors/golden_state.json` と比べます。
 
-リポジトリのファイルには、ケースと確認点のフレームだけがあり、ハッシュはまだ記録していません。カセットやディスクなどの機器への対応で、セーブステートのレイアウトはまだ変わります。そのため、ハッシュはコアの移植を始める前に、コアとケースを見直してから記録します。照合では、ハッシュのないケースはその旨を表示するだけで、失敗にはしません。一致しないケースがあると終了コードは 1、それ以外は 0 です。
+各ケースでは、機種、入力の手順、確認点のフレームを指定します。スロット 1 のカートリッジ、ドライブ A のディスクイメージ、テープイメージも指定できます（どれも省略可）。確認点ごとに、次の 3 種類の SHA-256 を記録できます。
 
-ROM はこのリポジトリに含めていません。ROM がないケースや、SHA-256 が違うケースは、パスを示してスキップします。次のファイルを置いてください。
+- セーブステートの各セクション（`cpu`、`memory`、`vdp`、`psg` など）
+- そのフレームまでの音声
+- そのフレームの映像
+
+リポジトリの `golden_state.json` には、すべての確認点の音声と映像のハッシュを記録しています。セーブステートのレイアウトは、カセットやディスクなどの機器に対応するたびに変わります。そのたびにステートのセクションのハッシュも変わり、動作が同じでも一致しなくなります。そのため、ステートのセクションのハッシュを記録するのは、コアの移植を始める前だけです。記録の前に、コアとケースを見直します。
+
+照合では、確認点に記録してあるハッシュだけを比べます。一致しないときは、ケース、フレーム、どのハッシュが違うか（ステートのセクション、`audio`、`video` のどれか）を示します。ハッシュのないケースはその旨を表示するだけで、失敗にはしません。一致しないケースがあると終了コードは 1、それ以外は 0 です。
+
+ROM とメディアはこのリポジトリに含めていません。メディアは `tests/media/` に置きます。このディレクトリは `.gitignore` で除外しています。ROM やメディアがないケースや、メディアの SHA-256 が違うケースは、パスを示してスキップします。テープとディスクのケースには、`hb_10` と `hb_f1xd` の ROM も必要です。このリポジトリでは入手元を示せないので、自分の実機から吸い出してください。ROM がなければ、この 2 ケースはスキップします。各ファイルの入手元は次の表のとおりです。
 
 | パス                           | 入手元                                                                                                                                                   | SHA-256                                                            |
 | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
 | `roms/cbios/`                  | [C-BIOS](https://cbios.sourceforge.net/)。C-BIOS の機種を使うときと同じ                                                                                  | （照合しない）                                                     |
-| `roms/homebrew/noborunoca.rom` | [NOBORUNOCA v1.0.2](https://github.com/h1romas4/noborunoca/releases/tag/v1.0.2) の `noborunoca.rom`（MIT）                                               | `57a3be2fe5c3190daa3e69cf23cd262cdc8af98c60993ea941d43c815cbb25f6` |
-| `roms/homebrew/uno-msx2.rom`   | [commodore-uno v1.0.5](https://github.com/jhonnaker1/commodore-uno/releases/tag/v1.0.5) の `uno-msx2.rom`（MIT）、または v1.0.5 をビルドしたもの（下記） | `74d74d8720e623a7b8aadce8e0b0c9094f8a2162339a8e7c677c7732f673ddb8` |
+| `roms/hb_10/`、`roms/hb_f1xd/` | 自分の Sony HB-10 と HB-F1XD（ファイル名は `config/machines/hb_10.yaml` と `hb_f1xd.yaml`）                                                              | （照合しない）                                                     |
+| `tests/media/noborunoca.rom`   | [NOBORUNOCA v1.0.2](https://github.com/h1romas4/noborunoca/releases/tag/v1.0.2) の `noborunoca.rom`（MIT）                                               | `57a3be2fe5c3190daa3e69cf23cd262cdc8af98c60993ea941d43c815cbb25f6` |
+| `tests/media/uno-msx2.rom`     | [commodore-uno v1.0.5](https://github.com/jhonnaker1/commodore-uno/releases/tag/v1.0.5) の `uno-msx2.rom`（MIT）、または v1.0.5 をビルドしたもの（下記） | `74d74d8720e623a7b8aadce8e0b0c9094f8a2162339a8e7c677c7732f673ddb8` |
+| `tests/media/FREEBALL.DSK`     | [MSX-10Liners](https://github.com/martin-rizzo/MSX-10Liners) のコミット `0d7d72c` の `05_FREEBALL/FREEBALL.DSK`（CC0）                                   | `359115f0bf475a172d7815d53a23ee447bd2f4c38e0ebc0b93116566642bdbcf` |
+| `tests/media/FREEBALL.cas`     | 同じコミットの `05_FREEBALL/FREEBALL.BAS` を変換したもの（下記）                                                                                         | `6fb1112f51e6013538c9686fda7811ab11563c43f76d4084dbfd591a20a6d20d` |
 
-表の SHA-256 は、commodore-uno v1.0.5 をビルドした ROM の値です。バージョンが違うと ROM が変わることがあるので、v1.0.5 を使ってください。v1.0.5 と v1.0.10 のリリースの `uno-msx2.rom` は、このビルドと同じ SHA-256 です。ROM をビルドするには、[SDCC](https://sdcc.sourceforge.net/) と GNU make を使います。
+v1.0.5 と v1.0.10 のリリースの `uno-msx2.rom` は表の SHA-256 と一致するので、ダウンロードしたものをそのまま使えます。表の値は、commodore-uno v1.0.5 をビルドした ROM から求めたものです。ほかのバージョンでは ROM が変わることがあります。自分でビルドするときは、v1.0.5 を [SDCC](https://sdcc.sourceforge.net/) と GNU make でビルドします。
 
 ```bash
 # 1. ソースを取得する
@@ -187,31 +198,53 @@ cd commodore-uno/msx2
 make
 ```
 
-できた `build/uno.rom` を `roms/homebrew/uno-msx2.rom` にコピーし、SHA-256 が表の値と一致することを確かめてください。
+できた `build/uno.rom` を `tests/media/uno-msx2.rom` にコピーし、SHA-256 が表の値と一致することを確かめてください。
+
+ディスクとテープのケースは、同じゲーム（MSX-10Liners の FREEBALL）を使います。ファイルは次の手順でそろえます。
+
+1. ディスクイメージと BASIC のプログラムを `tests/media/` にダウンロードします。
+2. プログラムを [`bas2wav.py`](#bas2wavpy) で WAV ファイルに変換します。
+3. WAV ファイルを [`wav2cas.py`](#wav2caspy) で `tests/media/FREEBALL.cas` に変換します。
+
+`FREEBALL.BAS` は `tests/media/` に残してください。テストがこのファイルを変換し直して、結果の SHA-256 を確かめるためです。3 つの手順は、次のコマンドで実行できます。
+
+```bash
+BASE=https://raw.githubusercontent.com/martin-rizzo/MSX-10Liners/0d7d72ca0fc2184b612e068e93837b27556f4ed7/05_FREEBALL
+mkdir -p tests/media
+curl -fLo tests/media/FREEBALL.DSK $BASE/FREEBALL.DSK
+curl -fLo tests/media/FREEBALL.BAS $BASE/FREEBALL.BAS
+venvs/py-msx-emulator/bin/python tools/bas2wav.py tests/media/FREEBALL.BAS /tmp/FREEBALL.wav
+venvs/py-msx-emulator/bin/python tools/wav2cas.py /tmp/FREEBALL.wav tests/media/FREEBALL.cas
+```
+
+ファイルをそろえたら、ハッシュを照合または記録します。
 
 ```bash
 venvs/py-msx-emulator/bin/python tools/golden_state.py           # 照合
-venvs/py-msx-emulator/bin/python tools/golden_state.py --write   # 記録
+venvs/py-msx-emulator/bin/python tools/golden_state.py --write   # 音声と映像を記録
+venvs/py-msx-emulator/bin/python tools/golden_state.py --write --state   # ステートのセクションも記録
 ```
 
-変更で動作が変わらないことを確かめるには、変更の前にファイルのコピーへハッシュを記録し、変更の後にそのコピーと照合します。
+音声や映像のハッシュが変わっても、コアのどの部分が変わったかはわかりません。調べるには、変更の前に `golden_state.json` のコピーへすべてのハッシュを記録し、変更の後にそのコピーと照合します。こうすると、一致しないときは、どのステートのセクションが違うかもわかります。
 
 ```bash
 cp tests/vectors/golden_state.json /tmp/golden_state.json
-venvs/py-msx-emulator/bin/python tools/golden_state.py --write --vectors /tmp/golden_state.json  # 変更の前
+venvs/py-msx-emulator/bin/python tools/golden_state.py --write --state --vectors /tmp/golden_state.json  # 変更の前
 venvs/py-msx-emulator/bin/python tools/golden_state.py --vectors /tmp/golden_state.json          # 変更の後
 ```
 
-ハッシュをリポジトリに記録した後は、意図して動作を変えたときに `--write` で記録し直し、新しいファイルをコミットします。テストスイートでは `tests/test_golden_state.py` が同じ照合をします。
+意図して動作を変えたときは、`--write` で記録し直し、新しいファイルをコミットします。
 
-ハッシュはこのコアの動作を記録したもので、実機の動作ではありません。ハッシュで動作の変化を検出でき、コアを移植したときも、同じケースを動かして Python のコアと比べられます。
+テストスイートでは `tests/test_golden_state.py` が同じ照合をします。`hb_10` と `hb_f1xd` の ROM があると約 25 秒かかります。テープのケースは通常の速度で読み込むので、このケースだけで約 12 秒かかります。
+
+ハッシュはこのコアの動作を記録したもので、実機の動作ではありません。動作が変われば、ハッシュでわかります。コアを移植したときも、同じケースを動かせば、移植先を Python のコアと比べられます。
 
 ## リモート制御（Socket RPC & MCP）
 
-エミュレータは、シェルスクリプト、テストハーネス、AI コーディングエージェントなどの外部ツール向けに、小さなローカルの制御インターフェースを公開できます。これらのツールから、実行中のエミュレータを一時停止したり、内部を調べたり、操作したりできます。制御は次の 2 つの層からなります。
+エミュレータは、シェルスクリプト、テストハーネス、AI コーディングエージェントなどの外部ツール向けに、小さなローカルの制御インターフェースを公開できます。これらのツールは、実行中のエミュレータを一時停止したり、内部を調べたり、操作したりします。制御は次の 2 つの層からなります。
 
 - **Socket RPC**：エミュレータのプロセスに組み込まれた、Unix ドメインソケットの JSON-RPC サーバ（`host/rpc_server.py`）です。**デフォルトでは無効**で、`--rpc` で有効にします。
-- **MCP サーバ**：下記の [`mcp_server.py`](#mcp_serverpy) です。ソケット RPC を [Model Context Protocol](https://modelcontextprotocol.io) のツールとしてラップする、独立した stdio サーバです。Claude Code のようなクライアントは、エミュレータの機能をネイティブのツールとして呼び出せ、スクリーンショットをインライン画像として受け取れます。
+- **MCP サーバ**：下記の [`mcp_server.py`](#mcp_serverpy) です。ソケット RPC を [Model Context Protocol](https://modelcontextprotocol.io) のツールとしてラップする、独立した stdio サーバです。そのため、Claude Code のようなクライアントは、エミュレータの機能をネイティブのツールとして呼び出し、スクリーンショットをインライン画像として受け取れます。
 
 ```
 MCP クライアント ──stdio/MCP──▶ tools/mcp_server.py ──Unix ソケット──▶ エミュレータ (--rpc)
@@ -243,7 +276,19 @@ rpc:
 
 `--rpc-socket` は `rpc.socket` より優先します。
 
-RPC のメソッドで操作できる対象は、デバッガ、ブレークポイントとウォッチポイント、メモリ、VRAM と VDP レジスタ、キーボードとジョイスティックの入力、スクリーンショット、セーブステートの保存と読み込み、フロッピーディスク、テープです。ワイヤプロトコルと全メソッドの一覧は、[`../docs/socket-rpc-mcp_ja.md`](../docs/socket-rpc-mcp_ja.md) を参照してください。
+RPC のメソッドで操作できる対象は次のとおりです。
+
+- デバッガ
+- ブレークポイントとウォッチポイント
+- メモリ
+- VRAM と VDP レジスタ
+- キーボードとジョイスティックの入力
+- スクリーンショット
+- セーブステートの保存と読み込み
+- フロッピーディスク
+- テープ
+
+ワイヤプロトコルと全メソッドの一覧は、[`../docs/socket-rpc-mcp_ja.md`](../docs/socket-rpc-mcp_ja.md) を参照してください。
 
 MCP 層を介さずに手動で試すときは下記の [`rpc_client.py`](#rpc_clientpy)、MCP クライアントから操作するときは下記の [`mcp_server.py`](#mcp_serverpy) を使います。
 
@@ -271,7 +316,7 @@ MCP サーバには、オプションの `mcp` 依存が必要です。
 pip install -e '.[mcp]'      # または：pip install 'mcp[cli]>=1.0,<2.0'
 ```
 
-`python` には、`mcp` パッケージが入ったものを使ってください。仮想環境に入れた場合は、下の登録コマンドの `python` の代わりに、その環境のインタプリタのフルパスを指定します。
+`python` には、`mcp` パッケージを入れたインタプリタを使ってください。仮想環境に入れた場合は、下の登録コマンドの `python` の代わりに、その環境のインタプリタのフルパスを指定します。
 
 ```bash
 # RPC サーバを有効にしてエミュレータを起動

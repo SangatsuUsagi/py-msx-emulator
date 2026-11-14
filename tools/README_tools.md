@@ -1,6 +1,6 @@
 # Tools
 
-Standalone command-line utilities for use with the emulator: disk image management, tape WAV converters, CPU instruction test runners, and the agent-facing RPC/MCP layer. None of these tools run in the emulator process. Each one is a separate `python tools/<script>.py` command.
+Standalone command-line utilities for use with the emulator: disk image management, tape WAV converters, CPU instruction test runners, a golden check of the whole core, and the agent-facing RPC/MCP layer. None of these tools run in the emulator process. Each one is a separate `python tools/<script>.py` command.
 
 | Script / section                                                     | Purpose                                                                                     |
 | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
@@ -164,19 +164,30 @@ The cases come from an emulator core, not from real hardware. A port of the core
 
 ## `golden_state.py`
 
-Runs fixed cases of the whole core and compares hashes of the result with `tests/vectors/golden_state.json`. A case gives a machine, an optional slot 1 cartridge, an input script and checkpoint frames. At each checkpoint the file can record the SHA-256 of each section of the saved state (`cpu`, `memory`, `vdp`, `psg` and the others), of the audio up to that frame, and of the video of that frame. A mismatch names the case, the frame and the section.
+Runs fixed cases of the whole core and compares hashes of the result with `tests/vectors/golden_state.json`.
 
-The file in the repository holds the cases and their checkpoint frames, with no hashes yet. The save-state layout still changes (cassette, disk and other devices), so the hashes are recorded before the port of the core starts, after a review of the core and of the cases. The check reports a case with no recorded hashes and does not fail on it. The exit status is 1 if a case differs, else 0.
+A case gives a machine, an input script and checkpoint frames. It can also give a slot 1 cartridge, a disk image for drive A and a tape image. At each checkpoint the file can record three kinds of SHA-256:
 
-The ROMs are not in this repository. A case whose ROM is absent, or has another SHA-256, is skipped, with the path in the reason. Put these files in place:
+- each section of the saved state (`cpu`, `memory`, `vdp`, `psg` and the others)
+- the audio up to that frame
+- the video of that frame
+
+The file in the repository records the audio and video hashes of every checkpoint. The state-section hashes change whenever the save-state layout changes (cassette, disk and other devices), even when the behavior does not. So they are recorded only before the port of the core starts, after a review of the core and of the cases.
+
+The check compares only the hashes that a checkpoint records. A mismatch names the case, the frame and the hash that differs (a state section, `audio` or `video`). The check reports a case with no recorded hashes and does not fail on it. The exit status is 1 if a case differs, else 0.
+
+The ROMs and media are not in this repository. Put the media in `tests/media/`, which `.gitignore` excludes. A case whose ROM or medium is absent, or whose medium has another SHA-256, is skipped, with the path in the reason. The tape and disk cases also need the ROMs of the `hb_10` and `hb_f1xd` machines. This repository gives no source for them: dump them from your own machine, or those two cases are skipped. The table gives the source of each file:
 
 | Path                           | Source                                                                                                                                        | SHA-256                                                            |
 | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
 | `roms/cbios/`                  | [C-BIOS](https://cbios.sourceforge.net/), as for any C-BIOS machine                                                                           | (not checked)                                                      |
-| `roms/homebrew/noborunoca.rom` | `noborunoca.rom` of [NOBORUNOCA v1.0.2](https://github.com/h1romas4/noborunoca/releases/tag/v1.0.2) (MIT)                                     | `57a3be2fe5c3190daa3e69cf23cd262cdc8af98c60993ea941d43c815cbb25f6` |
-| `roms/homebrew/uno-msx2.rom`   | `uno-msx2.rom` of [commodore-uno v1.0.5](https://github.com/jhonnaker1/commodore-uno/releases/tag/v1.0.5) (MIT), or a build of v1.0.5 (below) | `74d74d8720e623a7b8aadce8e0b0c9094f8a2162339a8e7c677c7732f673ddb8` |
+| `roms/hb_10/`, `roms/hb_f1xd/` | Your own Sony HB-10 and HB-F1XD (file names in `config/machines/hb_10.yaml` and `hb_f1xd.yaml`)                                               | (not checked)                                                      |
+| `tests/media/noborunoca.rom`   | `noborunoca.rom` of [NOBORUNOCA v1.0.2](https://github.com/h1romas4/noborunoca/releases/tag/v1.0.2) (MIT)                                     | `57a3be2fe5c3190daa3e69cf23cd262cdc8af98c60993ea941d43c815cbb25f6` |
+| `tests/media/uno-msx2.rom`     | `uno-msx2.rom` of [commodore-uno v1.0.5](https://github.com/jhonnaker1/commodore-uno/releases/tag/v1.0.5) (MIT), or a build of v1.0.5 (below) | `74d74d8720e623a7b8aadce8e0b0c9094f8a2162339a8e7c677c7732f673ddb8` |
+| `tests/media/FREEBALL.DSK`     | `05_FREEBALL/FREEBALL.DSK` of [MSX-10Liners](https://github.com/martin-rizzo/MSX-10Liners) at commit `0d7d72c` (CC0)                          | `359115f0bf475a172d7815d53a23ee447bd2f4c38e0ebc0b93116566642bdbcf` |
+| `tests/media/FREEBALL.cas`     | `05_FREEBALL/FREEBALL.BAS` of the same commit, converted (below)                                                                              | `6fb1112f51e6013538c9686fda7811ab11563c43f76d4084dbfd591a20a6d20d` |
 
-The SHA-256 in the table comes from a build of commodore-uno v1.0.5. Another version can give another ROM, so use v1.0.5. The `uno-msx2.rom` files of the v1.0.5 and v1.0.10 releases have the same SHA-256 as that build. To build the ROM, use [SDCC](https://sdcc.sourceforge.net/) and GNU make:
+The `uno-msx2.rom` files of the v1.0.5 and v1.0.10 releases have the SHA-256 in the table, so you can use a downloaded file as it is. The value comes from a build of commodore-uno v1.0.5, and another version can give another ROM. To build the ROM yourself, use v1.0.5, [SDCC](https://sdcc.sourceforge.net/) and GNU make:
 
 ```bash
 # 1. Get the source
@@ -187,22 +198,44 @@ cd commodore-uno/msx2
 make
 ```
 
-Then copy `build/uno.rom` to `roms/homebrew/uno-msx2.rom`, and check that its SHA-256 is the value in the table.
+Then copy `build/uno.rom` to `tests/media/uno-msx2.rom`, and check that its SHA-256 is the value in the table.
+
+The disk and tape cases use the same game, FREEBALL of MSX-10Liners. To prepare the files:
+
+1. Download the disk image and the BASIC program to `tests/media/`.
+2. Convert the program to a WAV file with [`bas2wav.py`](#bas2wavpy).
+3. Convert the WAV file to `tests/media/FREEBALL.cas` with [`wav2cas.py`](#wav2caspy).
+
+Keep `FREEBALL.BAS` in `tests/media/`: a test converts it again and checks the SHA-256 of the result. These commands do the three steps:
+
+```bash
+BASE=https://raw.githubusercontent.com/martin-rizzo/MSX-10Liners/0d7d72ca0fc2184b612e068e93837b27556f4ed7/05_FREEBALL
+mkdir -p tests/media
+curl -fLo tests/media/FREEBALL.DSK $BASE/FREEBALL.DSK
+curl -fLo tests/media/FREEBALL.BAS $BASE/FREEBALL.BAS
+venvs/py-msx-emulator/bin/python tools/bas2wav.py tests/media/FREEBALL.BAS /tmp/FREEBALL.wav
+venvs/py-msx-emulator/bin/python tools/wav2cas.py /tmp/FREEBALL.wav tests/media/FREEBALL.cas
+```
+
+With the files in place, check or record the hashes:
 
 ```bash
 venvs/py-msx-emulator/bin/python tools/golden_state.py           # check
-venvs/py-msx-emulator/bin/python tools/golden_state.py --write   # record
+venvs/py-msx-emulator/bin/python tools/golden_state.py --write   # record audio and video
+venvs/py-msx-emulator/bin/python tools/golden_state.py --write --state   # also record the state sections
 ```
 
-To check that a change keeps the behavior, record the hashes in a copy of the file before the change, and check against the copy after the change:
+A changed audio or video hash does not name the part of the core that changed. To find it, record every hash in a copy of the file before the change, and check against the copy after the change. A mismatch then also names the state section:
 
 ```bash
 cp tests/vectors/golden_state.json /tmp/golden_state.json
-venvs/py-msx-emulator/bin/python tools/golden_state.py --write --vectors /tmp/golden_state.json  # before the change
+venvs/py-msx-emulator/bin/python tools/golden_state.py --write --state --vectors /tmp/golden_state.json  # before the change
 venvs/py-msx-emulator/bin/python tools/golden_state.py --vectors /tmp/golden_state.json          # after the change
 ```
 
-After the hashes are in the repository, run `--write` after an intended change of behavior and commit the new file. `tests/test_golden_state.py` runs the same check in the test suite.
+After an intended change of behavior, run `--write` and commit the new file.
+
+`tests/test_golden_state.py` runs the same check in the test suite. With the `hb_10` and `hb_f1xd` ROMs present, it takes about 25 seconds, because the tape case loads at normal speed (about 12 seconds of the total).
 
 The hashes record what this core does, not what a real MSX does. They catch a change in behavior, and a port of the core can compare itself with the Python core by running the same cases.
 
@@ -243,7 +276,19 @@ rpc:
 
 `--rpc-socket` overrides `rpc.socket`.
 
-The RPC methods control the debugger, breakpoints and watchpoints, memory, VRAM and VDP registers, keyboard and joystick input, screenshots, state save/load, the floppy disks and the tape. [`../docs/socket-rpc-mcp.md`](../docs/socket-rpc-mcp.md) documents the wire protocol and the full method reference.
+The RPC methods control these parts of the emulator:
+
+- the debugger
+- breakpoints and watchpoints
+- memory
+- VRAM and VDP registers
+- keyboard and joystick input
+- screenshots
+- state save and load
+- the floppy disks
+- the tape
+
+[`../docs/socket-rpc-mcp.md`](../docs/socket-rpc-mcp.md) documents the wire protocol and the full method reference.
 
 For manual testing without the MCP layer, see [`rpc_client.py`](#rpc_clientpy) below. To let an MCP client drive the emulator, see [`mcp_server.py`](#mcp_serverpy) below.
 
